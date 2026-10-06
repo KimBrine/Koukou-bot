@@ -26,13 +26,13 @@ ws.onopen = async () => {
     for (const g of groups) {
       console.log(`  群号 ${g.group_id}  名称「${g.group_name}」  人数 ${g.member_count ?? '?'}`)
     }
-    const whitelist = [801944160, 738321128, 794601094]
+    const whitelist = [200000019, 200000017, 200000018]
     console.log('\n=== 与白名单对比 ===')
     const ids = new Set(groups.map((g) => Number(g.group_id)))
     for (const id of whitelist) {
       console.log(`  ${id}: ${ids.has(id) ? '✅ 还在群里' : '❌ 已不在（被踢？）'}`)
     }
-    console.log(`  1121936348（待新增）: ${ids.has(1121936348) ? '✅ 已在群里' : '❌ 不在群里'}`)
+    console.log(`  200000001（待新增）: ${ids.has(200000001) ? '✅ 已在群里' : '❌ 不在群里'}`)
     process.exit(0)
   } catch (e) {
     console.error('ERR:', e.message)

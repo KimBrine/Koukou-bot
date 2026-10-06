@@ -762,7 +762,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, memory, buil
 
       // 先把图片取下来。顺带确定"这条消息的图到底看不看得见"——这件事**代码知道，模型不知道**。
       // 以前把判断权交给模型，它看到历史里的 [图片] 就会套用"看不到就说图没加载出来"，
-      // 于是对着一条纯文字/表情消息凭空回"图没加载出来"（2026-09-21 15:58 春雨社就是这么来的）。
+      // 避免纯文字/表情消息因历史图片占位符而误报图片加载失败。
       const imageParts = []
       const imageHashes = []
       if (hasImages) {

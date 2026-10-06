@@ -1,4 +1,4 @@
-param(
+﻿param(
   [Parameter(Mandatory = $true)][int]$BotPid,
   [Parameter(Mandatory = $true)][string]$BotProfile,
   [Parameter(Mandatory = $true)][string]$TaskName,

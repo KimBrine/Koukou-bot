@@ -1,14 +1,14 @@
 /**
  * 定时指令：每天在指定时间，到指定群里 @ 某个账号并发送一条固定内容。
  *
- * 当前用途：每天 00:00 在春雨社（801944160）@ 幽幽子（3889001246）发「/今日猪猪」，
+ * 当前用途：每天 00:00 在示例群 A（200000019）@ 示例机器人（200000015）发「/今日猪猪」，
  * 触发对方的机器人。做成通用配置，以后要加别的定时指令只改 .env 即可。
  *
  * 配置（.env）：
  *   DAILY_PING_ENABLED=1
  *   DAILY_PING_TIME=00:00
- *   DAILY_PING_GROUP=801944160
- *   DAILY_PING_TARGET=3889001246
+ *   DAILY_PING_GROUP=200000019
+ *   DAILY_PING_TARGET=200000015
  *   DAILY_PING_TEXT=/今日猪猪
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -128,7 +128,7 @@ export function createDailyPing({ config, logger, onebot, rateLimiter, memory, s
   }
 
   // 链式指令：主指令发出后，等目标账号"成功回应"，再补发第二条
-  // （例：@幽幽子 /今日猪猪 → 它抓到猪猪后 → @幽幽子 /我的猪圈）
+  // （例：@示例机器人 /今日猪猪 → 它抓到猪猪后 → @示例机器人 /我的猪圈）
   let pendingChain = null
   let chainTimer = null
   const chainEnabled = Boolean(config.dailyPingChainEnabled && config.dailyPingChainText)
@@ -328,7 +328,7 @@ export function createDailyPing({ config, logger, onebot, rateLimiter, memory, s
       const next = RETRY_DELAYS[attempt - 1]
       if (next === undefined) {
         logger?.error?.(
-          `[定时指令] ${reason}发送失败且重试用尽：${err.message}（检查 E:\\NapCatQQ\\napcat-console.log 与 logs\\bot.log 是否需要重新登录）`,
+          `[定时指令] ${reason}发送失败且重试用尽：${err.message}（检查 NapCat 安装目录中的 napcat-console.log 与机器人日志是否需要重新登录）`,
         )
         return false
       }

@@ -28,7 +28,7 @@ console.log(`  keepRate=1 时永远保留: ${JSON.stringify(limitDecoration('好
 
 console.log('\n=== 4. 限流器 ===')
 const rl = createRateLimiter({ perHour: 3, minGapMs: 4000 })
-const key = 'g1121936348'
+const key = 'g200000001'
 let now = 1000000
 rl.record(key, now)
 console.log(`  立即再发: ${JSON.stringify(rl.check(key, now + 1000))}`)
@@ -105,12 +105,12 @@ console.log('\n=== 7. 限流：间隔不够要"能等"，而不是"丢消息" ==
   }
   const t = 1_000_000
   const rl = createRateLimiter({ perHour: 25, minGapMs: 4000 })
-  rl.record('p1822939642', t)
-  const gap = rl.check('p1822939642', t + 1000)
+  rl.record('p200000007', t)
+  const gap = rl.check('p200000007', t + 1000)
   check('间隔不够 → 不可发，但标记为可重试', gap.allowed === false && gap.retryable === true, `→ 还需 ${gap.retryAfterMs}ms`)
   check('给出还需等待的毫秒数', gap.retryAfterMs === 3000)
-  check('忽略间隔时放行（生成前只查额度，不因间隔丢消息）', rl.check('p1822939642', t + 1000, { ignoreGap: true }).allowed === true)
-  check('间隔满足后正常放行', rl.check('p1822939642', t + 4500).allowed === true)
+  check('忽略间隔时放行（生成前只查额度，不因间隔丢消息）', rl.check('p200000007', t + 1000, { ignoreGap: true }).allowed === true)
+  check('间隔满足后正常放行', rl.check('p200000007', t + 4500).allowed === true)
 
   const rl2 = createRateLimiter({ perHour: 1, minGapMs: 0 })
   rl2.record('k', t)
@@ -145,7 +145,7 @@ console.log('\n=== 8. 分级额度：盯人刷满后，被@ 仍然要能回 ==='
   }
   // 复现阿尔吉侬群：盯人回复（每 15s 一次）把 25 条/小时的额度刷满
   const rl = createRateLimiter({ perHour: 25, minGapMs: 0 })
-  const key = 'g1121936348'
+  const key = 'g200000001'
   const t = 1_000_000
   for (let i = 0; i < 25; i++) rl.record(key, t + i)
 

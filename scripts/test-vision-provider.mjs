@@ -1,3 +1,4 @@
+import { getProbeTarget } from './probe-settings.mjs'
 /**
  * 验证"机器人实际用的那条读图路径"能不能跑通、要多久。
  *
@@ -20,7 +21,7 @@ import { VISION_DESCRIBE_PROMPT, VISION_DESCRIBE_ASK, sanitizeImageDescription, 
 const config = loadConfig()
 const logger = createLogger('warn', null)
 const onebot = new OneBotClient({ url: config.onebotWsUrl, logger })
-const group = Number(process.argv[2] || 1124442491)
+const group = Number(process.argv[2] || getProbeTarget('group'))
 
 // 完全照 src/index.js 的构造方式
 const isDeepseek = config.visionProvider === 'deepseek'

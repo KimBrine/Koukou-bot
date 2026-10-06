@@ -137,7 +137,7 @@ export function createChatSettings({ file, logger }) {
   return { get, raw, set, remove, keys, all, resolve, save, defaults: DEFAULTS }
 }
 
-/** `g801944160` → 801944160；`p1822939642` → null（私聊没有群号） */
+/** `g200000019` → 200000019；`p200000007` → null（私聊没有群号） */
 export function keyToGroupId(key) {
   const m = /^g(\d+)$/.exec(String(key ?? ''))
   return m ? Number(m[1]) : null

@@ -1,3 +1,4 @@
+import { getProbeTarget } from './probe-settings.mjs'
 import { loadConfig as loadRepoLocalConfig } from '../src/config.js'
 const repoLocalConfig = loadRepoLocalConfig()
 
@@ -25,7 +26,7 @@ ws.onmessage = (ev) => {
 ws.onopen = async () => {
   try {
     // 找一张群历史里的真实图片
-    const hist = await call('get_group_msg_history', { group_id: 801944160, count: 100 })
+    const hist = await call('get_group_msg_history', { group_id: getProbeTarget('group'), count: 100 })
     let url = null
     for (const m of hist.messages || []) {
       if (Array.isArray(m.message)) {

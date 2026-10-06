@@ -1,4 +1,4 @@
-' Run the minimal bot supervisor with a hidden window (used by the KoukouSupervisor task).
-' KEEP THIS FILE ASCII-ONLY: wscript reads .vbs as ANSI, so UTF-8 Chinese comments
-' can corrupt parsing and the script silently fails to launch anything.
-CreateObject("WScript.Shell").Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""E:\Deepseek Harness Workplace\deepseek-qq-bot\bot-supervisor.ps1"" -Quiet", 0, False
+' Hidden supervisor entry; instance settings are in windows.local.json.
+Set fs = CreateObject("Scripting.FileSystemObject")
+root = fs.GetParentFolderName(WScript.ScriptFullName)
+CreateObject("WScript.Shell").Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & root & "\bot-supervisor.ps1"" -Quiet", 0, False

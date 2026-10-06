@@ -4,11 +4,11 @@ import { OneBotClient } from '../src/onebot.js'
 const logger={info(){},warn(){}}
 let passed=0
 async function test(name,task){await task();console.log(`PASS ${name}`);passed++}
-const probeUserId='1822939642'
+const probeUserId='200000007'
 const goodReply=action=>action==='get_stranger_info'?{user_id:Number(probeUserId),nickname:'核验账号'}:{online:true,good:true}
 function client(){const ob=new OneBotClient({url:'ws://127.0.0.1:3002',logger,probeUserId});ob.ws={readyState:WebSocket.OPEN};return ob}
 await test('端口 / WebSocket 连接存在且保留昵称，QQ 离线仍显示离线',async()=>{
-  const ob=client();ob.nickname='旧昵称';ob.selfId='3399202820';ob.api=async()=>({online:false,good:true})
+  const ob=client();ob.nickname='旧昵称';ob.selfId='200000010';ob.api=async()=>({online:false,good:true})
   const state=await ob.refreshStatus()
   assert.equal(state.connected,true);assert.equal(state.online,false);assert.equal(state.qqOnline,false)
 })
@@ -49,7 +49,7 @@ await test('收到离线心跳与 bot_offline 通知立即更新状态',async()=
   class FakeSocket extends EventTarget {
     static OPEN=1
     constructor(){super();socket=this;this.readyState=1;queueMicrotask(()=>this.dispatchEvent(new Event('open')))}
-    send(text){const packet=JSON.parse(text);queueMicrotask(()=>this.message({echo:packet.echo,status:'ok',data:packet.action==='get_login_info'?{user_id:3399202820,nickname:'测试'}:goodReply(packet.action)}))}
+    send(text){const packet=JSON.parse(text);queueMicrotask(()=>this.message({echo:packet.echo,status:'ok',data:packet.action==='get_login_info'?{user_id:200000010,nickname:'测试'}:goodReply(packet.action)}))}
     message(data){this.dispatchEvent(new MessageEvent('message',{data:JSON.stringify(data)}))}
     close(){this.readyState=3;this.dispatchEvent(Object.assign(new Event('close'),{code:1000}))}
   }

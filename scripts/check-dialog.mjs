@@ -1,3 +1,4 @@
+import { getProbeTarget } from './probe-settings.mjs'
 const ws = new WebSocket('ws://127.0.0.1:3001')
 let seq = 0
 const pending = new Map()
@@ -18,9 +19,9 @@ ws.onmessage = (ev) => {
     d.status === 'ok' ? p.resolve(d.data) : p.reject(new Error(d.message || d.retcode))
   }
 }
-const GID = 1121936348
-const TARGET = '1279630177'
-const BOT = '3883059067'
+const GID = getProbeTarget('group')
+const TARGET = '200000004'
+const BOT = '200000014'
 
 ws.onopen = async () => {
   const hist = await call('get_group_msg_history', { group_id: GID, count: 200 })

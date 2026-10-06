@@ -1,3 +1,4 @@
+import { getProbeTarget } from './probe-settings.mjs'
 const ws = new WebSocket('ws://127.0.0.1:3001')
 let seq = 0
 const pending = new Map()
@@ -19,10 +20,10 @@ ws.onmessage = (ev) => {
   }
 }
 ws.onopen = async () => {
-  const hist = await call('get_group_msg_history', { group_id: 1121936348, count: 20 })
+  const hist = await call('get_group_msg_history', { group_id: getProbeTarget('group'), count: 20 })
   const msgs = (hist.messages || []).slice().sort((a, b) => (a.time || 0) - (b.time || 0))
   console.log('=== 机器人最近发出的消息及其消息段 ===')
-  const botMsgs = msgs.filter((m) => String(m.user_id) === '3883059067').slice(-4)
+  const botMsgs = msgs.filter((m) => String(m.user_id) === '200000014').slice(-4)
   for (const m of botMsgs) {
     const segs = Array.isArray(m.message)
       ? m.message.map((s) => {

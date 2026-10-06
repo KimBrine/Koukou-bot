@@ -36,11 +36,11 @@ try {
   ]
   const notices = []
   const onebot = {selfId:'99999',async getGroupMsgHistory(){return {messages:records}},async sendGroup(id,text){notices.push(text)},async sendGroupForward(){throw new Error('网络连接异常')}}
-  const config = {dataDir:'__missing_summary_failure_test_data__',summaryEnabled:true,summaryGroups:[1124442491],whitelistGroups:new Set(),summaryMaxMessages:600,summaryMaxBlocks:20,summarySendMode:'forward',summaryUserRows:20,botName:'测试机器人'}
+  const config = {dataDir:'__missing_summary_failure_test_data__',summaryEnabled:true,summaryGroups:[200000002],whitelistGroups:new Set(),summaryMaxMessages:600,summaryMaxBlocks:20,summarySendMode:'forward',summaryUserRows:20,botName:'测试机器人'}
   const summary = createDailySummary({config,logger,onebot,llm:{async chat(prompt,messages,options){assert.equal(options.rejectTruncated,true);throw blocked}}})
-  await summary.runSummary(1124442491)
+  await summary.runSummary(200000002)
   assert.equal(notices.length,1)
   assert.match(notices[0],/内容检查拦截/)
-  assert.equal(summary.isRunning(1124442491),false)
+  assert.equal(summary.isRunning(200000002),false)
   console.log('Summary failure checks passed: provider rejection, output limit, timeout, send failure, real notification path, no external requests or messages')
 } finally { globalThis.fetch = originalFetch }

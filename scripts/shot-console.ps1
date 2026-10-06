@@ -1,4 +1,4 @@
-param(
+﻿param(
   [string]$Out = "$env:TEMP\koukou-console.png",
   [string]$Url = 'http://127.0.0.1:8787',
   [int]$W = 1280,

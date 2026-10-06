@@ -1,3 +1,4 @@
+import { getProbeTarget } from './probe-settings.mjs'
 /**
  * 探针：群消息历史里到底有没有"回复/引用"信息，以及 parseMessage 能否取到 replyId。
  *   node scripts/probe-reply-segments.mjs <群号> [条数]
@@ -11,7 +12,7 @@ import { parseMessage } from '../src/cq.js'
 const config = loadConfig()
 const logger = createLogger('warn', null)
 const onebot = new OneBotClient({ url: config.onebotWsUrl, logger })
-const group = Number(process.argv[2] || 1121936348)
+const group = Number(process.argv[2] || getProbeTarget('group'))
 const count = Math.max(20, Math.min(500, Number(process.argv[3]) || 200))
 
 onebot.on('ready', async () => {

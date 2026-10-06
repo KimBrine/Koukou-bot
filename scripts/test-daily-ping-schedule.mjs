@@ -3,8 +3,8 @@ import { mock } from 'node:test'
 import { createDailyPing, dailyPingTarget } from '../src/dailyPing.js'
 
 const config = {
-  dailyPingEnabled: true, dailyPingTime: '00:00', dailyPingGroup: '801944160',
-  dailyPingTarget: '3889001246', dailyPingText: '/今日猪猪',
+  dailyPingEnabled: true, dailyPingTime: '00:00', dailyPingGroup: '200000019',
+  dailyPingTarget: '200000015', dailyPingText: '/今日猪猪',
   dailyPingChainEnabled: true, dailyPingChainText: '/我的猪圈', dailyPingChainWindowMs: 90000,
 }
 const logger = { info() {}, warn() {}, error() {}, debug() {} }
@@ -12,7 +12,7 @@ const flush = async () => { for (let i = 0; i < 12; i++) await Promise.resolve()
 function env(now, overrides = {}) {
   mock.timers.enable({ apis: ['Date', 'setTimeout'], now: new Date(now).getTime() })
   const sent = []
-  const onebot = { selfId: '3399202820', async sendGroup(group, message) {
+  const onebot = { selfId: '200000010', async sendGroup(group, message) {
     sent.push({ at: Date.now(), group, message }); return { message_id: sent.length }
   } }
   const dp = createDailyPing({ config: { ...config, ...overrides }, onebot, logger })
@@ -87,12 +87,12 @@ assert.equal(dailyPingTarget(12, 30, new Date('2026-10-04T02:00:00+08:00')).getS
     ],
   })
   const parsed = { text: '🎉 抓到一只新猪猪啦！ 【柠檬猪尾酒】' }
-  await e.dp.noteMessage(response('1822939642'), parsed)
+  await e.dp.noteMessage(response('200000007'), parsed)
   assert.equal(e.dp.state()[config.dailyPingGroup].pig, undefined)
-  await e.dp.noteMessage(response('645679259', 'at'), parsed)
+  await e.dp.noteMessage(response('200000016', 'at'), parsed)
   assert.equal(e.dp.state()[config.dailyPingGroup].pig, undefined)
   assert.ok(e.dp.pendingChain())
-  await e.dp.noteMessage(response('3399202820'), parsed)
+  await e.dp.noteMessage(response('200000010'), parsed)
   assert.equal(e.dp.state()[config.dailyPingGroup].pig, '柠檬猪尾酒')
   await advance(4000)
   assert.equal(e.sent.length, 2, 'own success still triggers the pig pen follow-up')

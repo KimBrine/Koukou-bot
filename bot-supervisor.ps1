@@ -1,20 +1,7 @@
 ﻿<#
-  最小哨兵：**只负责把死掉的进程拉起来，永不杀任何东西。**
-
-  和已经被删掉的那个看门狗的区别（那一个是反面教材）：
-    看门狗：掉线就杀进程重启、每 6 分钟循环、失败还反复重试 → 会误杀、会空转、会刷二维码
-    本脚本：**代码里没有任何 Stop-Process / 重启逻辑**，只有"不在跑 → 启动"
-            → 从原理上就不可能杀错东西，也不可能把健康的东西弄坏
-
-  为什么需要它：一天之内出现过两次长时间静默
-    ① 2026-09-27 13:26 残留锁把启动挡了 → 白停 10 小时
-    ② 2026-09-27 23:56 进程静默死亡，无日志无崩溃记录 → 没人发现
-  这两次只要有个"每 3 分钟看一眼"的东西就能在几分钟内恢复。
-
-  由计划任务 KoukouSupervisor 每 3 分钟以隐藏窗口运行一次。
-  手动排查：
-    powershell -NoProfile -ExecutionPolicy Bypass -File bot-supervisor.ps1            # 立即检查一次
-    powershell -NoProfile -ExecutionPolicy Bypass -File bot-supervisor.ps1 -DryRun    # 只报告，不启动
+  定期检查指定机器人与 NapCat 进程；进程不存在时启动对应计划任务。
+  多实例时仅报告异常，不结束进程。实例参数读取 windows.local.json。
+  -DryRun 仅报告启动动作，不启动任务。
 #>
 param(
   [switch]$DryRun,
@@ -24,6 +11,8 @@ param(
 $ErrorActionPreference = 'SilentlyContinue'
 
 $root      = Split-Path -Parent $MyInvocation.MyCommand.Path
+. (Join-Path $root 'windows-settings.ps1')
+$windowsSettings = Get-KoukouWindowsSettings
 $logDir    = Join-Path $root 'logs'
 $logFile   = Join-Path $logDir 'supervisor.log'
 $logMaxBytes = 1MB
@@ -58,22 +47,25 @@ $actions = @()
 $botProcs = @(Get-CimInstance Win32_Process | Where-Object {
   $_.Name -eq 'node.exe' -and
   $_.CommandLine -match 'index\.js' -and
-  $_.CommandLine -match '--profile=new' -and
+  $_.CommandLine -match ('--profile=' + [regex]::Escape($windowsSettings.BotProfile) + '(?:\s|$)') -and
   $_.CommandLine -notmatch 'dsh|runner|subprocess-local'
 })
 if ($botProcs.Count -eq 0) {
-  $actions += '机器人进程不存在 → 启动 DeepSeekQQBotNew'
-  if (-not $DryRun) { Start-ScheduledTask -TaskName 'DeepSeekQQBotNew' }
+  $actions += ('机器人进程不存在 → 启动 ' + $windowsSettings.BotTaskName)
+  if (-not $DryRun) { Start-ScheduledTask -TaskName $windowsSettings.BotTaskName }
 } elseif ($botProcs.Count -gt 1) {
   # 多实例**不杀**，只报警：单实例锁已经能防住，出现多个说明别的地方有问题，需要人看
   $actions += ('⚠ 发现 {0} 个机器人实例（本脚本不杀进程，请人工确认）' -f $botProcs.Count)
 }
 
 # ── 2. NapCat 进程 ────────────────────────────────────────────
-$napcat = @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -like 'E:\NapCatQQ2\*' })
-if ($napcat.Count -eq 0) {
-  $actions += 'NapCat 进程不存在 → 启动 NapCatQQ2'
-  if (-not $DryRun) { Start-ScheduledTask -TaskName 'NapCatQQ2' }
+$napcat = @()
+if ($windowsSettings.NapCatDir) {
+  $napcat = @(Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -like ($windowsSettings.NapCatDir.TrimEnd('\') + '\*') })
+  if ($napcat.Count -eq 0) {
+    $actions += ('NapCat 进程不存在 → 启动 ' + $windowsSettings.NapCatTaskName)
+    if (-not $DryRun) { Start-ScheduledTask -TaskName $windowsSettings.NapCatTaskName }
+  }
 }
 
 if ($actions.Count -gt 0) {

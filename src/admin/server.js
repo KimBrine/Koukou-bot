@@ -686,7 +686,8 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       // 新实例没有登录态、停在扫码界面，旧实例还占着端口——用户会以为"掉线了"。
       // 目录和任务名走配置（NAPCAT_DIR / NAPCAT_TASK_NAME）：并行跑第二个 NapCat 时，
       // 在新实例的控制台点这个按钮绝不能把旧号重启掉。
-      const dir = String(config.napcatDir || 'E:\\NapCatQQ').replace(/'/g, "''")
+      if (!config.napcatDir) throw new Error('请先设置 NAPCAT_DIR（NapCat 安装目录）')
+      const dir = String(config.napcatDir).replace(/'/g, "''")
       const task = String(config.napcatTaskName || 'NapCatQQ').replace(/'/g, "''")
       const ps = [
         `$dir = '${dir}'`,
@@ -717,7 +718,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       else throw new Error('会话 key 无法识别')
       return { ok: true }
     },
-    /** 手动触发一次「定时指令」（默认：@幽幽子 /今日猪猪），用于验证与补发 */
+    /** 手动触发一次「定时指令」（默认：@示例机器人 /今日猪猪），用于验证与补发 */
     async 'daily-ping'() {
       if (!dailyPing) throw new Error('定时指令模块未启用')
       const ok = await dailyPing.sendNow('控制台手动触发')

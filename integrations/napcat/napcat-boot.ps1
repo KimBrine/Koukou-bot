@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'launcher-settings.ps1')
 $settings = Get-KoukouLauncherSettings
 $installRoot = $settings.NapCatDir

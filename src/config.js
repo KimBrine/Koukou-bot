@@ -91,7 +91,7 @@ export function loadConfig() {
   const proactiveRate = Math.min(1, Math.max(0, num('PROACTIVE_RATE', 0.1)))
 
   /**
-   * 按群独立配置主动搭话概率，形如 PROACTIVE_RATE_PER_GROUP=801944160:0.35,738321128:0.3
+   * 按群独立配置主动搭话概率，形如 PROACTIVE_RATE_PER_GROUP=200000019:0.35,200000017:0.3
    * 未列出的群回落到 PROACTIVE_RATE；盯人（TARGET_WATCH_GROUP）是独立机制，不受这里影响。
    */
   const proactiveRatePerGroup = new Map()
@@ -127,7 +127,7 @@ export function loadConfig() {
 
     // NapCat 实例身份：并行跑第二个机器人时，控制台的"重启 NapCat"必须打到**自己那一套**，
     // 否则在新控制台点一下会把旧号重启掉（旧号正跑着生产流量）。
-    napcatDir: String(env.NAPCAT_DIR ?? 'E:\\NapCatQQ').trim(),
+    napcatDir: String(env.NAPCAT_DIR ?? '').trim(),
     napcatTaskName: String(env.NAPCAT_TASK_NAME ?? 'NapCatQQ').trim(),
 
     // 静音群：在这些群里**完全不出声，连被 @ 也不回**。
@@ -222,14 +222,14 @@ export function loadConfig() {
     targetWatchIntervalMs: Math.max(5000, Math.min(600000, Math.floor(num('TARGET_WATCH_INTERVAL_MS', 15000)))),
 
     // 定时指令：每天定点到指定群 @ 某个账号并发固定内容
-    // （例：每天 00:00 在春雨社 @幽幽子(3889001246) 发「/今日猪猪」，触发对方的机器人）
+    // （例：每天 00:00 在示例群 A @示例机器人(200000015) 发「/今日猪猪」，触发对方的机器人）
     dailyPingEnabled: String(env.DAILY_PING_ENABLED ?? '0').toLowerCase() !== '0' && String(env.DAILY_PING_ENABLED ?? '0').toLowerCase() !== 'false',
     dailyPingTime: String(env.DAILY_PING_TIME ?? '00:00').trim(),
     dailyPingGroup: String(env.DAILY_PING_GROUP ?? '').trim(),
     dailyPingTarget: String(env.DAILY_PING_TARGET ?? '').trim(),
     dailyPingText: String(env.DAILY_PING_TEXT ?? '').trim(),
     // 链式指令：主指令发出后，若目标账号"成功回应"，再补发一条
-    // （例：@幽幽子 /今日猪猪 → 它抓到猪猪 → 再 @它 /我的猪圈）
+    // （例：@示例机器人 /今日猪猪 → 它抓到猪猪 → 再 @它 /我的猪圈）
     dailyPingChainEnabled: String(env.DAILY_PING_CHAIN_ENABLED ?? '1').toLowerCase() !== '0' && String(env.DAILY_PING_CHAIN_ENABLED ?? '1').toLowerCase() !== 'false',
     dailyPingChainText: String(env.DAILY_PING_CHAIN_TEXT ?? '').trim(),
     dailyPingChainWindowMs: Math.max(10000, Math.floor(num('DAILY_PING_CHAIN_WINDOW_MS', 90000))),

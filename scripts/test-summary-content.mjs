@@ -8,8 +8,8 @@ let passed = 0
 const test = (name, fn) => { fn(); passed++; console.log(`PASS ${name}`) }
 const start = Date.parse('2026-10-07T00:00:00+08:00') / 1000
 const records = [
-  ...Array.from({ length: 9 }, (_, i) => ({ id: i, userId: '10001', name: '群友', time: start + i, text: '[@3889001246] / 今日猪猪' })),
-  ...Array.from({ length: 13 }, (_, i) => ({ id: 9 + i, userId: '3889001246', name: '幽幽子', time: start + 20 + i, text: '@群友 🎉 抓到一只新猪猪啦！ 【酒鬼猪】 再来一瓶 > 固定的模板故事。 > 🐝不需要@就可以玩幽幽子的方法' })),
+  ...Array.from({ length: 9 }, (_, i) => ({ id: i, userId: '10001', name: '群友', time: start + i, text: '[@200000015] / 今日猪猪' })),
+  ...Array.from({ length: 13 }, (_, i) => ({ id: 9 + i, userId: '200000015', name: '示例机器人', time: start + 20 + i, text: '@群友 🎉 抓到一只新猪猪啦！ 【酒鬼猪】 再来一瓶 > 固定的模板故事。 > 🐝不需要@就可以玩示例机器人的方法' })),
   { id: 22, userId: '10001', name: '群友', time: start + 40, text: '诶，云猪' },
   ...Array.from({ length: 20 }, (_, i) => ({ id: 23 + i, userId: String(10001 + i % 3), name: `群友${i % 3}`, time: start + 3600 + i * 10, text: `新歌社区争议的观点${i}` })),
   ...Array.from({ length: 100 }, (_, i) => ({ id: 43 + i, userId: String(10001 + i % 3), name: `群友${i % 3}`, time: start + 7200 + i * 10, text: `攻略配置与通关办法${i}` })),
@@ -35,10 +35,10 @@ test('低占比例行猪猪被识别为次要动态', () => { assert.equal(profi
 test('普通猪猪讨论、图片与误带斜杠的聊天不会被当作固定模板', () => {
   for (const text of ['我又抽到酒鬼猪了怎么办？', '我说/今日猪猪是这个指令', '签到活动要怎么报名？', '[图片]']) assert.equal(summaryRoutineKind({ text }), null)
 })
-test('可识别带@和空格的猪猪指令', () => { assert.equal(summaryRoutineKind({ text: '[@3889001246] / 我的猪圈' }), 'pig-command') })
+test('可识别带@和空格的猪猪指令', () => { assert.equal(summaryRoutineKind({ text: '[@200000015] / 我的猪圈' }), 'pig-command') })
 test('猪圈与重复抽取结果保留真实关键值，标明不是原话', () => {
   assert.match(renderSummaryRecordText({ text: '【 @群友 的猪圈】 📦 已收集：50 / 211 ⭐ 收集率：23.70%' }), /已收集 50 \/ 211.*非原话/)
-  assert.match(renderSummaryRecordText({ text: '@群友 💫 这是你第2次抓到这只猪猪啦~ 【云猪】Lv.2 > 🐝不需要@就可以玩幽幽子的方法' }), /云猪，第2次.*非原话/)
+  assert.match(renderSummaryRecordText({ text: '@群友 💫 这是你第2次抓到这只猪猪啦~ 【云猪】Lv.2 > 🐝不需要@就可以玩示例机器人的方法' }), /云猪，第2次.*非原话/)
 })
 test('固定模板压缩不会影响完整统计或普通消息内容', () => {
   assert.ok(renderSummaryRecordText(records[9]).length < records[9].text.length)

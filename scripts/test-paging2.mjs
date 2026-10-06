@@ -1,3 +1,4 @@
+import { getProbeTarget } from './probe-settings.mjs'
 const ws = new WebSocket('ws://127.0.0.1:3001')
 let seq = 0
 const pending = new Map()
@@ -26,7 +27,7 @@ const info = (msgs) => {
 }
 ws.onopen = async () => {
   try {
-    const p1 = await call('get_group_msg_history', { group_id: 794601094, count: 300 })
+    const p1 = await call('get_group_msg_history', { group_id: getProbeTarget('group'), count: 300 })
     console.log('第1页(无seq)      :', info(p1.messages))
     const minSeq = Math.min(...p1.messages.map((m) => Number(m.message_seq) || Infinity))
     console.log(`最小 message_seq = ${minSeq}`)
@@ -37,7 +38,7 @@ ws.onopen = async () => {
       ['seq=minSeq-180  ', { message_seq: minSeq - 180, count: 300 }],
     ]) {
       try {
-        const r = await call('get_group_msg_history', { group_id: 794601094, ...params })
+        const r = await call('get_group_msg_history', { group_id: getProbeTarget('group'), ...params })
         console.log(`第2页(${label}) :`, info(r.messages))
       } catch (e) {
         console.log(`第2页(${label}) : 失败 ${e.message}`)

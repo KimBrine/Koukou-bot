@@ -1,3 +1,4 @@
+import { getProbeTarget } from './probe-settings.mjs'
 /**
  * 复现"群总结只拿到 42 条"：按 runSummary 的完全相同步骤取数，把每一步的数量都打出来，
  * 定位到底在哪一步丢的。
@@ -15,7 +16,7 @@ import { createDailySummary } from '../src/dailySummary.js'
 const config = loadConfig()
 const logger = createLogger('info', null)
 const onebot = new OneBotClient({ url: config.onebotWsUrl, logger })
-const group = Number(process.argv[2] || 1124442491)
+const group = Number(process.argv[2] || getProbeTarget('group'))
 const days = Math.max(1, Math.min(30, Number(process.argv[3]) || 1))
 
 onebot.on('ready', async () => {

@@ -294,7 +294,7 @@ function pageOverview(){
     <details class="advanced-box"><summary>维护与定时指令</summary>
       <div class="toolgroup advanced"><button class="btn" data-act="restart-bot">重启机器人</button>
         <button class="btn" data-act="restart-napcat">重启 NapCat</button>
-        <button class="btn" data-act="daily-ping">立即发定时指令 (@幽幽子)</button></div>
+        <button class="btn" data-act="daily-ping">立即发定时指令 (@示例机器人)</button></div>
     </details>
   </div>
   <div class="section-head"><h2>今日各群已记录消息</h2><span class="note">本地记录，供运行监测</span></div>
@@ -564,7 +564,7 @@ async function bind(){
     const prompts = {
       'restart-bot': ['重启机器人？', '机器人会短暂离线，然后由计划任务重新启动。', '重启'],
       'restart-napcat': ['重启 NapCat？', 'QQ 连接会中断一会儿，机器人在恢复连接后继续工作。', '重启'],
-      'daily-ping': ['立即发送定时指令？', '这会立刻以机器人身份发送 @幽幽子 指令。', '发送'],
+      'daily-ping': ['立即发送定时指令？', '这会立刻以机器人身份发送 @示例机器人 指令。', '发送'],
     }
     if (prompts[act] && !await ask(...prompts[act])) return
     b.disabled = true
@@ -696,7 +696,7 @@ async function bind(){
   const dp = document.getElementById('delPersona')
   if (dp) dp.onclick = async () => {
     const name = document.getElementById('personaSel').value
-    if (!await ask('删除人格？', '「' + name + '」将从本机删除。', '删除')) return
+    if (!await ask('删除人格？', '「' + name + '」将从人格列表和配置文件中删除。', '删除')) return
     try { await api('/api/action/delete-persona', { name }); toast('已删除'); await load() } catch(e){ toast(e.message, true) }
   }
 

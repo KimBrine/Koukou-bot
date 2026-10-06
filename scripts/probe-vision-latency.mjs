@@ -1,3 +1,4 @@
+import { getProbeTarget } from './probe-settings.mjs'
 /**
  * 视觉模型横评：同一张真实群图，分别丢给当前视觉模型和 DeepSeek 自家模型，
  * 比延迟、比描述质量。用来回答"换个模型会不会更快"。
@@ -16,7 +17,7 @@ import { VISION_DESCRIBE_PROMPT, VISION_DESCRIBE_ASK, sanitizeImageDescription }
 const config = loadConfig()
 const logger = createLogger('warn', null)
 const onebot = new OneBotClient({ url: config.onebotWsUrl, logger })
-const group = Number(process.argv[2] || 1124442491)
+const group = Number(process.argv[2] || getProbeTarget('group'))
 const rounds = Math.max(1, Math.min(5, Number(process.argv[3]) || 2))
 
 // 被测模型：当前用的 + DeepSeek 自家两个

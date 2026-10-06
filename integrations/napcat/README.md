@@ -1,25 +1,23 @@
-# NapCat 启动中心源码
+# NapCat 启动中心
 
-这里保存 Koukou 自己维护的启动窗口、真实在线状态检查及启动脚本。NapCat、QQ 客户端及 DLL 由各自项目提供，需单独安装；QQ 登录态、WebUI Token 和密码散列保存在安装目录或本机配置中。
+提供启动窗口、QQ 实际在线检查和计划任务入口。NapCat、QQ 与 DLL 需单独安装。登录凭据从部署配置读取。
 
 ## 配置
 
-1. 把 `launcher.example.json` 复制为 `launcher.local.json`。
-2. 填写 `napcatDir`（NapCat 安装目录）、`botEnvFile`（当前机器人实例的 `.env`）和 `taskName`（已有 NapCat 计划任务名）。`account` 可留空，首次用扫码登录。
-3. 双击 `napcat-control.vbs` 打开启动中心。状态检查区分「进程存在」「OneBot 已连接」与「QQ 实际在线」。
-4. 如需使用仓库中的启动脚本，可把计划任务操作指向 `wscript.exe "本目录\napcat-boot-hidden.vbs"`。先关闭旧实例，确保一个账号只有一个 NapCat 实例，再切换启动方式。
+1. 将 `launcher.example.json` 复制为 `launcher.local.json`。
+2. 设置 `napcatDir`（安装目录）、`botEnvFile`（机器人实例 `.env`）和 `taskName`（已有 NapCat 计划任务）。`account` 可留空。
+3. 双击 `napcat-control.vbs` 打开窗口。窗口从 NapCat 的 `napcat/config/webui.json` 读取 WebUI Token，并带入登录页。
+4. 如需使用提供的启动入口，将计划任务操作指向 `wscript.exe`，参数为 `napcat-boot-hidden.vbs` 的完整路径；确保一个账号只运行一个 NapCat 实例。
 
-`launcher.local.json`、`.env.napcat` 都被 Git 忽略。窗口从 NapCat 本机 `napcat/config/webui.json` 读取登录 Token，打开登录页时自动带入。
-
-## 本机现状
-
-当前桌面启动中心使用此目录的源码，配置文件在本地；已有 `NapCatQQ2` 计划任务仍使用原安装目录中的启动入口，保留原来的本机登录配置。
+`launcher.local.json` 与 `.env.napcat` 被 Git 忽略。需要快速登录参数时，复制 `.env.napcat.example` 为 `.env.napcat` 并填写；首次登录或需要验证时使用扫码流程。
 
 ## 文件
 
 | 文件 | 作用 |
 | --- | --- |
-| `napcat-control.ps1` / `.vbs` | 启动窗口与隐藏窗口入口 |
-| `napcat-status.ps1` | 真实连接检查，避免用端口监听冒充在线 |
-| `launcher-settings.ps1` | 从本机配置读取路径与任务名 |
-| `napcat-boot.ps1` / `napcat-boot-hidden.vbs` | 可配置路径的启动入口，凭据从本机文件读取 |
+| `napcat-control.ps1` / `.vbs` | 启动窗口与隐藏入口 |
+| `napcat-status.ps1` | 区分进程存在、OneBot 连接与 QQ 实际在线 |
+| `launcher-settings.ps1` | 加载目录、实例配置及任务名 |
+| `napcat-boot.ps1` / `napcat-boot-hidden.vbs` | 从独立配置读取路径与登录参数的启动入口 |
+
+在线核验会匹配 OneBot 地址，并读取机器人 `.env` 中 `ADMIN_PORT` 对应控制台的实际连接结果。

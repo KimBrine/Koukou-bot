@@ -17,7 +17,7 @@ import { createRateLimiter } from '../src/humanize.js'
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const config = loadConfig()
 
-const groupId = Number(process.argv[2] || 801944160)
+const groupId = Number(process.argv[2] || 200000019)
 const days = Math.max(1, Math.min(30, Number(process.argv[3]) || 1))
 const ROUNDS = Math.max(1, Number(process.argv[4]) || 2000)
 

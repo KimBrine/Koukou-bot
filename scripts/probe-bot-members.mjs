@@ -1,3 +1,4 @@
+import { getProbeTarget } from './probe-settings.mjs'
 /**
  * 看看群成员里"像机器人"的账号有哪些可判别的特征。
  *   node scripts/probe-bot-members.mjs [群号]
@@ -10,7 +11,7 @@ import { OneBotClient } from '../src/onebot.js'
 const config = loadConfig()
 const logger = createLogger('warn', null)
 const onebot = new OneBotClient({ url: config.onebotWsUrl, logger })
-const group = Number(process.argv[2] || 1124442491)
+const group = Number(process.argv[2] || getProbeTarget('group'))
 
 const BOTISH = /(群管家|群助手|机器人|小助手|【店员】|【客服】|【机器人】|[Bb]ot$|官方|安全中心|腾讯|QQ空间|QQ会员)/
 

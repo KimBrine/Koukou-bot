@@ -1,7 +1,8 @@
+import { getProbeTarget } from './probe-settings.mjs'
 /**
  * 图片回复回归验证：把当时闯祸的那张图，同时跑「旧流程」和「新流程」做对照。
  *
- *   2026-09-23 22:20 群 1124442491，群友 714qc 发了张图，机器人回了：
+ *   2026-09-23 22:20 群 200000002，群友 714qc 发了张图，机器人回了：
  *   「这是一段非常典型的**大学生QQ群…以下是对这段聊天记录及最后图片的详细解读：### 1. 核心事件：…」
  *
  *   旧流程：人设提示词 + 历史 + 图片 一起丢给视觉模型，让它直接写回复 → 写成分析报告
@@ -29,7 +30,7 @@ import {
 const config = loadConfig()
 const logger = createLogger('warn', null)
 const onebot = new OneBotClient({ url: config.onebotWsUrl, logger })
-const group = Number(process.argv[2] || 1124442491)
+const group = Number(process.argv[2] || getProbeTarget('group'))
 const count = Math.max(20, Math.min(200, Number(process.argv[3]) || 120))
 
 const visionLLM = new DeepSeekClient({

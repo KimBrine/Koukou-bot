@@ -1,3 +1,4 @@
+import { getProbeTarget } from './probe-settings.mjs'
 /**
  * 问 NapCat：某个群最近到底有没有新消息（与机器人自己收没收到做对照）。
  *   node scripts/probe-group-activity.mjs [群号] [条数]
@@ -11,7 +12,7 @@ import { parseMessage } from '../src/cq.js'
 const config = loadConfig()
 const logger = createLogger('warn', null)
 const onebot = new OneBotClient({ url: config.onebotWsUrl, logger })
-const group = Number(process.argv[2] || 1121936348)
+const group = Number(process.argv[2] || getProbeTarget('group'))
 const count = Math.max(5, Math.min(100, Number(process.argv[3]) || 20))
 
 onebot.on('ready', async () => {

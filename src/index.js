@@ -218,7 +218,7 @@ const replyLog = new Map() // `${groupId}:${userId}` -> 上次回复时间戳
 const rateLimiter = createRateLimiter({ perHour: config.rateLimitPerHour, minGapMs: config.rateLimitMinGapMs })
 const targetWatch = createTargetWatch({ config, logger, onebot, llm, memory, buildSystemPrompt: systemPrompt, replyLog, rateLimiter })
 
-// 定时指令：每天定点到指定群 @ 某个账号发固定内容（当前：每天 00:00 在春雨社 @幽幽子 发 /今日猪猪）
+// 定时指令：按配置时点到指定群 @ 目标账号，发送固定内容。
 const dailyPing = createDailyPing({
   config,
   logger,

@@ -7,7 +7,7 @@ const classic = [
   { type: 'face', data: { id: '13', raw: { faceIndex: 13, faceText: null } } },
   { type: 'face', data: { id: '182', raw: { faceIndex: 182, faceText: null } } },
 ]
-console.log(' →', JSON.stringify(parseMessage(classic, '3883059067').text))
+console.log(' →', JSON.stringify(parseMessage(classic, '200000014').text))
 
 console.log('\n=== 2. 解析新版表情（NapCat 带 faceText）===')
 const modern = [
@@ -15,14 +15,14 @@ const modern = [
   { type: 'text', data: { text: '你说得对' } },
   { type: 'face', data: { id: '476', raw: { faceIndex: 476, faceText: '/不是吧' } } },
 ]
-console.log(' →', JSON.stringify(parseMessage(modern, '3883059067').text))
+console.log(' →', JSON.stringify(parseMessage(modern, '200000014').text))
 
 console.log('\n=== 3. 解析未知表情 id ===')
 const unknown = [{ type: 'face', data: { id: '9999', raw: null } }]
-console.log(' →', JSON.stringify(parseMessage(unknown, '3883059067').text))
+console.log(' →', JSON.stringify(parseMessage(unknown, '200000014').text))
 
 console.log('\n=== 4. CQ 码文本格式 ===')
-console.log(' →', JSON.stringify(parseMessage('早上好[CQ:face,id=14] 今天也要加油[CQ:face,id=149]', '3883059067').text))
+console.log(' →', JSON.stringify(parseMessage('早上好[CQ:face,id=14] 今天也要加油[CQ:face,id=149]', '200000014').text))
 
 console.log('\n=== 5. 出站：模型回复转成 QQ 表情 CQ 码 ===')
 const replies = [

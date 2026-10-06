@@ -10,51 +10,17 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    env:
-      KOUKOU_CI_DIR: ${{ runner.os == 'Windows' && format('{0}/koukou-ci', runner.temp) || github.workspace }}
     steps:
-      - name: Checkout source (Linux)
-        if: runner.os != 'Windows'
+      - name: Checkout source
         uses: actions/checkout@v7
         with:
           persist-credentials: false
-      # Windows drops the trailing dot in Koukou.'s default workspace directory.
-      # checkout's workspace validation fails there, so fetch into RUNNER_TEMP.
-      - name: Checkout source (Windows path workaround)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        working-directory: ${{ runner.temp }}
-        env:
-          CI_READ_TOKEN: ${{ github.token }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $sourceDir = $env:KOUKOU_CI_DIR
-          $repositoryUrl = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY.git"
-          git init --quiet $sourceDir
-          if ($LASTEXITCODE -ne 0) { throw 'git init failed' }
-          git -C $sourceDir remote add origin $repositoryUrl
-          if ($LASTEXITCODE -ne 0) { throw 'git remote add failed' }
-          $basicAuth = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("x-access-token:$env:CI_READ_TOKEN"))
-          Write-Output "::add-mask::$basicAuth"
-          $env:GIT_CONFIG_COUNT = '1'
-          $env:GIT_CONFIG_KEY_0 = "http.$env:GITHUB_SERVER_URL/.extraheader"
-          $env:GIT_CONFIG_VALUE_0 = "AUTHORIZATION: basic $basicAuth"
-          $env:GIT_TERMINAL_PROMPT = '0'
-          try {
-            git -C $sourceDir -c credential.helper= fetch --quiet --no-tags --depth=1 origin $env:GITHUB_SHA
-            if ($LASTEXITCODE -ne 0) { throw 'git fetch failed' }
-          } finally {
-            Remove-Item Env:GIT_CONFIG_COUNT, Env:GIT_CONFIG_KEY_0, Env:GIT_CONFIG_VALUE_0, Env:CI_READ_TOKEN
-          }
-          git -C $sourceDir checkout --quiet --detach FETCH_HEAD
-          if ($LASTEXITCODE -ne 0) { throw 'git checkout failed' }
-      - uses: actions/setup-node@v7
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
           package-manager-cache: false
       - name: Scan versioned files
-        working-directory: ${{ env.KOUKOU_CI_DIR }}
         run: npm run check:repo
       - name: Run offline tests
-        working-directory: ${{ env.KOUKOU_CI_DIR }}
         run: npm test

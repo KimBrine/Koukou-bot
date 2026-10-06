@@ -1,0 +1,7 @@
+{
+  "botEnvFile": ".env",
+  "botProfile": "main",
+  "botTaskName": "DeepSeekQQBot",
+  "napcatDir": "C:\\Applications\\NapCatQQ",
+  "napcatTaskName": "NapCatQQ"
+}

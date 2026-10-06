@@ -1,3 +1,4 @@
+import { getProbeTarget } from './probe-settings.mjs'
 /**
  * 查指定昵称/名片的人在群里的当前状态（核实名单为什么变了）。
  *   node scripts/probe-member-names.mjs [群号] 名字1 名字2 ...
@@ -11,7 +12,7 @@ import { checkName, displayName, isLikelyBot } from '../src/idCheck.js'
 const config = loadConfig()
 const logger = createLogger('warn', null)
 const onebot = new OneBotClient({ url: config.onebotWsUrl, logger })
-const group = Number(process.argv[2] || 1124442491)
+const group = Number(process.argv[2] || getProbeTarget('group'))
 const wanted = process.argv.slice(3)
 
 onebot.on('ready', async () => {

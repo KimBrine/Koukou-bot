@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const dataDir = path.join(root, 'data')
-const TARGET = '794601094'
+const TARGET = '200000018'
 
 function dirSize(dir) {
   let total = 0

@@ -4,7 +4,7 @@ export function summaryRoutineKind(record) {
   const command = text.replace(/^(?:\[@\d+\]\s*)+/, '').trim()
   if (/^\/\s*(?:今日猪猪|我的猪圈)\s*$/.test(command)) return 'pig-command'
   if (/^\/\s*(?:签到|打卡|今日运势|今日老婆|抽签)\s*$/.test(command)) return 'routine-command'
-  if ((text.includes('不需要@就可以玩幽幽子的方法') && /抓到.*猪猪/.test(text)) ||
+  if ((/不需要@就可以玩[^\r\n]{1,40}的方法/u.test(text) && /抓到.*猪猪/.test(text)) ||
       /^【\s*@.+的猪圈】\s*📦\s*已收集\s*[:：]/u.test(text)) return 'pig-result'
   return null
 }

@@ -198,7 +198,7 @@ console.log('\n=== 10. 历史翻页与报告分卡的端到端行为（本地模
   }
   const config = {
     dataDir: '__missing_summary_test_data__',
-    summaryEnabled: true, summaryGroups: [1124442491], whitelistGroups: new Set(),
+    summaryEnabled: true, summaryGroups: [200000002], whitelistGroups: new Set(),
     summaryMaxMessages: 600, summaryMaxBlocks: 5, summarySendMode: 'forward',
     summaryUserRows: 20, botName: '测试机器人',
   }
@@ -207,12 +207,12 @@ console.log('\n=== 10. 历史翻页与报告分卡的端到端行为（本地模
     return '💬 热门话题\n' + Array.from({ length: 12 }, (_, i) => `${i + 1}. 第${i + 1}件事\n   参与者: 测试群友\n   简短描述`).join('\n\n') + '\n\n🏆 群友称号\n• 测试群友 - 测试称号\n  依据真实发言数据。\n\n💬 群圣经\n1. "测试消息" —— 测试群友\n  测试点评。'
   } }
   const service = createDailySummary({ config, logger, onebot, llm })
-  const preview = await service.previewStats(1124442491)
+  const preview = await service.previewStats(200000002)
   ok('首屏虽已跨过零点仍继续回溯', latest[0].time < start && calls[1].seq === 5)
   ok('首屏之后从最新 seq 显式向更早消息翻阅', calls[0].seq === null && calls[1].seq === 5 && calls[1].reverseOrder === true && calls[2].seq === 3)
   ok('缓存补齐后重复扫描直到稳定', round === 3 && preview.complete)
   ok('跨页去重且仅统计今天消息', preview.stats.total === 5, `→ ${preview.stats.total}`)
-  await service.runSummary(1124442491)
+  await service.runSummary(200000002)
   ok('超长报告分成多张卡片', cards.length > 1 && cards.every((c) => c.nodes.length <= 5), `→ ${cards.map((c) => c.nodes.length)}`)
   ok('每个顶层条目保持独立节点', cards.flatMap((c) => c.nodes).filter((n) => /(?:^|\n)\d+\. 第\d+件事/.test(n.text)).length === 12)
 }
@@ -221,14 +221,14 @@ console.log('\n=== 11. 历史接口失败时不发送残缺报告 ===')
 {
   let sent = 0
   const service = createDailySummary({
-    config: { dataDir: '__missing_summary_test_data__', summaryEnabled: true, summaryGroups: [1124442491], whitelistGroups: new Set(), summaryMaxMessages: 600, summaryMaxBlocks: 20, summarySendMode: 'forward', summaryUserRows: 20, botName: '测试机器人' },
+    config: { dataDir: '__missing_summary_test_data__', summaryEnabled: true, summaryGroups: [200000002], whitelistGroups: new Set(), summaryMaxMessages: 600, summaryMaxBlocks: 20, summarySendMode: 'forward', summaryUserRows: 20, botName: '测试机器人' },
     logger: { info() {}, warn() {}, error() {} },
     onebot: { selfId: '99999', async getGroupMsgHistory() { throw new Error('断线') }, async sendGroupForward() { sent++ }, async sendGroup() { sent++ } },
     llm: { async chat() { throw new Error('不应调用模型') } },
   })
-  const preview = await service.previewStats(1124442491)
+  const preview = await service.previewStats(200000002)
   ok('预览明确标记历史不完整', preview.complete === false)
-  await service.runSummary(1124442491)
+  await service.runSummary(200000002)
   ok('历史不完整时不发送报告', sent === 0)
 }
 

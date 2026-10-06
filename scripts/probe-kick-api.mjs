@@ -1,3 +1,4 @@
+import { getProbeTarget } from './probe-settings.mjs'
 /**
  * 安全验证 set_group_kick 这个接口本身能不能用（**不碰任何真人**）。
  *
@@ -15,7 +16,7 @@ import { OneBotClient } from '../src/onebot.js'
 const config = loadConfig()
 const logger = createLogger('warn', null)
 const onebot = new OneBotClient({ url: config.onebotWsUrl, logger })
-const group = Number(process.argv[2] || 1124442491)
+const group = Number(process.argv[2] || getProbeTarget('group'))
 const victim = String(process.argv[3] || '1000000001')
 
 onebot.on('ready', async () => {

@@ -1,3 +1,4 @@
+import { getProbeTarget } from './probe-settings.mjs'
 const ws = new WebSocket('ws://127.0.0.1:3001')
 let seq = 0
 const pending = new Map()
@@ -20,7 +21,7 @@ ws.onmessage = (ev) => {
 }
 ws.onopen = async () => {
   try {
-    const hist = await call('get_group_msg_history', { group_id: 794601094, count: 30 })
+    const hist = await call('get_group_msg_history', { group_id: getProbeTarget('group'), count: 30 })
     const msgs = hist.messages || []
     console.log(`历史 ${msgs.length} 条，取最近一条测试 get_msg`)
     for (const m of msgs.slice(0, 3)) {

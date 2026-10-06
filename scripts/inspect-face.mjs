@@ -21,7 +21,7 @@ ws.onmessage = (ev) => {
 
 ws.onopen = async () => {
   const faces = []
-  for (const gid of [794601094, 801944160, 738321128]) {
+  for (const gid of [200000018, 200000019, 200000017]) {
     try {
       const res = await call('get_group_msg_history', { group_id: gid, count: 200 })
       for (const m of res.messages || []) {

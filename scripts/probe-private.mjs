@@ -1,3 +1,4 @@
+import { getProbeTarget } from './probe-settings.mjs'
 /**
  * 私聊诊断：好友列表、指定用户的私聊历史、以及机器人账号自身状态。
  *   node scripts/probe-private.mjs [QQ号]
@@ -11,7 +12,7 @@ import { parseMessage } from '../src/cq.js'
 const config = loadConfig()
 const logger = createLogger('warn', null)
 const onebot = new OneBotClient({ url: config.onebotWsUrl, logger })
-const target = String(process.argv[2] || '1822939642')
+const target = String(process.argv[2] || getProbeTarget('user'))
 
 const fmt = (sec) => (sec ? new Date(Number(sec) * 1000).toLocaleString('zh-CN', { hour12: false }) : '—')
 

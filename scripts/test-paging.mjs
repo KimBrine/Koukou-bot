@@ -1,3 +1,4 @@
+import { getProbeTarget } from './probe-settings.mjs'
 const ws = new WebSocket('ws://127.0.0.1:3001')
 let seq = 0
 const pending = new Map()
@@ -25,12 +26,12 @@ const fmt = (msgs) => {
 }
 ws.onopen = async () => {
   try {
-    const p1 = await call('get_group_msg_history', { group_id: 801944160 })
+    const p1 = await call('get_group_msg_history', { group_id: getProbeTarget('group') })
     console.log('无 seq        :', fmt(p1.messages))
     const minSeq = Math.min(...p1.messages.map((m) => m.message_seq))
-    const p2 = await call('get_group_msg_history', { group_id: 801944160, message_seq: minSeq })
+    const p2 = await call('get_group_msg_history', { group_id: getProbeTarget('group'), message_seq: minSeq })
     console.log('seq=minSeq    :', fmt(p2.messages))
-    const p3 = await call('get_group_msg_history', { group_id: 801944160, message_seq: minSeq - 1 })
+    const p3 = await call('get_group_msg_history', { group_id: getProbeTarget('group'), message_seq: minSeq - 1 })
     console.log('seq=minSeq-1  :', fmt(p3.messages))
     process.exit(0)
   } catch (e) {

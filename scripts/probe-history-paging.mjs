@@ -1,3 +1,4 @@
+import { getProbeTarget } from './probe-settings.mjs'
 /**
  * 验证 NapCat 的群历史接口：一次请求能拿回多少？能不能用 message_seq 翻页拿更早的？
  * 这决定了"群总结只能拿到 42 条"是不是接口限制、以及能不能修。
@@ -14,7 +15,7 @@ import { parseMessage } from '../src/cq.js'
 const config = loadConfig()
 const logger = createLogger('warn', null)
 const onebot = new OneBotClient({ url: config.onebotWsUrl, logger })
-const group = Number(process.argv[2] || 1124442491)
+const group = Number(process.argv[2] || getProbeTarget('group'))
 
 onebot.on('ready', async () => {
   try {

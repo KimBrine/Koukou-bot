@@ -1,4 +1,4 @@
-function Get-KoukouLauncherSettings {
+﻿function Get-KoukouLauncherSettings {
   $settingsFile = Join-Path $PSScriptRoot 'launcher.local.json'
   if (-not (Test-Path -LiteralPath $settingsFile)) {
     throw 'Copy launcher.example.json to launcher.local.json and set your NapCat installation directory.'

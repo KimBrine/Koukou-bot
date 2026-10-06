@@ -2,7 +2,7 @@
  * 补录一次"今日已办"（用于修复上线之前已经发生过、但没被记录的抽猪）。
  *
  *   node scripts/test-daily-ping.mjs                     # 正常手动触发（会真的发消息）
- *   node scripts/seed-daily-ping.mjs 801944160 柠檬猪     # 补录：今天该群已抽到「柠檬猪」
+ *   node scripts/seed-daily-ping.mjs 200000019 柠檬猪     # 补录：今天该群已抽到「柠檬猪」
  *
  * 做两件事：
  *   1. 写 data/daily-ping-state.json（注入系统提示词用，机器人当天不会再忘）
@@ -48,7 +48,7 @@ try {
   const mem = existsSync(memoryFile) ? JSON.parse(readFileSync(memoryFile, 'utf8')) : {}
   const list = Array.isArray(mem[key]) ? mem[key] : []
   const target = config.dailyPingTarget
-  const nick = String(process.argv[4] || '幽幽子')
+  const nick = String(process.argv[4] || '示例机器人')
   const entries = [`@${nick} ${config.dailyPingText}`, `@${nick} ${config.dailyPingChainText}`]
   for (const content of entries) {
     if (!list.some((m) => m.role === 'assistant' && m.content === content)) {

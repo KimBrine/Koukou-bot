@@ -3,7 +3,7 @@ import { buildSummaryPrompt } from '../src/dailySummary.js'
 import { parseMessage } from '../src/cq.js'
 
 const config = loadConfig()
-const GROUP = Number(process.argv[2] || 794601094)
+const GROUP = Number(process.argv[2] || 200000018)
 
 const ws = new WebSocket(config.onebotWsUrl)
 let seq = 0

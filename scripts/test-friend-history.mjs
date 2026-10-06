@@ -1,3 +1,4 @@
+import { getProbeTarget } from './probe-settings.mjs'
 const ws = new WebSocket('ws://127.0.0.1:3001')
 let seq = 0
 const pending = new Map()
@@ -21,7 +22,7 @@ ws.onmessage = (ev) => {
 ws.onopen = async () => {
   try {
     // NapCat 私聊历史接口（非标准，NapCat 支持）
-    const res = await call('get_friend_msg_history', { user_id: 1822939642, count: 20 })
+    const res = await call('get_friend_msg_history', { user_id: getProbeTarget('user'), count: 20 })
     const msgs = res.messages || []
     console.log(`私聊历史 ${msgs.length} 条`)
     for (const m of msgs.slice(-8)) {

@@ -3,7 +3,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const src = 'E:/NapCatQQ/napcat/static/assets/qface-BZLvZXJ8.js'
+const src = process.argv[2]
+if (!src) throw new Error('用法：node scripts/gen-face-table.mjs <NapCat 的 qface-*.js 路径>')
 const raw = readFileSync(src, 'utf8')
 
 // 结构：{"QSid":"179","QDes":"/doge","IQLid":"149",...}

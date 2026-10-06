@@ -1,3 +1,4 @@
+import { getProbeTarget } from './probe-settings.mjs'
 import { loadConfig as loadRepoLocalConfig } from '../src/config.js'
 const repoLocalConfig = loadRepoLocalConfig()
 
@@ -33,7 +34,7 @@ ws.onmessage = (ev) => {
 }
 ws.onopen = async () => {
   try {
-    const res = await call('get_friend_msg_history', { user_id: 1822939642, count: 20 })
+    const res = await call('get_friend_msg_history', { user_id: getProbeTarget('user'), count: 20 })
     let url = null
     for (const m of (res.messages || []).slice().reverse()) {
       if (Array.isArray(m.message)) {

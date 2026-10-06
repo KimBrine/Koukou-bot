@@ -1,3 +1,4 @@
+import { getProbeTarget } from './probe-settings.mjs'
 /**
  * 群聊报告实测脚本。
  *
@@ -44,7 +45,7 @@ const summaryPromptFn = (opts) => {
 const daily = createDailySummary({ config, logger, onebot, llm, buildSummaryPromptFn: summaryPromptFn })
 
 onebot.on('ready', async () => {
-  const group = Number(process.argv[2] || 801944160)
+  const group = Number(process.argv[2] || getProbeTarget('group'))
   const days = Math.max(1, Math.min(30, Number(process.argv[3]) || 1))
   console.log(`== 模式 ${mode}｜群 ${group}｜最近 ${days} 天 ==`)
   try {

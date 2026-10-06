@@ -39,7 +39,7 @@ const good = [
   ['1009', '1009'],
   ['1012 谁', '1012'],
   ['605方铁', '605'], // 没空格也认，避免误伤
-  ['  804 幽幽子  ', '804'], // 前后空格被 trim
+  ['  804 示例机器人  ', '804'], // 前后空格被 trim
   ['1001 小明', '1001'],
   ['699 名字', '699'],
   ['1000', '1000'],
@@ -159,17 +159,17 @@ const members = [
   { user_id: 1, card: '602 方铁', nickname: 'a', role: 'owner' },
   { user_id: 2, card: '', nickname: 'Absinth' },
   { user_id: 3, card: '1102 赵六', nickname: 'c' },
-  { user_id: 3883059067, card: '机器人自己', nickname: 'bot' }, // 应被 selfId 跳过
+  { user_id: 200000014, card: '机器人自己', nickname: 'bot' }, // 应被 selfId 跳过
   { user_id: 5, card: '1009 谁', nickname: 'e' },
   { user_id: 6, card: '502 王五', nickname: 'f' },
   { user_id: 999, card: '随便', nickname: 'g' }, // 应被 skip 跳过
   { user_id: '', card: 'x' }, // 无 user_id，跳过
 ]
-const res = checkMembers(members, { selfId: '3883059067', skip: ['999'] })
+const res = checkMembers(members, { selfId: '200000014', skip: ['999'] })
 ok('total 只数真正参与核对的人', res.total === 5, `→ ${res.total}`)
 ok('合格 2 人', res.ok.length === 2, `→ ${res.ok.map((o) => o.name).join(' / ')}`)
 ok('不合格 3 人', res.bad.length === 3, `→ ${res.bad.map((b) => b.name).join(' / ')}`)
-ok('机器人自己被跳过', ![...res.ok, ...res.bad].some((x) => x.userId === '3883059067'))
+ok('机器人自己被跳过', ![...res.ok, ...res.bad].some((x) => x.userId === '200000014'))
 ok('skip 名单被跳过', ![...res.ok, ...res.bad].some((x) => x.userId === '999'))
 ok('bad 带 role 字段', res.bad.every((b) => typeof b.role === 'string'))
 ok('成员列表非数组时不崩', checkMembers(null).total === 0)
@@ -246,22 +246,22 @@ const mixed = [
   { user_id: 2, nickname: 'Absinth' },
   { user_id: 3, nickname: 'Q群管家', is_robot: true }, // QQ 机器人
   { user_id: 4, nickname: '【店员】店员猫', is_robot: false }, // 名字特征
-  { user_id: 3883059067, card: '604 Koukou.（机器人）' }, // 机器人自己
+  { user_id: 200000014, card: '604 Koukou.（机器人）' }, // 机器人自己
   { user_id: 6, nickname: '静玉' },
 ]
-const m1 = checkMembers(mixed, { selfId: '3883059067' })
+const m1 = checkMembers(mixed, { selfId: '200000014' })
 ok('total 只数真正核对的人', m1.total === 3, `→ ${m1.total}`)
 ok('不合格 2 人（Absinth / 静玉）', m1.bad.length === 2, `→ ${m1.bad.map((b) => b.name).join(' / ')}`)
 ok('skipped 记了 3 个人', m1.skipped.length === 3, `→ ${m1.skipped.map((s) => `${s.name}:${s.why}`).join('、')}`)
-ok('机器人自己标注为「机器人自己」', m1.skipped.find((s) => s.userId === '3883059067')?.why === '机器人自己')
+ok('机器人自己标注为「机器人自己」', m1.skipped.find((s) => s.userId === '200000014')?.why === '机器人自己')
 ok('is_robot 标为「QQ 机器人账号」', m1.skipped.find((s) => s.userId === '3')?.why === 'QQ 机器人账号')
 ok('名字特征标为「名字像服务账号」', m1.skipped.find((s) => s.userId === '4')?.why === '名字像服务账号')
-ok('被跳过的人不出现在 bad 里', !m1.bad.some((b) => ['3', '4', '3883059067'].includes(b.userId)))
+ok('被跳过的人不出现在 bad 里', !m1.bad.some((b) => ['3', '4', '200000014'].includes(b.userId)))
 
-const m2 = checkMembers(mixed, { selfId: '3883059067', skipBots: false })
+const m2 = checkMembers(mixed, { selfId: '200000014', skipBots: false })
 ok('skipBots=false 时不按名字/标志跳（只剩自己）', m2.skipped.length === 1 && m2.bad.length === 4, `→ bad=${m2.bad.length}`)
 
-const m3 = checkMembers(mixed, { selfId: '3883059067', skip: ['2'] })
+const m3 = checkMembers(mixed, { selfId: '200000014', skip: ['2'] })
 ok('ID_CHECK_SKIP 名单生效', m3.bad.length === 1 && m3.skipped.some((s) => s.userId === '2'))
 ok('跳过原因是 ID_CHECK_SKIP 指定跳过', m3.skipped.find((s) => s.userId === '2')?.why === 'ID_CHECK_SKIP 指定跳过')
 ok('自定义 botNameRe 可覆盖默认', checkMembers([{ user_id: 9, nickname: '张三' }], { botNameRe: /张三/ }).total === 0)
@@ -300,29 +300,29 @@ const shouldNot = [
 for (const t of shouldNot) ok(`不触发: ${JSON.stringify(t)}`, ID_CHECK_CMD_RE.test(t.trim()) === false)
 
 console.log('\n=== 15. canRunIdCheck：只有授权 QQ 能触发 ===')
-const ops = ['1822939642', '1641362767']
-ok('授权名单里的 QQ 放行', canRunIdCheck('1822939642', ops) === true)
-ok('第二个授权 QQ 也放行', canRunIdCheck('1641362767', ops) === true)
-ok('数字类型 QQ 也认', canRunIdCheck(1822939642, ops) === true)
-ok('没授权的群员被拦', canRunIdCheck('3757025825', ops) === false)
-ok('机器人自己被拦（不该自己触发自己）', canRunIdCheck('3883059067', ops) === false)
+const ops = ['200000007', '200000006']
+ok('授权名单里的 QQ 放行', canRunIdCheck('200000007', ops) === true)
+ok('第二个授权 QQ 也放行', canRunIdCheck('200000006', ops) === true)
+ok('数字类型 QQ 也认', canRunIdCheck(200000007, ops) === true)
+ok('没授权的群员被拦', canRunIdCheck('200000013', ops) === false)
+ok('机器人自己被拦（不该自己触发自己）', canRunIdCheck('200000014', ops) === false)
 ok('拿不到 QQ 时拦下（保守）', canRunIdCheck(undefined, ops) === false)
 ok('拿不到 QQ（null）时拦下', canRunIdCheck(null, ops) === false)
 ok('空字符串 QQ 被拦', canRunIdCheck('', ops) === false)
-ok('号码前缀相同但不相等 → 拦（不做前缀匹配）', canRunIdCheck('182293964', ops) === false)
-ok('前后带空格的 QQ 也认', canRunIdCheck(' 1822939642 ', ops) === true)
-ok('名单项带空格也能匹配上', canRunIdCheck('1822939642', [' 1822939642 ', '']) === true)
+ok('号码前缀相同但不相等 → 拦（不做前缀匹配）', canRunIdCheck('200000020', ops) === false)
+ok('前后带空格的 QQ 也认', canRunIdCheck(' 200000007 ', ops) === true)
+ok('名单项带空格也能匹配上', canRunIdCheck('200000007', [' 200000007 ', '']) === true)
 ok('名单为空 → 不限制（谁都能触发）', canRunIdCheck('999', []) === true)
 ok('名单不是数组 → 不限制', canRunIdCheck('999', null) === true)
 
 console.log('\n=== 16. 配置链路：.env → loadConfig → 授权判定 ===')
-process.env.ID_CHECK_OPERATORS = '1822939642, 1641362767 ,'
+process.env.ID_CHECK_OPERATORS = '200000007, 200000006 ,'
 const { loadConfig } = await import('../src/config.js')
 const cfg = loadConfig()
 ok('解析出 2 个授权 QQ', cfg.idCheckOperators.length === 2, `→ ${JSON.stringify(cfg.idCheckOperators)}`)
-ok('空格被清掉', cfg.idCheckOperators.includes('1641362767'))
+ok('空格被清掉', cfg.idCheckOperators.includes('200000006'))
 ok('空项被丢掉', !cfg.idCheckOperators.includes(''))
-ok('配置里的人能触发', canRunIdCheck('1822939642', cfg.idCheckOperators) === true)
+ok('配置里的人能触发', canRunIdCheck('200000007', cfg.idCheckOperators) === true)
 ok('配置外的人被拦', canRunIdCheck('1234567', cfg.idCheckOperators) === false)
 ok(
   'ID_CHECK_PER_MESSAGE 解析为非负整数（0 = 不拆分）',
@@ -350,21 +350,21 @@ for (const both of ['/id_check /id_check_kick', '/id_check_kick /id_check', '/id
 }
 
 console.log('\n=== 19. canKickNow：五条前置条件逐条验 ===')
-const OPS = ['1822939642', '1641362767']
+const OPS = ['200000007', '200000006']
 const NOW = 1_700_000_000_000
 const mkRec = (over = {}) => ({
-  group_id: 1124442491,
+  group_id: 200000002,
   at: NOW - 60_000, // 1 分钟前
   kicked: false,
   bad: [{ userId: '1', name: 'Absinth' }, { userId: '2', name: '静玉' }],
   ...over,
 })
-const base = { groupId: 1124442491, userId: '1822939642', operators: OPS, now: NOW, isBotAdmin: true }
+const base = { groupId: 200000002, userId: '200000007', operators: OPS, now: NOW, isBotAdmin: true }
 const K = (o = {}) => canKickNow({ ...base, record: mkRec(), ...o })
 
 ok('全部满足 → 放行', K().ok === true, `→ ${K().reason}`)
 ok('放行时带回名单', K().list.length === 2)
-ok('第二个授权 QQ 也放行', K({ userId: '1641362767' }).ok === true)
+ok('第二个授权 QQ 也放行', K({ userId: '200000006' }).ok === true)
 
 ok('条件1：机器人不是管理员 → 拦', K({ isBotAdmin: false }).ok === false, `→ ${K({ isBotAdmin: false }).reason}`)
 ok('条件2：没有核对记录 → 拦', K({ record: null }).ok === false, `→ ${K({ record: null }).reason}`)
@@ -374,13 +374,13 @@ ok('条件2：5 分钟零 1 毫秒 → 拦', K({ record: mkRec({ at: NOW - 5 * 6
 ok('条件2：时间戳是未来值 → 拦', K({ record: mkRec({ at: NOW + 60_000 }) }).ok === false)
 ok('条件2：自定义窗口（1 分钟）也能拦', canKickNow({ ...base, record: mkRec({ at: NOW - 90_000 }), windowMs: 60_000 }).ok === false)
 ok('条件3：已经踢过一次 → 拦', K({ record: mkRec({ kicked: true }) }).ok === false, `→ ${K({ record: mkRec({ kicked: true }) }).reason}`)
-ok('条件4：没授权的群员 → 拦', K({ userId: '3757025825' }).ok === false, `→ ${K({ userId: '3757025825' }).reason}`)
+ok('条件4：没授权的群员 → 拦', K({ userId: '200000013' }).ok === false, `→ ${K({ userId: '200000013' }).reason}`)
 ok('条件4：授权名单为空 → 不限制（与核对指令同规则）', canKickNow({ ...base, userId: '999', operators: [], record: mkRec() }).ok === true)
 ok('条件5：上次核对没人不合格 → 拦', K({ record: mkRec({ bad: [] }) }).ok === false, `→ ${K({ record: mkRec({ bad: [] }) }).reason}`)
-ok('别的群跑的核对 → 拦', K({ record: mkRec({ group_id: 738321128 }) }).ok === false)
-ok('群号字符串/数字混用也认', K({ groupId: '1124442491', record: mkRec({ group_id: 1124442491 }) }).ok === true)
+ok('别的群跑的核对 → 拦', K({ record: mkRec({ group_id: 200000017 }) }).ok === false)
+ok('群号字符串/数字混用也认', K({ groupId: '200000002', record: mkRec({ group_id: 200000002 }) }).ok === true)
 ok('bad 字段不是数组 → 拦（不崩）', K({ record: mkRec({ bad: null }) }).ok === false)
-ok('record 缺 at → 拦（不崩）', K({ record: { group_id: 1124442491, bad: [{ userId: '1' }] } }).ok === false)
+ok('record 缺 at → 拦（不崩）', K({ record: { group_id: 200000002, bad: [{ userId: '1' }] } }).ok === false)
 
 console.log('\n=== 20. 拦下时不能带名单（防止误用）===')
 const denied = canKickNow({ ...base, isBotAdmin: false, record: mkRec() })

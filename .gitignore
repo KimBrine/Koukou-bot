@@ -40,3 +40,7 @@ backups/
 *.7z
 Thumbs.db
 .DS_Store
+
+# Personal operating guides belong outside the public project.
+/docs/GIT-GITHUB.md
+/休眠说明-如何恢复.md

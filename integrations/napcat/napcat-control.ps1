@@ -45,7 +45,7 @@ function Get-WebPort {
   return 6199
 }
 function Get-ConsoleUrl {
-  $port = 8788
+  $port = 8787
   try {
     $match = Select-String -LiteralPath $botEnvFile -Pattern '^\s*ADMIN_PORT\s*=\s*(\d+)' -Encoding UTF8 | Select-Object -First 1
     if ($match) { $port = [int]$match.Matches[0].Groups[1].Value }
@@ -110,7 +110,7 @@ function Update-Status {
     $onebotPort = ([uri]$connection.Url).Port
     $onebot = Test-Port $onebotPort
     if ($process -and $onebot) {
-      $health = Get-NapCatQQStatus $connection.Url $connection.AccessToken
+      $health = Get-NapCatQQStatus $connection.Url $connection.AccessToken -AdminUrl (Get-ConsoleUrl)
       $display = Get-NapCatAccountDisplay $health
       $status.Text = $display.Text
       $status.ForeColor = switch ($display.Color) {

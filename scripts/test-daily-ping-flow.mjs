@@ -24,21 +24,21 @@ function ok(name, cond, extra = '') {
   }
 }
 
-const GROUP = '801944160'
-const TARGET = '3889001246'
+const GROUP = '200000019'
+const TARGET = '200000015'
 
 function makeEnv({ match = '抓到.*猪猪', chainText = '/我的猪圈', sendDelayMs = 0 } = {}) {
   const sent = []
   const memory = { items: [], push(key, role, content) { this.items.push({ key, role, content }) } }
   const onebot = {
-    selfId: '3883059067',
+    selfId: '200000014',
     async sendGroup(groupId, message) {
       if (sendDelayMs) await new Promise((resolve) => setTimeout(resolve, sendDelayMs))
       sent.push({ groupId: String(groupId), message })
       return { message_id: 1000 + sent.length }
     },
     async getGroupMemberInfo() {
-      return { card: '幽幽子', nickname: '幽幽子' }
+      return { card: '示例机器人', nickname: '示例机器人' }
     },
     async getGroupMsgHistory() {
       return { messages: [] }
@@ -64,7 +64,7 @@ function makeEnv({ match = '抓到.*猪猪', chainText = '/我的猪圈', sendDe
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-/** 构造一条"幽幽子"的群消息 */
+/** 构造一条"示例机器人"的群消息 */
 const fromPig = (text) => [{ group_id: GROUP, user_id: TARGET, message_type: 'group' }, { text }]
 
 console.log('\n=== 1. 发出去的指令要写进记忆（"抽完就忘"的根因）===')
@@ -76,7 +76,7 @@ console.log('\n=== 1. 发出去的指令要写进记忆（"抽完就忘"的根�
   ok('正文是「空格 + /今日猪猪」', env.sent[0].message[1].data.text === ' /今日猪猪')
   const mem = env.memory.items.filter((m) => m.role === 'assistant')
   ok('机器人自己的指令已写入记忆', mem.length === 1, `→ ${JSON.stringify(mem[0]?.content)}`)
-  ok('记忆里是自然写法（用昵称不是号码）', /^@幽幽子 \/今日猪猪$/.test(mem[0]?.content ?? ''), `→ ${mem[0]?.content}`)
+  ok('记忆里是自然写法（用昵称不是号码）', /^@示例机器人 \/今日猪猪$/.test(mem[0]?.content ?? ''), `→ ${mem[0]?.content}`)
   ok('写入的是本群的会话 key', mem[0]?.key === `g${GROUP}`)
   rmSync(env.dir, { recursive: true, force: true })
 }
@@ -86,7 +86,7 @@ console.log('\n=== 2. 抽到结果 → 落盘"今日已办" + 注入提示词 ==
   const env = makeEnv()
   ok('抽之前没有今日提示', env.dp.todayNote(`g${GROUP}`) === '')
   await env.dp.sendNow('自测')
-  // 幽幽子成功回应
+  // 示例机器人成功回应
   await env.dp.noteMessage(...fromPig('@Koukou\\. 🎉 抓到一只新猪猪啦！ 【柠檬猪】 酸酸甜甜 > 你…'))
   ok('识别出抽到的猪名', /柠檬猪/.test(env.dp.todayNote(`g${GROUP}`)), `→ ${env.dp.todayNote(`g${GROUP}`).trim()}`)
   ok('新猪明确为首次获得', /第一次获得这只猪/.test(env.dp.todayNote(`g${GROUP}`)))
@@ -98,7 +98,7 @@ console.log('\n=== 2. 抽到结果 → 落盘"今日已办" + 注入提示词 ==
   await sleep(4200)
   const follow = env.sent.find((s) => s.message[1]?.data?.text === ' /我的猪圈')
   ok('链式补发已发出', Boolean(follow), `→ ${env.sent.length} 条已发`)
-  ok('补发的指令也写进记忆', env.memory.items.some((m) => m.content === '@幽幽子 /我的猪圈'))
+  ok('补发的指令也写进记忆', env.memory.items.some((m) => m.content === '@示例机器人 /我的猪圈'))
   ok('状态里记上"查过猪圈"', /查过「我的猪圈」/.test(env.dp.todayNote(`g${GROUP}`)))
   rmSync(env.dir, { recursive: true, force: true })
 }

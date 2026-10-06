@@ -1,5 +1,5 @@
 /**
- * 手动触发一次「定时指令」（默认就是每天 00:00 在春雨社 @幽幽子 发 /今日猪猪 的那条）。
+ * 手动触发一次「定时指令」（默认就是每天 00:00 在示例群 A @示例机器人 发 /今日猪猪 的那条）。
  *   node scripts/test-daily-ping.mjs          # 真发一条
  *   node scripts/test-daily-ping.mjs --dry     # 只打印将要发送的内容，不发送
  *
@@ -23,7 +23,7 @@ console.log(`  配置：${dailyPing.describe()}`)
 const group = config.dailyPingGroup
 const target = config.dailyPingTarget
 const text = config.dailyPingText
-console.log(`  将要发送：群 ${group} → 「@${target}（幽幽子） ${text}」（@ 是真实 at 段，对方会收到提醒）`)
+console.log(`  将要发送：群 ${group} → 「@${target}（示例机器人） ${text}」（@ 是真实 at 段，对方会收到提醒）`)
 
 if (dry) {
   console.log('  （--dry 模式，不实际发送）')

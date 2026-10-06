@@ -12,11 +12,15 @@
 param(
   [string]$EnvFile = '',
   [int]$Port = 0,
-  [string]$TaskName = 'DeepSeekQQBot',
+  [string]$TaskName = '',
   [string]$Title = 'Koukou 控制台'
 )
 $ErrorActionPreference = 'SilentlyContinue'
-$root = 'E:\Deepseek Harness Workplace\deepseek-qq-bot'
+$root = $PSScriptRoot
+. (Join-Path $root 'windows-settings.ps1')
+$windowsSettings = Get-KoukouWindowsSettings
+if (-not $EnvFile) { $EnvFile = $windowsSettings.BotEnvFile }
+if (-not $TaskName) { $TaskName = $windowsSettings.BotTaskName }
 
 # 没显式给端口就从该实例的 .env 里读 ADMIN_PORT
 if (-not $Port) {

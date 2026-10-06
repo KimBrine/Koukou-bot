@@ -20,7 +20,7 @@ function ok(name, cond, extra = '') {
 
 const BASE_CONFIG = {
   botName: '小口口子',
-  whitelistGroups: new Set([1121936348]),
+  whitelistGroups: new Set([200000001]),
   proactiveRate: 0,
   proactiveCooldownMs: 0,
   quietHours: '',
@@ -55,7 +55,7 @@ function makeBot({ llmReply, config = {}, rateLimiter = null, rand = Math.random
     },
   }
   const onebot = {
-    selfId: '3883059067',
+    selfId: '200000014',
     async sendGroup(groupId, text) {
       sent.push({ type: 'group', target: groupId, text })
     },
@@ -98,10 +98,10 @@ const LONG_INCOMING =
 function atMessage(text, userId = 123456) {
   return {
     message_type: 'group',
-    group_id: 1121936348,
+    group_id: 200000001,
     user_id: userId,
     message_id: String(Math.floor(Math.random() * 1e9)),
-    message: `[CQ:at,qq=3883059067] ${text}`,
+    message: `[CQ:at,qq=200000014] ${text}`,
     sender: { nickname: '测试群友', card: '' },
   }
 }
@@ -142,7 +142,7 @@ console.log('\n=== 1b. 同一场景固定随机源 → 稳定分 3 条 ===')
   ok('确定性地发成 3 条', sent.length === 3, `→ ${JSON.stringify(sent.map((s) => s.text))}`)
   ok('三条内容与模型输出逐条一致', sent.map((s) => s.text).join('|') === threeLines.split('\n').join('|'))
   ok('每条都不超过单行上限', sent.every((s) => s.text.length <= 40), `→ 长度 ${sent.map((s) => s.text.length).join('/')}`)
-  ok('发到正确的群', sent.every((s) => s.target === 1121936348))
+  ok('发到正确的群', sent.every((s) => s.target === 200000001))
 }
 
 console.log('\n=== 2. 短消息 → 单行 → 只发 1 条 ===')
@@ -221,7 +221,7 @@ console.log('\n=== 6. 记忆里存的是完整多行（模型下次能看到自�
   await bot.handleMessage(
     atMessage('我刚刚打完一把，队友全程挂机，我拿辅助打了四十分钟最后还是输了，真的服了这帮人，你说这游戏还能玩吗'),
   )
-  const assistant = memory.get('g1121936348').filter((h) => h.role === 'assistant')
+  const assistant = memory.get('g200000001').filter((h) => h.role === 'assistant')
   ok('记了一条 assistant 消息', assistant.length === 1)
   ok(
     '记忆内容与实发内容一致（含换行结构）',
@@ -249,7 +249,7 @@ console.log('\n=== 7. 私聊路径同样分条 ===')
 
 console.log(`\n=== 8. 手动群总结指令：回执要说人话 ===`)
 {
-  const mkSummary = ({ running = false, count = 0, groups = [1121936348] } = {}) => {
+  const mkSummary = ({ running = false, count = 0, groups = [200000001] } = {}) => {
     const calls = []
     return {
       calls,
@@ -277,7 +277,7 @@ console.log(`\n=== 8. 手动群总结指令：回执要说人话 ===`)
     ok('回执里说明了时间范围', /最近 7 天/.test(ack), `→ ${ack}`)
     ok('回执里给出预估时间', /大概/.test(ack), `→ ${ack}`)
     ok('触发了对应天数的生成', summary.calls.length === 1 && summary.calls[0].opts.days === 7, `→ ${JSON.stringify(summary.calls[0]?.opts)}`)
-    ok('目标群就是当前群', summary.calls[0]?.targets?.[0] === 1121936348)
+    ok('目标群就是当前群', summary.calls[0]?.targets?.[0] === 200000001)
   }
 
   // 天数/群数多 → 预估时间变长（不再依赖条数）

@@ -1,5 +1,5 @@
 ﻿function Get-NapCatConnection([string]$EnvFile) {
-  $url = 'ws://127.0.0.1:3002'
+  $url = 'ws://127.0.0.1:3001'
   $accessToken = ''
   foreach ($line in (Get-Content -LiteralPath $EnvFile -Encoding UTF8)) {
     if ($line -match '^\s*ONEBOT_WS_URL\s*=\s*(.+)') { $url = $Matches[1].Trim().Trim('"').Trim("'") }
@@ -8,7 +8,7 @@
   return [pscustomobject]@{ Url = $url; AccessToken = $accessToken }
 }
 
-function Get-NapCatQQStatus([string]$WsUrl, [string]$AccessToken = '', [int]$TimeoutMs = 1800) {
+function Get-NapCatQQStatus([string]$WsUrl, [string]$AccessToken = '', [int]$TimeoutMs = 1800, [string]$AdminUrl = 'http://127.0.0.1:8787') {
   $socket = New-Object System.Net.WebSockets.ClientWebSocket
   $cancel = New-Object System.Threading.CancellationTokenSource
   $cancel.CancelAfter($TimeoutMs)
@@ -39,7 +39,7 @@ function Get-NapCatQQStatus([string]$WsUrl, [string]$AccessToken = '', [int]$Tim
         if ($packet.data.online) {
           # OneBot 心跳与 get_status 共用 NapCat 的内存值，不能作为真实 QQ 连接证明。
           try {
-            $adminState = Invoke-RestMethod -Uri 'http://127.0.0.1:8788/api/state' -TimeoutSec 2
+            $adminState = Invoke-RestMethod -Uri ($AdminUrl.TrimEnd('/') + '/api/state') -TimeoutSec 2
             $reportedUri = [uri]$adminState.bot.onebotUrl
             $requestedUri = [uri]$WsUrl
             $verified = $reportedUri.Host -eq $requestedUri.Host -and $reportedUri.Port -eq $requestedUri.Port -and $adminState.bot.probeVerified -eq $true -and $adminState.bot.online -eq $true

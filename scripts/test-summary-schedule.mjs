@@ -132,7 +132,7 @@ await test('发送接口缺少消息编号时保持未确认，不假记成功',
   assert.throws(() => e.service.acknowledged(key, {}), err => err.code === 'SUMMARY_SEND_UNCERTAIN')
   assert.equal(e.service.hasDelivered(DAY, 101), false)
 })
-await test('其他群友转发/复制报告，不冒充本机器人发送成功', async () => {
+await test('其他群友转发/复制报告，不冒充部署环境器人发送成功', async () => {
   const e = fixture({ history: { complete: true, rawMessages: [own(text(header), 123)] } }); clock('23:30:00'); await e.service.runSlot('23:30'); assert.equal(e.work.length, 2)
 })
 await test('核对历史后 QQ 又掉线，不开始补发', async () => {

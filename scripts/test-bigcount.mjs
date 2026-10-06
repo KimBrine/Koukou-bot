@@ -1,3 +1,4 @@
+import { getProbeTarget } from './probe-settings.mjs'
 const ws = new WebSocket('ws://127.0.0.1:3001')
 let seq = 0
 const pending = new Map()
@@ -30,7 +31,7 @@ ws.onopen = async () => {
   for (const count of [500, 1000, 2000, 5000]) {
     try {
       const t0 = Date.now()
-      const res = await call('get_group_msg_history', { group_id: 794601094, count })
+      const res = await call('get_group_msg_history', { group_id: getProbeTarget('group'), count })
       console.log(`count=${String(count).padEnd(5)} → ${fmt(res.messages)}  (耗时 ${Date.now() - t0}ms)`)
     } catch (e) {
       console.log(`count=${String(count).padEnd(5)} → 失败: ${e.message}`)
