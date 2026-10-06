@@ -1,0 +1,42 @@
+# Local credentials and account configuration
+.env
+.env.*
+!.env.example
+!.env.napcat.example
+*.local.json
+*.local.ps1
+*.local.bat
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+
+# Runtime chat history, memories, login state and downloads
+data/
+logs/
+cache/
+.cache/
+node_modules/
+**/data/
+**/logs/
+*.jsonl
+*.log
+*.log.*
+*.db
+*.db-*
+*.lock
+
+# Previous versions and local diagnostics
+_removed/
+work/
+backups/
+*.bak
+*.bak.*
+*.bak-*
+*.old-account.*
+*.lnk
+*.tmp
+*.zip
+*.7z
+Thumbs.db
+.DS_Store

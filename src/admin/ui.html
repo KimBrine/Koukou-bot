@@ -1,0 +1,893 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Koukou Studio · QQ 机器人工作台</title>
+<style>
+:root{
+  color-scheme:dark;
+  --bg:#080d18;--surface:#101a2b;--surface2:#152238;--surface3:#1b2b43;
+  --line:#263850;--text:#eef5ff;--muted:#9aabc0;
+  --accent:#6bd5c4;--accent2:#92a7ff;--ok:#5cdea8;--warn:#f4bd69;--bad:#ff8791;
+  --radius:18px;--shadow:0 18px 48px rgba(0,0,0,.18)
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:radial-gradient(circle at 85% -10%,#23375a 0,transparent 36%),radial-gradient(circle at 12% 90%,#15363d 0,transparent 38%),var(--bg);color:var(--text);font:14px/1.6 "Microsoft YaHei UI","Segoe UI",system-ui,sans-serif;min-height:100vh}
+button,input,textarea,select{font:inherit;color:inherit}
+button{transition:background .16s,border-color .16s,transform .16s}
+button:active{transform:translateY(1px)}
+a{color:var(--accent)}
+button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.app{display:grid;grid-template-columns:244px minmax(0,1fr);min-height:100vh}
+aside{background:linear-gradient(180deg,#132239 0,#0c1627 100%);border-right:1px solid var(--line);padding:26px 14px;position:sticky;top:0;height:100vh;overflow:auto}
+.logo{font-size:20px;font-weight:800;letter-spacing:.3px;padding:2px 12px 26px;line-height:1.35}
+.logo::before{content:"✦";display:inline-grid;place-items:center;width:31px;height:31px;margin-right:8px;border-radius:10px;background:linear-gradient(135deg,#68d9c7,#748eff);color:#08202c;font-size:20px;vertical-align:middle;box-shadow:0 5px 18px #58c8c955}
+.logo small{display:block;margin:8px 0 0 40px;color:var(--muted);font-weight:400;font-size:11px;letter-spacing:0}
+nav{display:grid;gap:4px}
+nav button{width:100%;text-align:left;padding:11px 13px;border:1px solid transparent;border-radius:12px;background:transparent;color:var(--muted);cursor:pointer;font-weight:600}
+nav button:hover{background:#1d3149;color:var(--text)}
+nav button.on{background:linear-gradient(105deg,#25493f,#233b5f);border-color:#3a746a;color:#ebfff9;box-shadow:inset 3px 0 var(--accent)}
+.sidebar-foot{margin:28px 9px 0;padding:11px 12px;border:1px solid #3a5267;border-radius:12px;color:#afc4d7;font-size:12px;background:#14273a}
+.sidebar-foot .dot{vertical-align:middle}
+main{min-width:0;width:100%;max-width:1390px;padding:34px clamp(18px,3vw,48px) 90px}
+h1{font-size:clamp(25px,3vw,34px);font-weight:800;letter-spacing:-.5px;margin:0 0 2px;line-height:1.3}
+h2{font-size:16px;font-weight:750;margin:32px 0 13px}
+.sub{color:var(--muted);font-size:13px;margin:0 0 23px}
+.grid{display:grid;gap:14px}
+.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+.g3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.card,.chat{background:linear-gradient(150deg,rgba(27,43,67,.94),rgba(15,26,44,.96));border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
+.card{padding:20px}
+.card h3{font-size:12px;color:var(--muted);font-weight:700;letter-spacing:.4px;margin:0 0 10px}
+.kpi{font-size:28px;font-weight:800;line-height:1.3}
+.kpi small{font-size:12px;color:var(--muted);font-weight:400;margin-left:5px}
+.row,.flexbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.flexbar{margin:14px 0}
+.dot{width:9px;height:9px;border-radius:50%;display:inline-block;background:#66758c;margin-right:5px}
+.dot.ok{background:var(--ok);box-shadow:0 0 12px #5cdea899}
+.dot.bad{background:var(--bad);box-shadow:0 0 12px #ff879188}
+.dot.warn{background:var(--warn)}
+.btn{background:#1e304b;border:1px solid #344964;border-radius:11px;padding:9px 15px;cursor:pointer;min-height:38px;font-weight:650}
+.btn:hover{background:#2b4060;border-color:#587496}
+.btn.primary{background:linear-gradient(135deg,#3f8c8b,#4d70af);border-color:#5fcfc2;color:#fff;box-shadow:0 7px 18px #2c8c9340}
+.btn.primary:hover{background:linear-gradient(135deg,#4eaaa7,#648ac9)}
+.btn.danger{background:#522b39;border-color:#925260;color:#ffe4e8}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.sm{padding:5px 10px;min-height:29px;font-size:12px}
+.badge{font-size:11px;padding:3px 8px;border-radius:99px;background:#25364e;color:#b6c6da;border:1px solid #3a4f6b;white-space:nowrap}
+.badge.live{color:#99efd0;border-color:#3c806d;background:#173b35}
+.badge.restart{color:#f3d497;border-color:#795f39;background:#463724}
+.badge.whitelist{color:#bcc9ff;border-color:#4959a0;background:#263465}
+.chat{margin-bottom:11px;overflow:hidden}
+.chat .head{display:flex;align-items:center;gap:10px;padding:15px 18px;cursor:pointer}
+.chat .head:hover{background:#20324b}
+.chat .name{font-weight:750;font-size:15px}
+.chat .body{padding:10px 18px 20px;border-top:1px solid var(--line);display:none}
+.chat.open .body{display:block}
+.frow{display:grid;grid-template-columns:minmax(150px,210px) minmax(0,1fr);gap:14px;align-items:start;padding:12px 0;border-bottom:1px solid #ffffff0c}
+.frow:last-child{border-bottom:0}
+.frow>label{color:#c4d1e1;padding-top:7px;font-size:13px;font-weight:650}
+input[type=text],input[type=number],input[type=password],textarea,select{background:#0d192a;border:1px solid #3b4d65;border-radius:10px;padding:9px 11px;width:100%;min-height:39px}
+input::placeholder,textarea::placeholder{color:#7f90a8}
+textarea{min-height:90px;resize:vertical;line-height:1.55}
+input[type=range]{width:min(260px,100%);accent-color:var(--accent)}
+input[type=checkbox]{accent-color:#69d8c5}
+.switch{display:inline-flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
+.switch input{display:none}
+.switch i{width:42px;height:24px;border-radius:14px;background:#3a4860;position:relative;transition:.15s;display:inline-block}
+.switch i::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#becbdb;transition:.15s}
+.switch input:checked+i{background:#3a9c8e}
+.switch input:checked+i::after{left:21px;background:#fff}
+.mut{color:var(--muted)}
+.mono{font-family:Consolas,"Cascadia Mono",monospace;font-size:12.5px;white-space:pre-wrap;overflow-wrap:anywhere}
+.logbox{background:#07111e;border:1px solid var(--line);border-radius:12px;padding:14px;max-height:510px;overflow:auto}
+.logbox .l{white-space:pre-wrap;overflow-wrap:anywhere;padding:4px 0;border-bottom:1px solid #ffffff0a}
+.toast{position:fixed;right:22px;bottom:22px;background:#21334e;border:1px solid #4b6786;border-left:4px solid var(--accent);padding:13px 17px;border-radius:12px;opacity:0;transform:translateY(12px);transition:.2s;pointer-events:none;max-width:min(440px,calc(100vw - 36px));z-index:20;box-shadow:var(--shadow)}
+.toast.show{opacity:1;transform:none}
+.pill{font-size:12px;padding:4px 10px;border-radius:20px;background:#203a4b;border:1px solid #3e6972;color:#b6f1e3}
+table{width:100%;border-collapse:collapse}
+td,th{padding:11px 10px;border-bottom:1px solid #ffffff16;text-align:left;font-size:13px}
+th{color:#afc1d6;font-weight:700}
+tr:last-child td{border-bottom:0}
+.empty{color:var(--muted);padding:18px 4px}
+.hero{background:linear-gradient(115deg,#173d43,#233a66 68%,#463d68);border:1px solid #4c8290;border-radius:22px;padding:26px 29px;margin-bottom:22px;box-shadow:var(--shadow)}
+.hero h1{font-size:29px}
+.hero .sub{color:#c4d8e7;margin:5px 0 0}
+.hero-status{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:99px;background:#08292699;border:1px solid #6bd5c466;color:#adffe7;font-weight:700;font-size:12px;margin-bottom:12px}
+.section-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.note{font-size:12px;color:#adc0d4;line-height:1.55}
+.warnline{padding:11px 14px;background:#4b3724;border:1px solid #8e6a3b;border-radius:11px;color:#ffdeab;margin:12px 0}
+.toolgroup{display:flex;gap:10px;flex-wrap:wrap;margin:15px 0}
+.toolgroup.advanced{padding-top:13px;border-top:1px solid var(--line)}
+details.advanced-box{margin-top:10px;color:var(--muted)}
+details.advanced-box summary{cursor:pointer;font-weight:650}
+.sticky-save{position:sticky;bottom:12px;background:#1b2b44ee;border:1px solid #536d8b;border-radius:13px;padding:10px 14px;z-index:5;backdrop-filter:blur(12px)}
+.modal-backdrop{position:fixed;inset:0;background:#020914ad;display:none;align-items:center;justify-content:center;padding:20px;z-index:30}
+.modal-backdrop.show{display:flex}
+.modal{width:min(520px,100%);background:#17253a;border:1px solid #526a87;border-radius:20px;padding:25px;box-shadow:0 30px 90px #0008}
+.modal h2{font-size:21px;margin:0 0 8px}
+.modal p{color:var(--muted);margin:0 0 18px}
+.modal textarea{min-height:110px;margin-bottom:15px}
+.modal .row{justify-content:flex-end}
+.group-manager{border-color:#3d686e;margin-bottom:24px}
+.group-manager .section-head{flex-wrap:wrap;align-items:flex-start}
+.group-manager h2,.rate-editor h2{margin:0;font-size:18px}
+.group-list{display:grid;gap:9px;margin-top:16px}
+.group-item{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:13px 15px;background:#0d192a;border:1px solid var(--line);border-radius:12px}
+.group-identity{flex:1;min-width:140px;overflow-wrap:anywhere}
+.group-identity strong{display:block;font-size:14px}
+.group-identity small{display:block;color:var(--muted);font-size:12px}
+.rate-percent{display:flex;align-items:center;gap:6px;white-space:nowrap}
+.rate-percent input{width:88px}
+.rate-add{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-top:15px;padding-top:15px;border-top:1px solid var(--line)}
+.rate-add select{flex:1;min-width:180px}
+.rate-add input{width:180px}
+.modal.wide{width:min(620px,100%);max-height:90vh;overflow:auto}
+.modal label.field-label{display:block;margin:16px 0 7px;font-weight:650}
+.modal .import-preview{max-height:200px;overflow:auto;margin:12px 0 18px;border-top:1px solid var(--line);padding-top:10px}
+.modal .preview-line{display:flex;gap:10px;justify-content:space-between;padding:5px 0;font-size:13px;overflow-wrap:anywhere}
+.inline-error{color:var(--bad);margin:8px 0;font-size:12px}
+@media(max-width:1100px){.g3{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:780px){
+  .app{display:block}
+  aside{position:sticky;z-index:10;width:100%;height:auto;padding:10px 13px 8px;background:#101b2cef;backdrop-filter:blur(18px);border-right:0;border-bottom:1px solid var(--line)}
+  .logo{padding:0 4px 8px;font-size:16px}
+  .logo::before{width:25px;height:25px;font-size:16px;border-radius:8px}
+  .logo small{display:none}
+  nav{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px}
+  nav button{width:auto;white-space:normal;padding:7px 4px;font-size:12px;line-height:1.25;text-align:center}
+  nav button.on{box-shadow:inset 0 -3px var(--accent)}
+  main{padding:22px 16px 70px}
+  .hero{padding:21px}
+  .hero h1{font-size:24px}
+  .g3,.g2{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .frow{grid-template-columns:1fr;gap:3px}
+  .frow>label{padding-top:0}
+  .chat .head{flex-wrap:wrap}
+}
+@media(max-width:560px){.g3,.g2{grid-template-columns:1fr}.card{padding:16px}.chat .head .mut{font-size:11px}.toolgroup .btn{flex:1 1 150px}}
+
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <div class="logo">Koukou Studio<small>QQ 机器人工作台 · 本地版</small></div>
+    <nav id="nav"></nav>
+    <div class="sidebar-foot"><span class="dot" id="sideDot"></span><span id="sideStatus">正在连接</span></div>
+  </aside>
+  <main id="main"></main>
+</div>
+<div class="toast" id="toast"></div>
+<div class="modal-backdrop" id="modalRoot" aria-hidden="true"></div>
+
+<script>
+const PAGES = [
+  ['overview','◈  工作台'],
+  ['chats','◎  会话管理'],
+  ['persona','✧  人格编辑'],
+  ['humanize','◉  回复行为'],
+  ['api','⌘  模型与接口'],
+  ['report','▤  群聊报告'],
+  ['logs','≡  运行日志'],
+  ['data','▦  数据与记忆'],
+]
+let page = location.hash.replace('#','') || 'overview'
+if (!PAGES.some(p => p[0] === page)) page = 'overview'
+let state = null
+let chats = []
+let configItems = []
+let personas = []
+let activePersona = ''
+let openChats = new Set()
+let logAuto = true
+let logFilter = ''
+let joinedGroups = []
+
+const $ = (h) => { const d = document.createElement('div'); d.innerHTML = h.trim(); return d.firstElementChild }
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
+const api = async (path, body) => {
+  const opt = body ? { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) } : {}
+  const r = await fetch(path, opt)
+  const j = await r.json().catch(() => ({}))
+  if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status))
+  return j
+}
+function toast(msg, bad) {
+  const t = document.getElementById('toast')
+  t.textContent = msg
+  t.style.borderLeftColor = bad ? 'var(--bad)' : 'var(--accent)'
+  t.classList.add('show')
+  clearTimeout(t._t)
+  t._t = setTimeout(() => t.classList.remove('show'), bad ? 4200 : 2200)
+}
+function ask(title, description, button = '确认', textInput = false) {
+  return new Promise(resolve => {
+    const root = document.getElementById('modalRoot')
+    root.innerHTML = '<div class="modal" role="dialog" aria-modal="true"><h2></h2><p></p>' +
+      (textInput ? '<textarea id="modalInput" placeholder="输入要发送的内容"></textarea>' : '') +
+      '<div class="row"><button class="btn" id="modalCancel">取消</button><button class="btn primary" id="modalOk"></button></div></div>'
+    root.querySelector('h2').textContent = title
+    root.querySelector('p').textContent = description
+    root.querySelector('#modalOk').textContent = button
+    root.classList.add('show')
+    root.setAttribute('aria-hidden', 'false')
+    const close = value => {
+      root.classList.remove('show')
+      root.setAttribute('aria-hidden', 'true')
+      root.innerHTML = ''
+      document.removeEventListener('keydown', onKey)
+      resolve(value)
+    }
+    const onKey = ev => { if (ev.key === 'Escape') close(null) }
+    document.addEventListener('keydown', onKey)
+    root.onclick = ev => { if (ev.target === root) close(null) }
+    root.querySelector('#modalCancel').onclick = () => close(null)
+    root.querySelector('#modalOk').onclick = () => {
+      const value = textInput ? root.querySelector('#modalInput').value.trim() : true
+      if (textInput && !value) return
+      close(value)
+    }
+    ;(root.querySelector('#modalInput') || root.querySelector('#modalOk')).focus()
+  })
+}
+const fmtUptime = (s) => { const d=Math.floor(s/86400), h=Math.floor(s%86400/3600), m=Math.floor(s%3600/60); return (d?d+'天':'')+(h?h+'小时':'')+m+'分' }
+const fmtTime = (ms) => ms ? new Date(ms).toLocaleTimeString('zh-CN',{hour12:false}) : '—'
+
+// ── 导航 ───────────────────────────────────────────────
+function renderNav(){
+  const nav = document.getElementById('nav')
+  nav.innerHTML = ''
+  PAGES.forEach(([id,label]) => {
+    const b = $('<button>' + label + '</button>')
+    if (id === page) b.classList.add('on')
+    b.onclick = () => { page = id; location.hash = id; renderNav(); render() }
+    nav.appendChild(b)
+  })
+}
+
+// ── 页面：总览 ──────────────────────────────────────────
+function accountStatusText(b = {}) {
+  if (b.online === true) return '机器人在线'
+  if (b.qqOnline === false) return 'QQ 已离线'
+  if (b.qqGood === false) return 'QQ 服务异常'
+  if (b.statusError === '控制台未响应') return '控制台未响应'
+  if (!b.onebotConnected) return 'OneBot 未连接'
+  if (b.reportedOnline === true) return b.statusError ? 'QQ 连接异常（待核验）' : 'QQ 连接核验中'
+  return 'QQ 状态未确认'
+}
+function updateSideStatus(b = {}) {
+  const dot = document.getElementById('sideDot')
+  const label = document.getElementById('sideStatus')
+  if (dot) dot.className = 'dot ' + (b.online === true ? 'ok' : 'bad')
+  if (label) label.textContent = accountStatusText(b) + (b.selfId ? ' · ' + b.selfId : '')
+}
+function pageOverview(){
+  const b = state?.bot ?? {}
+  const c = state?.counters ?? {}
+  const t = state?.today ?? {}
+  const dot = (ok) => '<span class="dot ' + (ok ? 'ok' : 'bad') + '"></span>'
+  const cards = [
+    ['OneBot 连接', (b.onebotConnected ? dot(true) + ' 已连接' : dot(false) + ' 未连接'), b.onebotUrl],
+    ['QQ 账号', dot(b.online === true) + ' ' + accountStatusText(b), esc(b.nickname || '') + (b.selfId ? (' · QQ ' + b.selfId) : '') + (b.probeCheckedAt ? (' · ' + new Date(b.probeCheckedAt).toLocaleTimeString('zh-CN',{hour12:false}) + ' 实际连接核验') : '') + (b.statusError ? ' · ' + esc(b.statusError) : '')],
+    ['NapCat 服务端口', b.napcatPort ? (dot(true) + ' 已监听') : (dot(false) + ' 未开放'), '端口 ' + (b.napcatPortNumber || '—')],
+    ['对话模型', esc(b.model || '—'), b.webSearch ? '联网搜索已启用' : '联网搜索未启用'],
+    ['视觉模型', b.visionModel ? esc(b.visionModel) : '未启用', b.visionModel ? '带图消息自动识图' : '未配置视觉 API Key'],
+    ['已运行', fmtUptime(state?.uptimeSec || 0), 'PID ' + (state?.pid ?? '—')],
+    ['今日已记录消息', (t.total ?? 0) + ' 条', '自本次启动：收到 ' + (c.received||0) + ' / 回复 ' + (c.replied||0)],
+  ]
+  const perGroup = (t.perGroup || []).map(g => {
+    const chat = chats.find(x => String(x.id) === String(g.groupId))
+    return '<tr><td>' + esc(chat?.name || ('群 ' + g.groupId)) + '</td><td class="mut">' + g.groupId + '</td><td>' + g.count + '</td></tr>'
+  }).join('')
+  return `
+  <div class="hero"><span class="hero-status">${dot(b.online === true)} ${accountStatusText(b)}</span>
+    <h1>机器人工作台</h1><div class="sub"><span id="updatedAt">${new Date().toLocaleTimeString('zh-CN',{hour12:false})}</span> 更新 · 集中管理运行状态与操作</div></div>
+  <div class="grid g3">${cards.map(([k,v,s]) => `<div class="card"><h3>${k}</h3><div class="kpi">${v}</div><div class="note">${s||''}</div></div>`).join('')}</div>
+  <div class="section-head"><h2>常用操作</h2><span class="note">操作作用于当前机器人</span></div>
+  <div class="card">
+    <div class="toolgroup"><button class="btn primary" data-act="poke-target">检查盯人目标</button>
+      <button class="btn" data-act="summary">生成群聊报告</button>
+      <button class="btn" data-act="clear-alert">清除掉线提醒</button></div>
+    <details class="advanced-box"><summary>维护与定时指令</summary>
+      <div class="toolgroup advanced"><button class="btn" data-act="restart-bot">重启机器人</button>
+        <button class="btn" data-act="restart-napcat">重启 NapCat</button>
+        <button class="btn" data-act="daily-ping">立即发定时指令 (@幽幽子)</button></div>
+    </details>
+  </div>
+  <div class="section-head"><h2>今日各群已记录消息</h2><span class="note">本地记录，供运行监测</span></div>
+  <div class="card">${perGroup ? `<table><tr><th>群聊</th><th>群号</th><th>已记录</th></tr>${perGroup}</table>` : '<div class="empty">今天还没有捕获到群消息</div>'}</div>`
+}
+
+// ── 页面：会话 ──────────────────────────────────────────
+function chatRow(c){
+  const r = c.raw || {}, e = c.effective || {}
+  const open = openChats.has(c.key) ? ' open' : ''
+  const override = (k) => r[k] !== null && r[k] !== undefined && r[k] !== '' ? ' <span class="badge live">已单独设置</span>' : ''
+  const groupRate = c.type === 'group' ? (state?.config?.proactiveRatePerGroup || []).find(x => Number(x.groupId) === Number(c.id)) : null
+  const defaultRate = groupRate ? Number(groupRate.rate) : Number(state?.config?.proactiveRate ?? 0)
+  const rateOrigin = groupRate ? '沿用群默认' : '沿用全局'
+  const rateVal = r.proactiveRate === null || r.proactiveRate === undefined ? e.proactiveRate : r.proactiveRate
+  const emojiVal = r.emojiKeepRate === null || r.emojiKeepRate === undefined ? e.emojiKeepRate : r.emojiKeepRate
+  const linesVal = r.replyMaxLines ?? e.replyMaxLines
+  const charsVal = r.lineMaxChars ?? e.lineMaxChars
+  const quietVal = r.quietHours === null || r.quietHours === undefined ? (e.quietHours||'') : r.quietHours
+  return `
+  <div class="chat${open}" data-key="${c.key}">
+    <div class="head">
+      <span class="badge">${c.type === 'group' ? '群' : '私聊'}</span>
+      <span class="name">${esc(c.name)}</span>
+      <span class="mut">${c.id}</span>
+      ${c.inWhitelist ? '<span class="badge whitelist">白名单</span>' : ''}
+      ${r.enabled === false ? '<span class="badge restart">已停用</span>' : ''}
+      ${r.proactiveEnabled === false ? '<span class="badge restart">不主动</span>' : ''}
+      <span style="flex:1"></span>
+      <span class="mut" style="font-size:12px">今日 ${c.msgToday} 条 · 记忆 ${c.memory} 条${c.replies?(' · 已回 '+c.replies):''}</span>
+      ${c.type === 'group' ? `<button class="btn sm ${c.inWhitelist ? 'danger' : ''}" data-whitelist="${c.inWhitelist ? 'remove' : 'add'}" data-group="${c.id}">${c.inWhitelist ? '移出白名单' : '加入白名单'}</button>` : ''}
+      <span class="mut">▾</span>
+    </div>
+    <div class="body">
+      <div class="frow"><label>聊天开关</label><div><label class="switch"><input type="checkbox" data-f="enabled" ${r.enabled === false ? '' : 'checked'}><i></i></label> <span class="mut">关掉后停止普通聊天；拍一拍、自动 +1 在“回复行为”单独控制</span></div></div>
+      <div class="frow"><label>被 @ 必回</label><div><label class="switch"><input type="checkbox" data-f="atReplyEnabled" ${r.atReplyEnabled === false ? '' : 'checked'}><i></i></label></div></div>
+      <div class="frow"><label>允许主动搭话</label><div><label class="switch"><input type="checkbox" data-f="proactiveEnabled" ${r.proactiveEnabled === false ? '' : 'checked'}><i></i></label> <span class="mut">仅在白名单群里有效${override('proactiveEnabled')}</span></div></div>
+      <div class="frow"><label>主动搭话概率</label><div>
+        <div class="row"><input type="range" min="0" max="1" step="0.01" data-f="proactiveRate" value="${rateVal}">
+        <span class="pill" data-show="proactiveRate">${(rateVal*100).toFixed(0)}%</span>
+        <label class="mut" style="font-size:12px"><input type="checkbox" data-global="proactiveRate" ${r.proactiveRate===null||r.proactiveRate===undefined?'checked':''}> ${rateOrigin}(${(defaultRate*100).toFixed(0)}%)</label><a href="#humanize" class="mut" style="font-size:12px">修改默认值</a></div>
+      </div></div>
+      <div class="frow"><label>装饰符号频率</label><div>
+        <div class="row"><input type="range" min="0" max="1" step="0.01" data-f="emojiKeepRate" value="${emojiVal}">
+        <span class="pill" data-show="emojiKeepRate">${(emojiVal*100).toFixed(0)}%</span>
+        <label class="mut" style="font-size:12px"><input type="checkbox" data-global="emojiKeepRate" ${r.emojiKeepRate===null||r.emojiKeepRate===undefined?'checked':''}> 沿用全局(${((Number(state?.config?.emojiKeepRate)||0)*100).toFixed(0)}%)</label></div>
+      </div></div>
+      <div class="frow"><label>最多行数 / 单行字数</label><div class="row">
+        <input type="number" min="1" max="5" data-f="replyMaxLines" value="${linesVal}" style="width:80px">
+        <input type="number" min="10" max="200" data-f="lineMaxChars" value="${charsVal}" style="width:90px">
+        <label class="mut" style="font-size:12px"><input type="checkbox" data-global="replyMaxLines" ${r.replyMaxLines==null&&r.lineMaxChars==null?'checked':''}> 沿用全局(${state?.config?.replyMaxLines ?? '—'}行 / ${state?.config?.lineMaxChars ?? '—'}字)</label>
+      </div></div>
+      <div class="frow"><label>安静时段</label><div class="row">
+        <input type="text" data-f="quietHours" value="${esc(quietVal)}" placeholder="如 01:00-07:00，留空=不设" style="width:200px">
+        <label class="mut" style="font-size:12px"><input type="checkbox" data-global="quietHours" ${r.quietHours===null||r.quietHours===undefined?'checked':''}> 沿用全局(${esc((state?.config?.quietHours)||'未设')})</label>
+      </div></div>
+      <div class="frow"><label>备注名</label><div><input type="text" data-f="note" value="${esc(r.note||'')}" placeholder="只影响这里的显示"></div></div>
+      <div class="frow"><label>客制化 prompt</label><div>
+        <textarea data-f="customPrompt" placeholder="这个会话专属的人设/要求，会附加到系统提示词后面。例如：这个群是我的同事群，说话正式一点，不要提游戏。">${esc(r.customPrompt||'')}</textarea>
+        <div class="mut" style="font-size:12px;margin-top:4px">优先级高于全局人设，仅对本会话生效</div>
+      </div></div>
+      <div class="flexbar">
+        <button class="btn primary" data-save="${c.key}">保存本会话设置</button>
+        <button class="btn" data-reset="${c.key}">恢复默认</button>
+        <button class="btn" data-mem="${c.key}">查看记忆</button>
+        <button class="btn" data-say="${c.key}">发一条消息…</button>
+      </div>
+    </div>
+  </div>`
+}
+function pageChats(){
+  const groups = chats.filter(c=>c.type==='group'), priv = chats.filter(c=>c.type==='private')
+  const whitelist = (state?.config?.whitelist || []).map(id => ({id, name: groupName(id)}))
+  return `
+  <h1>会话管理</h1><div class="sub">为每个群聊或私聊设置回复方式。保存后即时生效。</div>
+  <section class="card group-manager" aria-label="白名单群聊管理">
+    <div class="section-head"><div><h2>白名单群聊 <span class="badge whitelist">${whitelist.length} 个群</span></h2><div class="note">机器人可以在这些群主动搭话，概率在「回复行为」中设置。</div></div><button class="btn primary" id="importWhitelist">＋ 添加 / 导入白名单群</button></div>
+    <div class="group-list">${whitelist.map(g => `<div class="group-item"><div class="group-identity"><strong>${esc(g.name)}</strong><small>群号 ${g.id}</small></div><button class="btn sm" data-open-chat="g${g.id}">会话设置</button><button class="btn danger sm" data-whitelist="remove" data-group="${g.id}">移出白名单</button></div>`).join('') || '<div class="empty">还没有白名单群，点击右上方按钮添加。</div>'}</div>
+    <div class="note" style="margin-top:12px">移出后停止主动搭话；聊天记录和会话设置保留，被 @ 回复与定时任务按各自设置执行。</div>
+  </section>
+  <div class="card">
+    <div class="toolgroup">
+      <input id="chatSearch" type="text" placeholder="搜索群名、群号或 QQ 号" aria-label="搜索会话" style="max-width:300px">
+      <span class="badge">${chats.length} 个会话</span>
+    </div>
+    <div class="toolgroup">
+      <select id="newchatType" aria-label="会话类型" style="max-width:120px"><option value="g">群聊</option><option value="p">私聊</option></select>
+      <input id="newchat" type="text" inputmode="numeric" placeholder="输入群号或 QQ 号" style="max-width:250px">
+      <button class="btn" id="addchat">添加普通会话</button><span class="note">需要主动搭话的群，请使用上方「添加 / 导入白名单群」。</span>
+    </div>
+  </div>
+  <h2>群聊（${groups.length}）</h2>
+  ${groups.map(chatRow).join('') || '<div class="empty">还没有群会话</div>'}
+  <h2>私聊（${priv.length}）</h2>
+  ${priv.map(chatRow).join('') || '<div class="empty">还没有私聊会话</div>'}`
+}
+
+// ── 页面：人格 ──────────────────────────────────────────
+function pagePersona(){
+  const cur = personas.find(p=>p.active)
+  return `
+  <h1>人格编辑</h1><div class="sub">当前生效：<b>${esc(activePersona || '（默认 persona.txt）')}</b> · 切换后下一条消息立刻使用新人格</div>
+  <div class="flexbar">
+    <select id="personaSel">${personas.map(p=>`<option value="${esc(p.name)}" ${p.active?'selected':''}>${esc(p.name)}${p.active?'（使用中）':''}</option>`).join('')}</select>
+    <button class="btn primary" id="activate">切换使用</button>
+    <input id="newPersona" type="text" placeholder="新人格名称" style="width:160px">
+    <button class="btn" id="createPersona">新建</button>
+    <button class="btn danger" id="delPersona">删除当前选中</button>
+  </div>
+  <div class="card">
+    <h3>人格 prompt（直接编辑，保存后立即生效）</h3>
+    <textarea id="personaText" style="min-height:340px;font-size:13.5px">${esc(cur ? (personaCache[cur.name] ?? '') : '')}</textarea>
+    <div class="flexbar">
+      <button class="btn primary" id="savePersona">保存</button>
+      <span class="mut" id="personaHint">选择左侧下拉可切换要编辑的人格</span>
+    </div>
+  </div>
+  <h2>系统附加说明（只读）</h2>
+  <div class="card"><div class="mono" style="max-height:260px;overflow:auto">${esc(appendixText)}</div></div>`
+}
+
+// ── 页面：配置表单（拟人化 / 接口 / 报告）─────────────────
+function groupName(id){
+  return chats.find(c => c.type === 'group' && Number(c.id) === Number(id))?.name || joinedGroups.find(g => Number(g.id) === Number(id))?.name || ('群 ' + id)
+}
+function availableGroups(){
+  const groups = new Map(joinedGroups.map(g => [Number(g.id), {id:Number(g.id), name:g.name}]))
+  for (const c of chats.filter(c => c.type === 'group')) groups.set(Number(c.id), {id:Number(c.id), name:c.name})
+  for (const id of state?.config?.whitelist || []) if (!groups.has(Number(id))) groups.set(Number(id), {id:Number(id), name:groupName(id)})
+  return [...groups.values()]
+}
+function rateRow(id, rate){
+  const chat = chats.find(c => c.type === 'group' && Number(c.id) === Number(id))
+  const override = chat?.raw?.proactiveRate
+  return `<div class="group-item" data-rate-group="${id}"><div class="group-identity"><strong>${esc(groupName(id))}</strong><small>群号 ${id}${chat?.inWhitelist ? ' · 白名单' : ''}</small>${override != null ? `<small style="color:var(--warn)">会话已单独设置 ${Number((override*100).toFixed(4))}%，优先于此处</small>` : ''}</div><label class="rate-percent"><input type="number" min="0" max="100" step="any" value="${Number((rate*100).toFixed(8))}" data-rate-percent aria-label="${esc(groupName(id))}的主动搭话概率（百分比）"><span>%</span></label><button class="btn sm" type="button" data-remove-rate>沿用全局</button></div>`
+}
+function groupRateEditor(value){
+  const rows = String(value || '').split(',').filter(Boolean).map(piece => {
+    const [id, rate] = piece.split(':')
+    return rateRow(Number(id), Number(rate))
+  }).join('')
+  return `<div class="rate-editor"><input type="hidden" data-cfg="PROACTIVE_RATE_PER_GROUP" value="${esc(value)}"><div class="group-list" id="groupRateRows">${rows}</div><div class="empty" id="rateEmpty" ${rows ? 'hidden' : ''}>没有单独设置的群，均沿用全局概率。</div><div class="inline-error" id="rateError" role="status"></div><div class="rate-add"><select id="rateGroupPick" aria-label="选择需要单独设置概率的群"><option value="">选择群聊…</option>${availableGroups().map(g => `<option value="${g.id}">${esc(g.name)}（${g.id}）</option>`).join('')}<option value="manual">手动输入群号</option></select><input id="rateGroupId" type="text" inputmode="numeric" aria-label="手动输入概率目标群号" placeholder="输入群号" hidden><button class="btn" id="addGroupRate" type="button">＋ 添加群概率</button></div></div>`
+}
+async function importWhitelist(){
+  const root = document.getElementById('modalRoot')
+  root.innerHTML = `<div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="importTitle"><h2 id="importTitle">添加白名单群聊</h2><p>选择群聊，或粘贴多个群号。导入后即时生效。</p><label class="field-label" for="whitelistPick">从已知群聊中选择</label><select id="whitelistPick"><option value="">选择一个群…</option>${availableGroups().filter(g => !(state?.config?.whitelist || []).map(Number).includes(g.id)).map(g => `<option value="${g.id}">${esc(g.name)}（${g.id}）</option>`).join('')}</select><div class="note">QQ 离线时可能无法获取新加入的群，可直接输入群号。</div><label class="field-label" for="whitelistInput">群号（支持批量导入）</label><textarea id="whitelistInput" placeholder="每行一个群号，也支持逗号或空格分隔"></textarea><div id="whitelistPreview" class="import-preview" aria-live="polite"></div><div class="row"><button class="btn" id="importCancel">取消</button><button class="btn primary" id="importCommit" disabled>请先选择或输入群号</button></div></div>`
+  root.classList.add('show'); root.setAttribute('aria-hidden','false')
+  const input = root.querySelector('#whitelistInput'), commit = root.querySelector('#importCommit')
+  let newIds = [], pending = false
+  const close = () => { if (pending) return; root.classList.remove('show'); root.setAttribute('aria-hidden','true'); root.innerHTML = ''; root.onclick = null; document.removeEventListener('keydown', onKey); document.getElementById('importWhitelist')?.focus() }
+  const onKey = ev => { if (ev.key === 'Escape') close() }
+  document.addEventListener('keydown', onKey)
+  root.onclick = ev => { if (ev.target === root) close() }
+  root.querySelector('#importCancel').onclick = close
+  const preview = () => {
+    const tokens = input.value.trim().split(/[\s,，;；]+/).filter(Boolean)
+    const invalid = tokens.filter(id => !/^\d{5,12}$/.test(id))
+    const ids = [...new Set(tokens.filter(id => /^\d{5,12}$/.test(id)).map(id => String(Number(id))))]
+    const existing = new Set((state?.config?.whitelist || []).map(String))
+    newIds = ids.filter(id => !existing.has(id))
+    root.querySelector('#whitelistPreview').innerHTML = invalid.length ? `<div class="inline-error">这些内容不是有效群号：${invalid.map(esc).join('、')}。请填写 5～12 位数字。</div>` : ids.length ? ids.map(id => `<div class="preview-line"><span>${esc(groupName(id))} <span class="mut">${id}</span></span><span class="badge ${existing.has(id) ? '' : 'live'}">${existing.has(id) ? '已在白名单 · 跳过' : '待添加'}</span></div>`).join('') + '<div class="note">重复群号自动合并，已有白名单群不重复添加。</div>' : '<div class="note">输入后会在这里预览待添加的群。</div>'
+    commit.disabled = !!invalid.length || !newIds.length
+    commit.textContent = newIds.length && !invalid.length ? `添加 ${newIds.length} 个白名单群` : ids.length && !invalid.length ? '这些群已在白名单中' : '请先选择或输入群号'
+  }
+  input.oninput = preview
+  root.querySelector('#whitelistPick').onchange = ev => {
+    if (!ev.target.value) return
+    input.value = input.value.trim() + (input.value.trim() ? '\n' : '') + ev.target.value
+    ev.target.value = ''; preview()
+  }
+  commit.onclick = async () => {
+    preview(); if (commit.disabled) return
+    pending = true; commit.disabled = true; commit.textContent = '正在添加…'
+    try { const result = await api('/api/action/update-whitelist', {operation:'add', groupIds:newIds}); pending = false; close(); await load(); toast(`已添加 ${result.changed} 个白名单群，即时生效`) }
+    catch(e){ pending = false; preview(); toast('添加失败：' + e.message, true) }
+  }
+  preview(); root.querySelector('#whitelistPick').focus()
+}
+function configForm(keys, hint){
+  const items = configItems.filter(i=>keys.includes(i.key))
+  return items.map(i => {
+    const v = i.effective !== '' ? i.effective : i.value
+    const badge = i.live ? '<span class="badge live">即时生效</span>' : '<span class="badge restart">需重启</span>'
+    let input
+    if (i.key === 'PROACTIVE_RATE_PER_GROUP') input = groupRateEditor(v)
+    else if (i.type === 'bool') input = `<label class="switch"><input type="checkbox" data-cfg="${i.key}" ${(v==='1'||v==='true')?'checked':''}><i></i></label>`
+    else if (i.type === 'rate') input = `<input type="range" min="0" max="1" step="0.01" data-cfg="${i.key}" value="${v||0}"> <span class="pill" data-cfgshow="${i.key}">${((Number(v)||0)*100).toFixed(0)}%</span>`
+    else if (i.type === 'secret') input = `<div class="row"><input type="password" data-cfg="${i.key}" data-secret="1" value="" placeholder="${i.configured ? '已设置，留空不修改' : '尚未设置'}" autocomplete="new-password" style="flex:1;min-width:180px"><button class="btn sm" type="button" data-reveal="${i.key}">显示输入</button></div>`
+    else if (i.key === 'VISION_PROVIDER' || i.key === 'SUMMARY_PROVIDER') input = `<select data-cfg="${i.key}"><option value="deepseek" ${v==='deepseek'?'selected':''}>DeepSeek</option><option value="dashscope" ${v==='dashscope'?'selected':''}>DashScope（通义千问）</option></select>`
+    else if (i.key === 'SUMMARY_SEND_MODE') input = `<select data-cfg="${i.key}"><option value="forward" ${v==='forward'?'selected':''}>合并转发卡片</option><option value="split" ${v==='split'?'selected':''}>按空行逐段发送</option></select>`
+    else if (i.key === 'LOG_LEVEL') input = `<select data-cfg="${i.key}"><option value="debug" ${v==='debug'?'selected':''}>详细调试</option><option value="info" ${v==='info'?'selected':''}>正常信息</option><option value="warn" ${v==='warn'?'selected':''}>只看警告与错误</option><option value="error" ${v==='error'?'selected':''}>只看错误</option></select>`
+    else input = `<input type="${i.type==='number'?'number':'text'}" data-cfg="${i.key}" value="${esc(v)}">`
+    const fieldHint = ['SUMMARY_SEND_MODE','LOG_LEVEL'].includes(i.key) ? '' : (i.hint||'')
+    return `<div class="frow"><label>${i.label} ${badge}</label><div>${input}${fieldHint ? `<div class="mut" style="font-size:12px;margin-top:3px">${fieldHint}</div>` : ''}</div></div>`
+  }).join('') + `<div class="flexbar sticky-save"><button class="btn primary" id="saveCfg" disabled>没有待保存的改动</button><span class="mut" id="cfgDirty">${hint||''}</span></div>`
+}
+function pageHumanize(){
+  return `<h1>回复行为</h1><div class="sub">这里修改“沿用全局”的默认值；会话单独设置优先，其次是按群独立概率，最后才是全局概率。</div>
+  <div class="flexbar"><a class="btn" href="#chats">管理白名单群聊 →</a><span class="note">概率填写百分比，例如 20%，不需要输入配置格式。</span></div>
+  <div class="card">${configForm(['PROACTIVE_RATE','PROACTIVE_RATE_PER_GROUP','PROACTIVE_COOLDOWN_MS','EMOJI_KEEP_RATE','HUMAN_DELAY_MIN_MS','HUMAN_DELAY_MAX_MS','REPLY_LENGTH_MATCH','REPLY_MAX_LINES','REPLY_LINE_MAX_CHARS','LINE_GAP_MIN_MS','LINE_GAP_MAX_MS','RATE_LIMIT_PER_HOUR','RATE_LIMIT_MIN_GAP_MS','QUIET_HOURS','HISTORY_LIMIT','CONTEXT_REMEMBER_ALL','POKE_REPLY_ENABLED','AUTO_PLUS_ONE_ENABLED'],'修改全局概率不会覆盖已经单独设置的群；限流相关参数需重启生效。')}</div>`
+}
+function pageApi(){
+  return `<h1>模型与接口</h1><div class="sub">配置对话模型、视觉模型与密钥。带“需重启”的改动在重启机器人后生效。</div>
+  <div class="card"><strong>当前生效的识图模型：</strong>${esc(state?.bot?.visionModel || '未启用')}<div class="mut" style="margin-top:5px">图片识别与群聊报告分别配置；下方的 DashScope 模型只有切换识图服务商后才会用于读图。</div></div>
+  <div class="card">${configForm(['DEEPSEEK_MODEL','DEEPSEEK_API_KEY','TEMPERATURE','MAX_TOKENS','VISION_PROVIDER','VISION_MODEL','DASHSCOPE_MODEL','DASHSCOPE_API_KEY','BAIDU_QIANFAN_API_KEY','LOG_LEVEL'],'已设置的密钥不会显示；留空保持原值。')}</div>`
+}
+function pageReport(){
+  return `<h1>群聊报告</h1><div class="sub">每日自动生成「群聊日常分析报告」，也可以在这里随时手动生成</div>
+  <div class="card">${configForm(['SUMMARY_ENABLED','SUMMARY_FALLBACK_ENABLED','SUMMARY_TIMES','SUMMARY_GROUPS','SUMMARY_SEND_MODE','SUMMARY_MAX_MESSAGES','SUMMARY_MAX_TOKENS','SUMMARY_PROVIDER','SUMMARY_MODEL'],'')}</div>
+  <h2>立即生成</h2>
+  <div class="card"><div class="row">
+    <select id="sumGroup">${chats.filter(c=>c.type==='group').map(c=>`<option value="${c.id}">${esc(c.name)}（${c.id}）</option>`).join('')}</select>
+    <input id="sumDays" type="number" value="1" min="1" max="30" style="width:80px">
+    <span class="mut">天</span>
+    <button class="btn primary" id="doSummary">生成并发送</button>
+  </div><div class="mut" style="font-size:12px;margin-top:6px">生成需要 1~3 分钟，完成后会直接发到群里</div></div>
+  <h2>历史报告</h2>
+  <div class="card" id="dailyList"></div>`
+}
+function pageLogs(){
+  return `<h1>运行日志</h1><div class="sub">查看机器人最近的运行信息与错误，可按关键词过滤。</div>
+  <div class="flexbar">
+    <input id="logFilter" type="text" placeholder="过滤关键词，如 已回复 / 限流 / 形态" value="${esc(logFilter)}" style="width:260px">
+    <label class="switch"><input type="checkbox" id="logAuto" ${logAuto?'checked':''}><i></i></label><span class="mut">自动刷新</span>
+    <select id="logLines"><option>100</option><option selected>200</option><option>500</option><option>1000</option></select>
+  </div>
+  <div class="logbox mono" id="logBot" style="max-height:420px"></div>`
+}
+function pageData(){
+  return `<h1>数据与记忆</h1><div class="sub">查看会话记忆、长期记忆摘要和原始日报文件。</div>
+  <h2>会话记忆</h2>
+  <div class="card"><div class="row">
+    <select id="memKey">${chats.map(c=>`<option value="${c.key}">${esc(c.name)}（${c.key}）</option>`).join('')}</select>
+    <button class="btn" id="loadMem">查看</button>
+  </div><div class="mono" id="memBox" style="max-height:420px;overflow:auto;margin-top:10px">选择会话后点查看</div></div>
+  <h2>长期记忆摘要</h2>
+  <div class="card"><div class="row">
+    <select id="lmKey">${chats.map(c=>`<option value="${c.key}">${esc(c.name)}（${c.key}）</option>`).join('')}</select>
+    <button class="btn" id="loadLm">查看</button>
+  </div><div class="mono" id="lmBox" style="max-height:240px;overflow:auto;margin-top:10px">—</div></div>
+  <h2>日报原始文件</h2>
+  <div class="card" id="dailyFiles"></div>`
+}
+
+// ── 渲染 ───────────────────────────────────────────────
+function render(){
+  const main = document.getElementById('main')
+  let html = ''
+  if (page === 'overview') html = pageOverview()
+  else if (page === 'chats') html = pageChats()
+  else if (page === 'persona') html = pagePersona()
+  else if (page === 'humanize') html = pageHumanize()
+  else if (page === 'api') html = pageApi()
+  else if (page === 'report') html = pageReport()
+  else if (page === 'logs') html = pageLogs()
+  else html = pageData()
+  main.innerHTML = html
+  bind().catch(e => toast('界面初始化失败：' + e.message, true))
+  if (page === 'logs') refreshLogs()
+  if (page === 'report' || page === 'data') loadDaily()
+}
+
+async function bind(){
+  document.querySelectorAll('[data-act]').forEach(b => b.onclick = async () => {
+    const act = b.dataset.act
+    if (act === 'summary') { await doSummary(); return }
+    const prompts = {
+      'restart-bot': ['重启机器人？', '机器人会短暂离线，然后由计划任务重新启动。', '重启'],
+      'restart-napcat': ['重启 NapCat？', 'QQ 连接会中断一会儿，机器人在恢复连接后继续工作。', '重启'],
+      'daily-ping': ['立即发送定时指令？', '这会立刻以机器人身份发送 @幽幽子 指令。', '发送'],
+    }
+    if (prompts[act] && !await ask(...prompts[act])) return
+    b.disabled = true
+    try { const r = await api('/api/action/' + act, {}); toast('已执行：' + act + (r.needRestart ? '（需重启）' : '')) }
+    catch(e){ toast('失败：' + e.message, true) }
+    b.disabled = false
+  })
+
+  // 折叠
+  document.querySelectorAll('.chat .head').forEach(h => h.onclick = (ev) => {
+    if (ev.target.closest('button')) return
+    const box = h.parentElement
+    box.classList.toggle('open')
+    const k = box.dataset.key
+    box.classList.contains('open') ? openChats.add(k) : openChats.delete(k)
+  })
+  // 滑块实时显示
+  document.querySelectorAll('[data-f]').forEach(el => {
+    if (el.type === 'range') el.oninput = () => {
+      const s = el.closest('.body')?.querySelector('[data-show="' + el.dataset.f + '"]')
+      if (s) s.textContent = (el.value*100).toFixed(0) + '%'
+    }
+  })
+  // 沿用全局勾选后禁用输入
+  document.querySelectorAll('[data-global]').forEach(cb => {
+    const f = cb.dataset.global
+    const sync = () => {
+      const targets = document.querySelectorAll(`.chat .body [data-f="${f}"]`)
+      targets.forEach(t => {
+        if (t.closest('.chat').dataset.key !== cb.closest('.chat').dataset.key) return
+        t.disabled = cb.checked
+        t.style.opacity = cb.checked ? .45 : 1
+      })
+    }
+    cb.onchange = sync; sync()
+  })
+  // 保存会话
+  document.querySelectorAll('[data-save]').forEach(b => b.onclick = async () => {
+    const box = b.closest('.chat'), key = b.dataset.save
+    const q = (f) => box.querySelector(`[data-f="${f}"]`)
+    const isGlobal = (f) => { const c = box.querySelector(`[data-global="${f}"]`); return c ? c.checked : false }
+    const patch = {
+      enabled: q('enabled').checked,
+      atReplyEnabled: q('atReplyEnabled').checked,
+      proactiveEnabled: q('proactiveEnabled').checked,
+      proactiveRate: isGlobal('proactiveRate') ? null : Number(q('proactiveRate').value),
+      emojiKeepRate: isGlobal('emojiKeepRate') ? null : Number(q('emojiKeepRate').value),
+      replyMaxLines: isGlobal('replyMaxLines') ? null : Number(q('replyMaxLines').value),
+      lineMaxChars: isGlobal('replyMaxLines') ? null : Number(q('lineMaxChars').value),
+      quietHours: isGlobal('quietHours') ? null : q('quietHours').value,
+      note: q('note').value,
+      customPrompt: q('customPrompt').value,
+    }
+    try { await api('/api/action/set-chat', { key, patch }); toast('已保存并即时生效'); await load() }
+    catch(e){ toast('保存失败：' + e.message, true) }
+  })
+  document.querySelectorAll('[data-reset]').forEach(b => b.onclick = async () => {
+    try { await api('/api/action/reset-chat', { key: b.dataset.reset }); toast('已恢复默认'); await load() }
+    catch(e){ toast(e.message, true) }
+  })
+  document.querySelectorAll('[data-mem]').forEach(b => b.onclick = async () => {
+    const r = await api('/api/memory?key=' + encodeURIComponent(b.dataset.mem))
+    showMemory('「' + b.dataset.mem + '」最近 ' + r.items.length + ' 条记忆', r.items)
+  })
+  document.querySelectorAll('[data-say]').forEach(b => b.onclick = async () => {
+    const text = await ask('发送消息', '会以机器人身份直接发到 ' + b.dataset.say + '。', '发送', true)
+    if (!text) return
+    try { await api('/api/action/say', { key: b.dataset.say, text }); toast('已发送') } catch(e){ toast(e.message, true) }
+  })
+  const add = document.getElementById('addchat')
+  if (add) add.onclick = async () => {
+    const v = document.getElementById('newchat').value.trim()
+    if (!/^\d{5,12}$/.test(v)) { toast('请输入 5～12 位数字 ID', true); return }
+    const key = document.getElementById('newchatType').value + v
+    try { await api('/api/action/set-chat', { key, patch: {} }); openChats.add(key); await load(); toast('已添加会话，可展开设置') }
+    catch(e){ toast('添加失败：' + e.message, true) }
+  }
+  const search = document.getElementById('chatSearch')
+  if (search) search.oninput = () => {
+    const q = search.value.trim().toLowerCase()
+    document.querySelectorAll('.chat').forEach(box => { box.style.display = box.textContent.toLowerCase().includes(q) ? '' : 'none' })
+  }
+  const importButton = document.getElementById('importWhitelist')
+  if (importButton) importButton.onclick = importWhitelist
+  document.querySelectorAll('[data-open-chat]').forEach(b => b.onclick = () => {
+    openChats.add(b.dataset.openChat)
+    const box = document.querySelector(`.chat[data-key="${b.dataset.openChat}"]`)
+    if (box) { box.classList.add('open'); box.scrollIntoView({behavior:'smooth', block:'start'}) }
+  })
+  document.querySelectorAll('[data-whitelist]').forEach(b => b.onclick = async () => {
+    const id = b.dataset.group, operation = b.dataset.whitelist
+    if (operation === 'remove' && !await ask('移出白名单？', `「${groupName(id)}」（${id}）将停止主动搭话。聊天记录和单独设置保留；被 @ 回复及定时任务不变。`, '移出白名单')) return
+    b.disabled = true
+    try { await api('/api/action/update-whitelist', {operation, groupIds:[id]}); await load(); toast(operation === 'remove' ? '已移出白名单，停止主动搭话' : '已加入白名单，即时生效') }
+    catch(e){ b.disabled = false; toast(e.message, true) }
+  })
+
+  // 人格
+  const sel = document.getElementById('personaSel')
+  if (sel) {
+    const loadOne = async (name) => {
+      if (personaCache[name] !== undefined) return personaCache[name]
+      const r = await api('/api/action/get-persona', { name }).catch(() => ({ content: '' }))
+      personaCache[name] = r.content ?? ''
+      return personaCache[name]
+    }
+    document.getElementById('personaText').value = await loadOne(sel.value)
+    sel.addEventListener('change', async () => { document.getElementById('personaText').value = await loadOne(sel.value) })
+  }
+  const sp = document.getElementById('savePersona')
+  if (sp) sp.onclick = async () => {
+    const name = document.getElementById('personaSel').value
+    try { await api('/api/action/save-persona', { name, content: document.getElementById('personaText').value }); personaCache[name] = document.getElementById('personaText').value; toast('人格已保存' + (personas.find(p=>p.active&&p.name===name) ? '，正在使用中，立刻生效' : '')) }
+    catch(e){ toast(e.message, true) }
+  }
+  const act = document.getElementById('activate')
+  if (act) act.onclick = async () => {
+    const name = document.getElementById('personaSel').value
+    try { await api('/api/action/activate-persona', { name }); toast('已切换到「' + name + '」，立刻生效'); await load() }
+    catch(e){ toast(e.message, true) }
+  }
+  const cr = document.getElementById('createPersona')
+  if (cr) cr.onclick = async () => {
+    const name = document.getElementById('newPersona').value.trim()
+    if (!name) return
+    try { await api('/api/action/create-persona', { name, content: '你是群里的普通群友，说话口语化、简短自然。\n\n说话要求：\n- 通常一两句话，别长篇大论\n- 不用客服腔、不分点列举\n' }); toast('已新建'); await load() }
+    catch(e){ toast(e.message, true) }
+  }
+  const dp = document.getElementById('delPersona')
+  if (dp) dp.onclick = async () => {
+    const name = document.getElementById('personaSel').value
+    if (!await ask('删除人格？', '「' + name + '」将从本机删除。', '删除')) return
+    try { await api('/api/action/delete-persona', { name }); toast('已删除'); await load() } catch(e){ toast(e.message, true) }
+  }
+
+  // 配置
+  document.querySelectorAll('[data-reveal]').forEach(btn => btn.onclick = () => {
+    const input = document.querySelector('[data-cfg="' + btn.dataset.reveal + '"]')
+    if (!input) return
+    input.type = input.type === 'password' ? 'text' : 'password'
+    btn.textContent = input.type === 'password' ? '显示输入' : '隐藏输入'
+  })
+  const cfgValue = (el) => el.type === 'checkbox' ? (el.checked ? '1' : '0') : el.value
+  const cfgEls = [...document.querySelectorAll('[data-cfg]')]
+  cfgEls.forEach(el => { el.dataset.original = cfgValue(el) })
+  const updateDirty = () => {
+    const count = cfgEls.filter(el => cfgValue(el) !== el.dataset.original && !(el.dataset.secret && !el.value)).length
+    const save = document.getElementById('saveCfg')
+    const invalidRate = [...document.querySelectorAll('[data-rate-percent]')].some(el => !el.value.trim() || !el.checkValidity())
+    if (save) { save.disabled = !count || invalidRate; save.textContent = invalidRate ? '请修正群概率' : count ? '保存 ' + count + ' 项改动' : '没有待保存的改动' }
+    const hint = document.getElementById('cfgDirty')
+    if (hint && count) hint.textContent = '仅保存已修改的项目'
+  }
+  document.querySelectorAll('[data-cfg]').forEach(el => {
+    if (el.type === 'range') el.oninput = () => {
+      const s = document.querySelector('[data-cfgshow="' + el.dataset.cfg + '"]')
+      if (s) s.textContent = (el.value*100).toFixed(0) + '%'
+    }
+    el.addEventListener('input', updateDirty)
+    el.addEventListener('change', updateDirty)
+  })
+  const rateEditor = document.querySelector('.rate-editor')
+  if (rateEditor) {
+    const rows = document.getElementById('groupRateRows'), source = rateEditor.querySelector('[data-cfg]')
+    const syncRates = () => {
+      const invalid = [...rows.querySelectorAll('[data-rate-percent]')].some(el => !el.value.trim() || !el.checkValidity())
+      document.getElementById('rateEmpty').hidden = !!rows.children.length
+      document.getElementById('rateError').textContent = invalid ? '概率请填写 0～100 之间的数字，例如 20 表示 20%。' : ''
+      if (!invalid) source.value = [...rows.children].map(row => `${row.dataset.rateGroup}:${Number((Number(row.querySelector('[data-rate-percent]').value)/100).toFixed(10))}`).join(',')
+      updateDirty()
+    }
+    rows.oninput = syncRates
+    rows.onclick = ev => {
+      const button = ev.target.closest('[data-remove-rate]')
+      if (button) { button.closest('[data-rate-group]').remove(); syncRates() }
+    }
+    const picker = document.getElementById('rateGroupPick'), manual = document.getElementById('rateGroupId')
+    picker.onchange = () => { manual.hidden = picker.value !== 'manual'; if (!manual.hidden) manual.focus() }
+    document.getElementById('addGroupRate').onclick = () => {
+      const raw = picker.value === 'manual' ? manual.value.trim() : picker.value
+      if (!/^\d{5,12}$/.test(raw)) { toast('请选择群聊或输入 5～12 位群号', true); return }
+      const id = Number(raw), existing = rows.querySelector(`[data-rate-group="${id}"]`)
+      if (existing) { existing.querySelector('input').focus(); toast('这个群已经在列表中，可直接调整概率'); return }
+      rows.insertAdjacentHTML('beforeend', rateRow(id, Number(state?.config?.proactiveRate || 0)))
+      rows.lastElementChild.querySelector('input').focus()
+      picker.value = ''; manual.value = ''; manual.hidden = true; syncRates()
+    }
+  }
+  const sc = document.getElementById('saveCfg')
+  if (sc) sc.onclick = async () => {
+    for (const input of document.querySelectorAll('[data-rate-percent]')) {
+      if (!input.value.trim() || !input.reportValidity()) { toast('群概率请填写 0～100 之间的数字', true); return }
+    }
+    const patch = {}
+    cfgEls.forEach(el => {
+      if (cfgValue(el) !== el.dataset.original && !(el.dataset.secret && !el.value)) patch[el.dataset.cfg] = cfgValue(el)
+    })
+    if (!Object.keys(patch).length) return
+    sc.disabled = true
+    try {
+      const r = await api('/api/action/set-config-batch', { patch })
+      toast(`已保存 ${r.changed} 项（即时生效 ${r.live} 项）${r.needRestart ? '，其余项目重启后生效' : ''}`)
+      await load()
+    } catch(e){ toast('保存失败：' + e.message, true); sc.disabled = false }
+  }
+
+  // 日志
+  const lf = document.getElementById('logFilter')
+  if (lf) lf.onchange = () => { logFilter = lf.value; refreshLogs() }
+  const la = document.getElementById('logAuto')
+  if (la) la.onchange = () => { logAuto = la.checked }
+  const ll = document.getElementById('logLines')
+  if (ll) ll.onchange = () => refreshLogs()
+
+  // 数据
+  const lm = document.getElementById('loadMem')
+  if (lm) lm.onclick = async () => {
+    const key = document.getElementById('memKey').value
+    const r = await api('/api/memory?key=' + encodeURIComponent(key))
+    showMemory(key + ' 最近 ' + r.items.length + ' 条', r.items)
+  }
+  const llm = document.getElementById('loadLm')
+  if (llm) llm.onclick = async () => {
+    const key = document.getElementById('lmKey').value
+    const r = await api('/api/longmemory?key=' + encodeURIComponent(key))
+    document.getElementById('lmBox').textContent = r.text || '（这个会话还没有长期记忆摘要）'
+  }
+  const ds = document.getElementById('doSummary')
+  if (ds) ds.onclick = doSummary
+}
+function showMemory(title, items){
+  const html = items.map(m => `<div style="margin-bottom:7px"><span class="badge">${m.role === 'assistant' ? '机器人' : '群友'}</span> ${esc(m.content)}</div>`).join('')
+  const box = document.getElementById('memBox')
+  if (box) box.innerHTML = '<div class="mut" style="margin-bottom:8px">' + esc(title) + '</div>' + (html || '<div class="empty">空</div>')
+  else { const d = document.createElement('div'); d.className='card mono'; d.innerHTML = '<b>'+esc(title)+'</b><br>'+html; document.getElementById('main').appendChild(d) }
+}
+async function doSummary(){
+  const groupId = document.getElementById('sumGroup') ? document.getElementById('sumGroup').value : null
+  const days = Number(document.getElementById('sumDays')?.value || 1)
+  if (!await ask('生成并发送群聊报告？', '目标：' + (groupId ? '群 ' + groupId : '配置中的所有目标群') + '，范围：近 ' + days + ' 天。生成完成后会直接发送。', '开始生成')) return
+  try { const r = await api('/api/action/summary', { groupId, days }); toast('已开始生成（群 ' + (r.groups||[]).join(',') + '），约 1~3 分钟') }
+  catch(e){ toast(e.message, true) }
+}
+async function refreshLogs(){
+  try {
+    const lines = document.getElementById('logLines')?.value || 200
+    const r = await api('/api/logs?lines=' + lines + '&filter=' + encodeURIComponent(logFilter))
+    const bot = document.getElementById('logBot')
+    if (bot) { bot.innerHTML = r.bot.map(l => '<div class="l">' + esc(l) + '</div>').join('') || '<div class="empty">暂无日志</div>'; bot.scrollTop = bot.scrollHeight }
+  } catch(e){ /* 静默 */ }
+}
+async function loadDaily(){
+  try {
+    const r = await api('/api/daily')
+    const html = r.items.length
+      ? '<table><tr><th>群</th><th>日期</th><th>大小</th></tr>' + r.items.map(i => `<tr><td>${esc((chats.find(c=>String(c.id)===String(i.groupId))||{}).name || i.groupId)}</td><td>${i.date}</td><td>${(i.size/1024).toFixed(1)} KB</td></tr>`).join('') + '</table>'
+      : '<div class="empty">暂无日报数据文件</div>'
+    const a = document.getElementById('dailyList'); if (a) a.innerHTML = html
+    const b = document.getElementById('dailyFiles'); if (b) b.innerHTML = html
+  } catch(e){ /* 静默 */ }
+}
+
+// ── 数据加载 ───────────────────────────────────────────
+let personaCache = {}
+let appendixText = ''
+async function load(){
+  try {
+    const [s, c, p, cfg, groups] = await Promise.all([api('/api/state'), api('/api/chats'), api('/api/personas'), api('/api/config'), api('/api/groups').catch(() => ({items:[]}))])
+    state = s; chats = c.items; personas = p.items; activePersona = p.active; configItems = cfg.items
+    joinedGroups = groups.items || []
+    updateSideStatus(s.bot)
+    // 预取人格内容与附加说明
+    for (const item of personas) {
+      if (personaCache[item.name] === undefined) {
+        const r = await api('/api/action/get-persona', { name: item.name }).catch(()=>({ content:'' }))
+        personaCache[item.name] = r.content ?? ''
+      }
+    }
+    if (!appendixText) {
+      const r = await api('/api/action/get-appendix').catch(()=>({ text:'' }))
+      appendixText = r.text ?? ''
+    }
+    render()
+  } catch(e){ updateSideStatus({ statusError:'控制台未响应' }); toast('加载失败：' + e.message + '（机器人可能在重启）', true) }
+}
+renderNav()
+load()
+// 支持浏览器前进/后退与直接改地址栏（#chats 这类）
+window.addEventListener('hashchange', () => {
+  const p = location.hash.replace('#', '')
+  if (PAGES.some((x) => x[0] === p) && p !== page) {
+    page = p
+    renderNav()
+    render()
+  }
+})
+let refreshingState = false
+async function refreshStateUI() {
+  if (refreshingState) return
+  refreshingState = true
+  try {
+    state = await api('/api/state')
+    updateSideStatus(state.bot)
+    if (page === 'overview') {
+      const oldY = window.scrollY
+      const detailsOpen = document.querySelector('.advanced-box')?.open
+      render()
+      const details = document.querySelector('.advanced-box')
+      if (details) details.open = Boolean(detailsOpen)
+      window.scrollTo(0, oldY)
+    }
+  } catch(e) {
+    state = { ...state, bot:{ ...state?.bot, online:false, connected:false, onebotConnected:false, qqOnline:null, statusError:'控制台未响应' } }
+    updateSideStatus(state.bot)
+    if (page === 'overview') render()
+  } finally { refreshingState = false }
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshStateUI() })
+setInterval(() => {
+  if (document.hidden) return
+  refreshStateUI()
+  if (page === 'logs' && logAuto) refreshLogs()
+}, 3000)
+</script>
+</body>
+</html>

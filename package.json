@@ -1,0 +1,15 @@
+{
+  "name": "deepseek-qq-bot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "DeepSeek API 接入 QQ 的非官方聊天机器人（OneBot 11 协议，零依赖）",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node scripts/test-offline.mjs",
+    "check:repo": "node scripts/check-repository.mjs"
+  }
+}
