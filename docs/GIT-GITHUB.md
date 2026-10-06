@@ -124,6 +124,23 @@ git -c http.proxy=http://127.0.0.1:7897 push
 git config --unset 'http.https://github.com/.proxy'
 ```
 
+## GitHub 发来的自动检查邮件
+
+仓库的 **Actions → Offline checks** 会在上传代码后，用 GitHub 提供的 Windows 和 Linux 电脑检查提交文件并运行离线测试。它们使用空配置，不连接你的 QQ，也不会调用付费模型。
+
+| 页面提示 | 含义 |
+| --- | --- |
+| `Triggered via push` | 这次上传代码触发了检查 |
+| `Success` / 绿色勾 | 所有检查通过 |
+| `Failure` / 红色叉 | 至少一个步骤失败，点击对应任务查看日志 |
+| `Cancelled` | 任务被取消，不能单靠它判断测试是否通过 |
+| `Annotations` | 汇总具体错误或警告 |
+| `Re-run jobs` | 对同一个提交重跑；修改配置后应查看新提交对应的运行 |
+
+失败邮件表示云端自动检查有问题；代码是否上传成功，要查看仓库提交记录。电脑上正在运行的机器人由本地启动程序管理。
+
+本仓库名 `Koukou.` 以句点结尾，Windows 默认检查目录会遇到路径兼容问题。工作流在 Windows 临时目录中取代码，Linux 使用普通 checkout；两个系统独立完成检查。旧运行的失败记录仍会保留，修复后看最新提交对应的结果。
+
 ## 官方参考
 
 - [Git 中文手册：记录每次更新到仓库](https://git-scm.com/book/zh/v2/Git-%E5%9F%BA%E7%A1%80-%E8%AE%B0%E5%BD%95%E6%AF%8F%E6%AC%A1%E6%9B%B4%E6%96%B0%E5%88%B0%E4%BB%93%E5%BA%93)
