@@ -7,7 +7,7 @@ import { summaryFailureMessage } from './summaryFailure.js'
 import { generateCheckedSummary } from './summaryQuality.js'
 import { parseSummaryFormat } from './summaryFormat.js'
 import { buildSummaryNameIndex, replaceTopicQqReferences, resolveSummaryNames } from './summaryNames.js'
-import { profileSummaryContent, formatSummaryContentGuide, selectSummaryRecords, renderSummaryRecordText } from './summaryContent.js'
+import { profileSummaryContent, formatSummaryContentGuide, selectSummaryRecords, renderSummaryRecordText, summaryTopicPolicy } from './summaryContent.js'
 import { createSummarySchedule, ambiguousSummarySend } from './summarySchedule.js'
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -63,7 +63,7 @@ export function buildSummaryPrompt({ botName, dateLabel, days = 1, stats = null,
 【输出格式：严格遵守】
 从「💬 热门话题」开始写，只写下面这三个小节。标题行、日期行、📊 基础统计这三部分系统会自动补上，你不要写、不要重复。
 小节的标题单独占一行，紧接着就是该小节的第一条（标题与第一条之间不要空行）；同一个小节里，每一条之间必须空一行。
-不同小节之间也空一行。三个小节的标题必须保留，不能省略「🏆 群友称号」。热门话题通常写 3~5 项；真实讨论高度集中时可以写 2 项，记录很少时按实际写。覆盖有分量的不同讨论，不要只挑最热的一项就结束，也不要为了凑数拆同一件事或把例行打卡包装成热点。
+不同小节之间也空一行。三个小节的标题必须保留，不能省略「🏆 群友称号」。有效普通文字样本超过40条时，热门话题必须至少3项，按下方选题依据优先写3~5项；只有有效样本不超过40条时允许按实际写1~2项。覆盖有分量的不同讨论、重要信息和安排，不要只挑最热的一项就结束，也不要为了凑数拆同一件事或把例行打卡包装成热点。
 空行才是消息边界；一条话题内部的标题、参与者和正文可以换行，但不要插入空行，不要把同一条拆碎。
 请直接输出真正的换行，不要输出字面量 \\n 或 \\r\\n。
 不要用 Markdown（不要 #、不要 **、不要用 - 开头），编号用 1. 2. 3.，项目符号用 •。
@@ -73,7 +73,7 @@ export function buildSummaryPrompt({ botName, dateLabel, days = 1, stats = null,
    参与者: 昵称A、昵称B、昵称C
    用 100~200 字把事情讲清楚：谁先说了什么、别人怎么回应、最后有没有结论。叙述里提到群友时使用群昵称，与本条「参与者」栏的昵称完全一致，保留昵称中的括号和表情；不要用 QQ 号、[QQ号] 或 [@QQ号] 指代群友。
 
-（下一个话题之前空一行，格式同上。通常写 3~5 个，主题集中时允许 2 个；按实际讨论的重要性排序。少量例行活动如需保留，放在最后，用一两句简述，不必写满 100~200 字。）
+（下一个话题之前空一行，格式同上。有效样本超过40条必须至少3个，优先数量见下方选题依据；小样本可写1~2个。按实际讨论的重要性排序。少量例行活动如需保留，放在最后，用一两句简述，不必写满 100~200 字。）
 
 🏆 群友称号
 • 昵称 - 称号 (MBTI)
@@ -457,6 +457,7 @@ export function createDailySummary({ config, logger, onebot, llm, buildSummaryPr
       const stats = computeSummaryStats(records)
       const nameIndex = buildSummaryNameIndex({ users: stats.users, records })
       const contentProfile = profileSummaryContent(records)
+      const topicPolicy = summaryTopicPolicy(contentProfile)
       const cap = Math.min(1500, config.summaryMaxMessages * dayCount)
       if (total > cap) {
         records = selectSummaryRecords(records, cap)
@@ -478,6 +479,7 @@ export function createDailySummary({ config, logger, onebot, llm, buildSummaryPr
         contentGuide: formatSummaryContentGuide(contentProfile),
       })
       logger.info(`群 ${groupId} 总结选题依据：普通文字 ${contentProfile.ordinaryCount} 条；猪猪例行指令 ${contentProfile.counts['pig-command']} 条 / 固定回复 ${contentProfile.counts['pig-result']} 条；${contentProfile.minorPigRoutine ? '仅作次要动态' : '按实际讨论选题'}`)
+      logger.info(`群 ${groupId} 话题数量策略：完整窗口 ${total} 条 / 有效普通文字 ${topicPolicy.meaningful} 条；至少 ${topicPolicy.min} 项 / 优先 ${topicPolicy.target} 项 / 最多 ${topicPolicy.max} 项${topicPolicy.sparse ? '（有效样本不足，允许1～2项）' : ''}`)
       logger.info(`开始生成群 ${groupId} ${scopeText}报告（参与消息 ${records.length}/${total} 条）…`)
       const startedAt = Date.now()
       // 长报告要跑好几分钟，期间群里一点动静都没有会让人以为"指令没生效"。

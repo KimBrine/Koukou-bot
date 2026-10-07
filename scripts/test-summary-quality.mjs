@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { inspectSummaryQuality, generateCheckedSummary } from '../src/summaryQuality.js'
 import { splitReportBlocks } from '../src/dailySummary.js'
+import { profileSummaryContent, summaryTopicPolicy, formatSummaryContentGuide, selectSummaryRecords } from '../src/summaryContent.js'
 
 const logger = {info(){},warn(){}}
 const records = Array.from({length:100},(_,i)=>({text:`真实测试消息${i}`}))
@@ -24,6 +25,22 @@ assert.equal(inspectSummaryQuality(report({topics:1,members:2,quotes:1}),{record
 assert.equal(inspectSummaryQuality(report()+'\n🏆 群友称号',context).ok,false)
 assert.equal(inspectSummaryQuality(report({quotes:1}),context).ok,false)
 assert.equal(inspectSummaryQuality(report({topics:1}),context).ok,false)
+assert.equal(inspectSummaryQuality(report({topics:2}),context).ok,false)
+// Full-window counts determine the policy, even if the model's input is sampled.
+for (const [count, min, target] of [[0,1,1],[10,1,1],[35,1,2],[40,1,2],[41,3,3],[199,3,3],[200,3,4],[300,3,4],[799,3,4],[800,3,5],[1200,3,5]]) {
+  const fullRecords = Array.from({length:count},(_,i)=>({text:`文字消息${i}`,time:1700000000+i}))
+  const profile = profileSummaryContent(fullRecords)
+  const policy = summaryTopicPolicy(profile)
+  assert.equal(policy.min,min,`minimum at ${count}`); assert.equal(policy.target,target,`target at ${count}`)
+  assert.equal(inspectSummaryQuality(report({topics:2}),{records:fullRecords,stats}).ok,count<=40,`two-topic boundary at ${count}`)
+  if (count>40) {
+    assert.match(formatSummaryContentGuide(profile),new RegExp(`热门话题至少3项，优先${target}项`))
+    const sampled = selectSummaryRecords(fullRecords,20)
+    assert.equal(inspectSummaryQuality(report({topics:2}),{records:sampled,stats,contentProfile:profile}).ok,false,`sampling must not relax minimum at ${count}`)
+  }
+}
+const unreadable = Array.from({length:1200},()=>({text:'[图片]'}))
+assert.equal(summaryTopicPolicy(profileSummaryContent(unreadable)).sparse,true,'image placeholders cannot provide evidence for invented topics')
 let calls=[]
 const messages = [{role:'user',content:'原始聊天记录，必须保留'}]
 const llm = {async chat(prompt,input,options){calls.push({prompt,input,options});return calls.length===1?incomplete:report()}}
@@ -44,4 +61,13 @@ assert.equal(calls.length,2)
 calls=[]
 await generateCheckedSummary({llm:{async chat(){calls.push(1);return report()}},prompt:'格式',messages,...context,logger})
 assert.equal(calls.length,1)
+// The observed defect: a valid-looking two-topic report must be rewritten once.
+calls=[]
+const fullRecords=Array.from({length:1200},(_,i)=>({text:`文字消息${i}`}))
+const repaired=await generateCheckedSummary({llm:{async chat(prompt,input){calls.push(input);return calls.length===1?report({topics:2}):report({topics:5})}},prompt:'格式',messages,records:fullRecords,stats,logger})
+assert.equal(calls.length,2); assert.equal(repaired,report({topics:5}))
+assert.match(calls[1].at(-1).content,/优先5项/); assert.match(calls[1].at(-1).content,/只有 2 项，应至少 3 项/)
+calls=[]
+await assert.rejects(generateCheckedSummary({llm:{async chat(){calls.push(1);return report({topics:2})}},prompt:'格式',messages,records:fullRecords,stats,logger}),error=>error.code==='REPORT_INCOMPLETE')
+assert.equal(calls.length,2,'still-incomplete output must not trigger unbounded retries')
 console.log('Summary quality checks passed: exact defect, complete sections, enough topics, sparse groups, bounded repair, original records retained, preserved message boundaries')
