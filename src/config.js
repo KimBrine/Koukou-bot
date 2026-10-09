@@ -179,6 +179,8 @@ export function loadConfig() {
     // 总结模型提供方：deepseek | dashscope（DashScope/通义千问在长文总结上更稳，不会把预算烧在推理里）
     summaryProvider: String(env.SUMMARY_PROVIDER ?? 'deepseek').toLowerCase(),
     summaryMaxTokens: Math.max(500, Math.min(16000, Math.floor(num('SUMMARY_MAX_TOKENS', 8000)))),
+    summaryConcurrency: Math.max(1, Math.min(3, Math.floor(num('SUMMARY_CONCURRENCY', 2)))),
+    summaryTaskTimeoutMinutes: Math.max(2, Math.min(30, Math.floor(num('SUMMARY_TASK_TIMEOUT_MINUTES', 6)))),
     // 报告发送方式：先按空行分段。forward（合并转发成"聊天记录"卡片，失败自动退回逐条）| split（逐段发送）
     summarySendMode: String(env.SUMMARY_SEND_MODE ?? 'forward').toLowerCase() === 'split' ? 'split' : 'forward',
     // 单张合并转发卡片最多几个节点；超出时分成多张卡片

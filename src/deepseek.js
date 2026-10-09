@@ -1,4 +1,8 @@
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+import { setTimeout as delay } from 'node:timers/promises'
+const sleep = async (ms, signal) => {
+  try { await delay(ms, undefined, { signal }) }
+  catch (error) { signal?.throwIfAborted(); throw error }
+}
 
 // 仅为支持混合思考的千问型号传入该扩展参数，避免影响其他服务商。
 export const isQwenHybridModel = model => /^qwen(?:3(?:\.\d+)?-(?:flash|plus|vl-(?:flash|plus))|-(?:flash|plus))(?:$|-)/i.test(String(model))
@@ -27,24 +31,35 @@ export class DeepSeekClient {
     this.concurrencyLimit = maxConcurrency
   }
 
-  async #acquire() {
+  async #acquire(signal) {
+    signal?.throwIfAborted()
     if (this.active < this.concurrencyLimit) {
       this.active += 1
       return
     }
-    await new Promise((resolve) => this.queue.push(resolve))
-    this.active += 1
+    await new Promise((resolve, reject) => {
+      const entry = { resolve, signal, aborted: null }
+      entry.aborted = () => {
+        const index = this.queue.indexOf(entry)
+        if (index >= 0) this.queue.splice(index, 1)
+        reject(signal.reason)
+      }
+      this.queue.push(entry)
+      signal?.addEventListener('abort', entry.aborted, { once: true })
+    })
   }
 
   #release() {
-    this.active -= 1
     const next = this.queue.shift()
-    if (next) next()
+    if (next) {
+      next.signal?.removeEventListener('abort', next.aborted)
+      next.resolve() // 把已有位置直接交给等待者，避免新请求抢入后超过并发上限。
+    } else this.active -= 1
   }
 
   /** 纯文本对话：messages 为 [{role, content}] 历史（不含 system） */
-  async chat(systemPrompt, messages, { rejectTruncated = false } = {}) {
-    await this.#acquire()
+  async chat(systemPrompt, messages, { rejectTruncated = false, signal } = {}) {
+    await this.#acquire(signal)
     try {
       let lastErr = null
       // 偶发空回复（模型把预算花在推理上、或响应被截断）在这里重试一次：
@@ -56,7 +71,7 @@ export class DeepSeekClient {
           temperature: this.temperature,
           max_tokens: this.maxTokens,
           stream: false,
-        })
+        }, signal)
         const finishReason = data?.choices?.[0]?.finish_reason
         if (finishReason === 'content_filter') {
           const err = new Error(`${this.label} 内容检查未通过`)
@@ -73,7 +88,7 @@ export class DeepSeekClient {
         lastErr = new Error(`${this.label} 返回内容为空`)
         if (attempt === 0) {
           this.logger.warn(`${this.label} 返回内容为空，1 秒后重试一次`)
-          await sleep(1000)
+          await sleep(1000, signal)
         }
       }
       throw lastErr
@@ -167,10 +182,11 @@ export class DeepSeekClient {
   }
 
   /** 带重试的底层请求，返回解析后的 JSON */
-  async #post(body) {
+  async #post(body, signal) {
     if (typeof this.enableThinking === 'boolean') body = { ...body, enable_thinking: this.enableThinking }
     let lastError = null
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      signal?.throwIfAborted()
       const controller = new AbortController()
       const timer = setTimeout(() => controller.abort(), this.timeoutMs)
       try {
@@ -181,7 +197,7 @@ export class DeepSeekClient {
             Authorization: `Bearer ${this.apiKey}`,
           },
           body: JSON.stringify(body),
-          signal: controller.signal,
+          signal: signal ? AbortSignal.any([controller.signal, signal]) : controller.signal,
         })
         if (!res.ok) {
           const rawDetail = await res.text().catch(() => '')
@@ -195,6 +211,8 @@ export class DeepSeekClient {
         return await res.json()
       } catch (err) {
         clearTimeout(timer)
+        // 单群总时限取消时终止请求与重试，不占住其他群的生成位置。
+        signal?.throwIfAborted()
         // fetch 的 "fetch failed" 本身没有信息量，真正的原因在 err.cause 里（ECONNRESET / ETIMEDOUT / DNS…）
         const cause = err?.cause ? `（原因：${err.cause.code || err.cause.message || err.cause}）` : ''
         const msg = `${err?.message ?? err}${cause}`
@@ -214,7 +232,7 @@ export class DeepSeekClient {
         }
         const wait = Math.min(8000, 1000 * 2 ** attempt)
         this.logger.warn(`${this.label} 调用失败（第 ${attempt + 1}/${this.maxRetries + 1} 次）：${msg}，${wait / 1000}s 后重试`)
-        await sleep(wait)
+        await sleep(wait, signal)
       } finally {
         clearTimeout(timer)
       }

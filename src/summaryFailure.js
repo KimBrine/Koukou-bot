@@ -1,6 +1,7 @@
 /** 给群友解释真实失败原因，不把接口拒绝误报成可稍后重试的故障。 */
 export function summaryFailureMessage(error, stage = 'model') {
   if (stage === 'send') return '群总结已经生成，但 QQ 发送失败了。请检查机器人是否在线，以及群聊发送权限。'
+  if (error?.code === 'SUMMARY_DEADLINE') return '这次群总结准备时间超过上限，已取消本群任务，其他群继续。请稍后重试，或在控制台调整单群准备时限。'
   if (error?.code === 'REPORT_INCOMPLETE') return '这次模型没有写齐群总结的必要小节或条目，自动修正一次后仍不完整，所以暂未发送残缺报告。请稍后重试，具体原因可查看控制台日志。'
   const text = `${error?.code || ''} ${error?.message || ''}`
   if (/DataInspectionFailed|data_inspection_failed|content_filter|content_policy_violation/i.test(text)) {

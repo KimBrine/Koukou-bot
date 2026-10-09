@@ -35,8 +35,10 @@ export function inspectSummaryQuality(text, { records = [], stats = {}, contentP
   return {ok:issues.length === 0, counts, min, topicPolicy, issues}
 }
 
-export async function generateCheckedSummary({ llm, prompt, messages, records, stats, contentProfile = profileSummaryContent(records), logger }) {
-  let reply = await llm.chat(prompt, messages, {rejectTruncated:true})
+export async function generateCheckedSummary({ llm, prompt, messages, records, stats, contentProfile = profileSummaryContent(records), logger, signal }) {
+  signal?.throwIfAborted()
+  let reply = await llm.chat(prompt, messages, {rejectTruncated:true, signal})
+  signal?.throwIfAborted()
   let quality = inspectSummaryQuality(reply, {records, stats, contentProfile})
   logger.info(`总结正文校验：${reply.length} 字，话题 ${quality.counts.topics} 项 / 群友称号 ${quality.counts.members} 项 / 群圣经 ${quality.counts.quotes} 项`)
   if (!quality.ok) {
@@ -45,7 +47,8 @@ export async function generateCheckedSummary({ llm, prompt, messages, records, s
       ...messages,
       {role:'assistant',content:reply},
       {role:'user',content:`上面的报告没有满足格式要求：${quality.issues.join('；')}。请基于前面同一份真实聊天记录完整重写报告，不能只补一段。保留三个小节的标题，话题写 ${quality.min.topics}～5 项，优先${quality.topicPolicy.target}项；有效普通文字样本为${quality.topicPolicy.meaningful}条。群友称号写 ${quality.min.members}～5 项，群圣经写 ${quality.min.quotes}～5 项。每个条目及不同小节之间空一行，条目内部正常换行。覆盖不同日期及不同讨论，也检查重要信息、通知、决定与安排，不要把其他话题并入一个大话题；两个活跃时段不等于两个话题。只写记录确实支持的内容，不能为了凑数编造话题或原话，也不能用少量例行打卡凑主要话题；如果证据不足，请如实说明。`},
-    ], {rejectTruncated:true})
+    ], {rejectTruncated:true, signal})
+    signal?.throwIfAborted()
     quality = inspectSummaryQuality(reply, {records, stats, contentProfile})
     logger.info(`总结修正校验：${reply.length} 字，话题 ${quality.counts.topics} 项 / 群友称号 ${quality.counts.members} 项 / 群圣经 ${quality.counts.quotes} 项`)
     if (!quality.ok) {

@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import path from 'node:path'
 import { parseMessage } from './cq.js'
 import { formatReportDate } from './summaryStats.js'
+import { createSummaryDeadline, summaryConcurrency } from './summaryJobs.js'
 
 const pad = n => String(n).padStart(2, '0')
 const dateKey = date => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
@@ -132,16 +133,18 @@ export function createSummarySchedule({ config, logger, onebot, groups, runGroup
     return uncertain ? 'unknown' : 'absent'
   }
 
-  async function verifyNotSent(groupId, day) {
+  async function verifyNotSent(groupId, day, signal) {
     if (hasDelivered(day, groupId)) return false
     if (!onebot.selfId) { log(`群 ${groupId} 未确认 QQ 账号，跳过`); return false }
     try {
-      const history = await readEveningHistory(groupId, targetAt(day, '23:00') / 1000 - 15)
+      const history = await readEveningHistory(groupId, targetAt(day, '23:00') / 1000 - 15, signal)
+      signal?.throwIfAborted()
       if (!Array.isArray(history.rawMessages)) { log(`群 ${groupId} 未返回可核验的原始历史，跳过补发`); return false }
       let uncertain = false
       for (const msg of history.rawMessages ?? []) {
         if (String(msg.user_id) !== String(onebot.selfId) || Number(msg.time) < targetAt(day, '23:00') / 1000 - 15) continue
         const result = await inspectContent(msg.message ?? msg.raw_message, day)
+        signal?.throwIfAborted()
         if (result === 'sent') {
           const key = deliveryKey(day, groupId)
           state.deliveries[key] = { ...state.deliveries[key], confirmed: 1, receiptIds: [String(msg.message_id)], sentAt: Number(msg.time) * 1000, verifiedFromHistory: true }
@@ -179,8 +182,10 @@ export function createSummarySchedule({ config, logger, onebot, groups, runGroup
     }
     const targets = [...new Set(groups().map(Number))]
     if (!fallback) for (const id of targets) planned.add(deliveryKey(day, id))
-    try {
-      for (const [index, id] of targets.entries()) {
+    let cursor = 0, stopped = false
+    const worker = async () => {
+      while (!stopped && cursor < targets.length) {
+        const id = targets[cursor++]
         const key = deliveryKey(day, id)
         try {
           if (enabled() && (hasDelivered(day, id) || (fallback && planned.has(key)))) {
@@ -188,16 +193,24 @@ export function createSummarySchedule({ config, logger, onebot, groups, runGroup
             continue
           }
           if (isRunning(id)) { log(`群 ${id} 正在生成，跳过 ${time}`); continue }
-          if (fallback && !(await verifyNotSent(id, day))) continue
+          if (fallback) {
+            const deadline = createSummaryDeadline(config)
+            try { if (!(await deadline.wait(verifyNotSent(id, day, deadline.signal)))) continue }
+            finally { deadline.close() }
+          }
           if (hasDelivered(day, id)) continue
-          if (chinaDay(now()) !== day) break
-          if (!(await online())) { log(`QQ 已掉线，停止 ${time} 后续群的任务`); break }
+          if (chinaDay(now()) !== day) { stopped = true; break }
+          if (!(await online())) { log(`QQ 已掉线，停止 ${time} 后续群的任务`); stopped = true; break }
           if (fallback) log(`群 ${id} 已确认当晚未发送，开始唯一一次 ${earlyFallback ? '手动提前' : '23:30'}补发`)
           await runGroup(id, { scheduled: true, scheduleDay: day, scheduleTime: time })
-          if (index + 1 < targets.length) await pause(5000)
-        } catch (err) { logger.error(`[定时总结] 群 ${id} ${time} 任务失败：${err.message}`) }
+          if (cursor < targets.length) await pause(5000)
+        } catch (err) { logger.error(`[定时总结] 群 ${id} ${time} 任务失败，其他群继续：${err.message}`) }
         finally { if (!fallback) planned.delete(key) }
       }
+    }
+    try {
+      logger.info(`[定时总结] ${time} 最多 ${summaryConcurrency(config)} 群并行生成，逐群独立处理失败`)
+      await Promise.all(Array.from({ length: Math.min(summaryConcurrency(config), targets.length) }, worker))
     } finally {
       if (!fallback) for (const id of targets) planned.delete(deliveryKey(day, id))
     }

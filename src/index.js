@@ -147,24 +147,20 @@ if (config.visionProvider === 'deepseek' ? config.deepseekApiKey : config.dashsc
 }
 
 // 每日总结模型：独立客户端（token 预算大）；可切换提供方（DeepSeek / 通义千问）
-let summaryLLM = llm
-if (config.summaryModel) {
-  const useQwen = config.summaryProvider === 'dashscope'
-  summaryLLM = new DeepSeekClient({
-    apiKey: useQwen ? config.dashscopeApiKey : config.deepseekApiKey,
-    baseUrl: useQwen ? config.dashscopeBaseUrl : config.deepseekBaseUrl,
-    model: config.summaryModel,
-    temperature: 1.0,
-    // 长文总结需要充足预算（推理也占额度），实测 8000 足够
-    maxTokens: config.summaryMaxTokens,
-    timeoutMs: Math.max(config.timeoutMs, 180000),
-    maxRetries: config.maxRetries,
-    maxConcurrency: 1,
-    logger,
-    label: useQwen ? '总结模型(通义千问)' : '总结模型(DeepSeek)',
-    enableThinking: useQwen && isQwenHybridModel(config.summaryModel) ? config.dashscopeThinking : undefined,
-  })
-}
+const useQwenForSummary = Boolean(config.summaryModel) && config.summaryProvider === 'dashscope'
+const summaryLLM = new DeepSeekClient({
+  apiKey: useQwenForSummary ? config.dashscopeApiKey : llm.apiKey,
+  baseUrl: useQwenForSummary ? config.dashscopeBaseUrl : llm.baseUrl,
+  model: config.summaryModel || llm.model,
+  temperature: 1.0,
+  maxTokens: config.summaryMaxTokens,
+  timeoutMs: Math.max(config.timeoutMs, 180000),
+  maxRetries: config.maxRetries,
+  maxConcurrency: config.summaryConcurrency,
+  logger,
+  label: useQwenForSummary ? '总结模型(通义千问)' : '总结模型(DeepSeek)',
+  enableThinking: useQwenForSummary && isQwenHybridModel(config.summaryModel) ? config.dashscopeThinking : undefined,
+})
 
 const wsUrl = config.onebotAccessToken
   ? `${config.onebotWsUrl}${config.onebotWsUrl.includes('?') ? '&' : '?'}access_token=${encodeURIComponent(config.onebotAccessToken)}`
@@ -374,6 +370,7 @@ logger.info(targetWatch.enabled
   : '盯人回复未启用（TARGET_WATCH_ENABLED=0）')
 logger.info(`反检测/拟人化：装饰符号保留 ${Math.round(config.emojiKeepRate * 100)}%｜打字延迟 ${config.humanDelayMinMs}-${config.humanDelayMaxMs}ms｜每会话每小时：主动/盯人 ≤${config.rateLimitPerHour} 条、被@或私聊 ≤${config.rateLimitAtPerHour} 条、间隔 ≥${Math.round(config.rateLimitMinGapMs / 1000)}s（不够时最多等 ${Math.round((config.rateLimitWaitMaxMs ?? 8000) / 1000)}s，不丢消息）｜${config.quietHours ? `安静时段 ${config.quietHours}（${config.quietHoursBlockAll ? '彻底静音：连被@和私聊都不回' : '只挡主动搭话，被@仍回'}）` : '安静时段未启用'}`)
 logger.info(`群聊报告：${config.summarySendMode === 'forward' ? '合并转发成「聊天记录」卡片（失败自动退回逐条）' : '按空行逐条发送'}｜卡片最多 ${config.summaryMaxBlocks} 条｜统计数字由代码精确计算`)
+logger.info(`总结调度：最多 ${config.summaryConcurrency} 群并行准备｜单群准备时限 ${config.summaryTaskTimeoutMinutes} 分钟｜报告发送串行，群间至少间隔 5 秒`)
 logger.info(config.replyLengthMatch
   ? `回复长度自适应：跟着对方长度走｜最多 ${config.replyMaxLines} 行、单行 ≤${config.replyLineMaxChars} 字｜行间补句间隔 ${config.lineGapMinMs}-${config.lineGapMaxMs}ms｜多行时逐行分条发送`
   : '回复长度自适应已关闭（固定单行）')

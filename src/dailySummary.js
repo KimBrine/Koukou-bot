@@ -9,6 +9,7 @@ import { parseSummaryFormat } from './summaryFormat.js'
 import { buildSummaryNameIndex, replaceTopicQqReferences, resolveSummaryNames } from './summaryNames.js'
 import { profileSummaryContent, formatSummaryContentGuide, selectSummaryRecords, renderSummaryRecordText, summaryTopicPolicy } from './summaryContent.js'
 import { createSummarySchedule, ambiguousSummarySend } from './summarySchedule.js'
+import { createSummaryDeadline, createSummarySendQueue } from './summaryJobs.js'
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const pad2 = (n) => String(n).padStart(2, '0')
@@ -159,12 +160,13 @@ export function mergeRecords(history, captured, startSec) {
 
 export function createDailySummary({ config, logger, onebot, llm, buildSummaryPromptFn = buildSummaryPrompt }) {
   const running = new Set()
+  const queueSend = createSummarySendQueue()
 
   const summaryGroups = () =>
     config.summaryGroups.length > 0 ? config.summaryGroups : [...config.whitelistGroups]
   const summarySchedule = createSummarySchedule({ config, logger, onebot, groups: summaryGroups,
     runGroup: runSummary, isRunning,
-    readEveningHistory: (groupId, startSec) => backfillHistory(groupId, 200, startSec, { includeSelf: true }),
+    readEveningHistory: (groupId, startSec, signal) => backfillHistory(groupId, 200, startSec, { includeSelf: true, signal }),
   })
 
   function fileFor(groupId, key) {
@@ -230,7 +232,7 @@ export function createDailySummary({ config, logger, onebot, llm, buildSummaryPr
    * NapCat 的无游标“首屏”可能跳过离线期间的消息，即使最早时间早于零点也不能视为完整。
    * 先取首屏定位最新 seq，再从该 seq 显式向前翻；重复扫描直到本日 ID 集合稳定。
    */
-  async function backfillHistory(groupId, count, startSec = 0, { includeSelf = false } = {}) {
+  async function backfillHistory(groupId, count, startSec = 0, { includeSelf = false, signal } = {}) {
     const byId = new Map()
     // ⚠️ 单页别要太多：NapCat 拉历史实测一次要 ~17 秒，要 900 条会直接超时，
     //    翻页循环一断就又变成"只有部分数据"。小页多翻几页更稳。
@@ -253,14 +255,17 @@ export function createDailySummary({ config, logger, onebot, llm, buildSummaryPr
       return newWindow
     }
     for (let round = 1; round <= maxRounds; round++) {
+      signal?.throwIfAborted()
       let first
       try {
         first = (await onebot.getGroupMsgHistory(groupId, null, pageTimeoutMs, pageSize, false))?.messages || []
       } catch (err) {
+        signal?.throwIfAborted()
         logger.warn(`群 ${groupId} 历史首屏拉取失败（第 ${round} 轮）：${err.message}`)
         failed = true
         break
       }
+      signal?.throwIfAborted()
       if (first.length === 0) {
         logger.warn(`群 ${groupId} 历史首屏为空（第 ${round} 轮）`)
         failed = true
@@ -280,14 +285,17 @@ export function createDailySummary({ config, logger, onebot, llm, buildSummaryPr
         break
       }
       for (let i = 0; i < maxPages; i++) {
+        signal?.throwIfAborted()
         let msgs
         try {
           msgs = (await onebot.getGroupMsgHistory(groupId, seq, pageTimeoutMs, pageSize, true))?.messages || []
         } catch (err) {
+          signal?.throwIfAborted()
           logger.warn(`群 ${groupId} 历史回溯失败（第 ${round} 轮第 ${i + 1} 页）：${err.message}`)
           failed = true
           break
         }
+        signal?.throwIfAborted()
         if (msgs.length === 0) break
         pages++
         newWindow += add(msgs)
@@ -433,14 +441,16 @@ export function createDailySummary({ config, logger, onebot, llm, buildSummaryPr
       return
     }
     running.add(groupId)
+    const deadline = createSummaryDeadline(config)
     let stage = 'model'
     try {
       const startSec = dayStartSec(dayCount - 1)
       const captured = readCapturedRange(groupId, dayCount)
       let history = { records: [], complete: false }
       try {
-        history = await backfillHistory(groupId, dayCount * 300, startSec)
+        history = await deadline.wait(backfillHistory(groupId, dayCount * 300, startSec, { signal: deadline.signal }))
       } catch (err) {
+        deadline.signal.throwIfAborted()
         logger.warn(`群 ${groupId} 历史回填失败：${err.message}`)
       }
       if (!history.complete) {
@@ -495,26 +505,31 @@ export function createDailySummary({ config, logger, onebot, llm, buildSummaryPr
       if (pingTimer?.unref) pingTimer.unref()
       let reply
       try {
-        reply = await generateCheckedSummary({llm, prompt, messages:[{ role: 'user', content: renderLines(records, dayCount) }], records, stats, contentProfile, logger})
+        reply = await deadline.wait(generateCheckedSummary({llm, prompt, messages:[{ role: 'user', content: renderLines(records, dayCount) }], records, stats, contentProfile, logger, signal: deadline.signal}))
       } finally {
         if (pingTimer) clearTimeout(pingTimer)
       }
-      await resolveSummaryNames({ text: reply, index: nameIndex, onebot, groupId, logger })
+      await deadline.wait(resolveSummaryNames({ text: reply, index: nameIndex, onebot, groupId, logger }))
+      deadline.signal.throwIfAborted()
+      deadline.close()
       const blocks = buildReportBlocks({ startKey, endKey, stats, modelText: reply, nameIndex })
       if (dryRun) {
         logger.info(`[dryRun] 群 ${groupId} ${scopeText}报告共 ${blocks.length} 块：\n\n${blocks.join('\n\n──── 分条 ────\n\n')}`)
         return
       }
       stage = 'send'
-      if (scheduled) {
-        // 生成期间可能掉线、跨日或已有报告；发送前再核对，离线不排队等登录。
-        if (dateKey() !== scheduleDay || !(await summarySchedule.online())) {
-          logger.info(`[定时总结] 群 ${groupId} ${scheduleTime} 发送前 QQ 未确认在线或已跨日，当晚放弃本次`)
-          return
+      const how = await queueSend(async () => {
+        if (scheduled) {
+          // 生成或发送排队期间可能掉线、跨日或已有报告；实际发送前核对。
+          if (dateKey() !== scheduleDay || !(await summarySchedule.online())) {
+            logger.info(`[定时总结] 群 ${groupId} ${scheduleTime} 发送前 QQ 未确认在线或已跨日，当晚放弃本次`)
+            return
+          }
+          if (config.summaryFallbackEnabled && summarySchedule.hasDelivered(scheduleDay, groupId)) return
         }
-        if (config.summaryFallbackEnabled && summarySchedule.hasDelivered(scheduleDay, groupId)) return
-      }
-      const how = await sendReport(groupId, blocks)
+        return sendReport(groupId, blocks)
+      })
+      if (!how) return
       const cost = ((Date.now() - startedAt) / 1000).toFixed(0)
       logger.info(`群 ${groupId} ${scopeText}报告已发送（${blocks.length} 块，方式：${how}，耗时 ${cost}s）`)
     } catch (err) {
@@ -528,6 +543,7 @@ export function createDailySummary({ config, logger, onebot, llm, buildSummaryPr
         }
       }
     } finally {
+      deadline.close()
       running.delete(groupId)
     }
   }

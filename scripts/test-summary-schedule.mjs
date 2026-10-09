@@ -17,10 +17,10 @@ async function test(name, task) {
   mock.timers.enable({ apis: ['Date', 'setTimeout'], now: new Date(`${DAY}T23:00:00+08:00`).getTime() })
   try { await task(); console.log(`PASS ${name}`); passed++ } finally { mock.timers.reset() }
 }
-function fixture({ dir, history, action, groupIds = [101, 102], enabled = true } = {}) {
+function fixture({ dir, history, action, groupIds = [101, 102], enabled = true, concurrency = 1 } = {}) {
   const work = [], active = new Set(), reads = [], probes = []
   const env = { loggedIn: true }
-  const config = { summaryEnabled: true, summaryFallbackEnabled: enabled, summaryTimes: ['23:00'], dataDir: dir }
+  const config = { summaryEnabled: true, summaryFallbackEnabled: enabled, summaryTimes: ['23:00'], dataDir: dir, summaryConcurrency: concurrency }
   const onebot = { selfId: '999', async refreshStatus(opts) { probes.push(opts); return { connected: true, online: env.loggedIn } },
     async getForwardMsg(id) { if (id === 'fail') throw Error('timeout'); return { messages: [{ message: [{ type: 'text', data: { text: header } }] }] } } }
   let service
@@ -176,6 +176,40 @@ await test('午夜后不执行上一晚的检查或补发', async () => {
 await test('旧配置的单数字小时仍正常排期，非法时间不会造成立即回调循环', async () => {
   clock('08:59:59'); const e = fixture(); e.config.summaryTimes = ['9:00', '99:99']; e.service.schedule()
   mock.timers.tick(1000); await flush(); assert.equal(e.work.length, 2); e.service.stop()
+})
+
+await test('一个群持续等待时，另一生成位置完成所有其余群，不超过并发上限', async () => {
+  let release, peak = 0
+  const e = fixture({ concurrency: 2, groupIds: [101, 102, 103, 104], action: async (id, opts, service) => {
+    peak = Math.max(peak, e.active.size)
+    if (id === 101) await new Promise(resolve => { release = resolve })
+    service.acknowledged(service.beforeSend(id), { message_id: id })
+  } })
+  const task = e.service.runSlot('23:00'); await flush()
+  assert.equal(peak, 2); assert.equal(e.work.length, 4)
+  for (const id of [102, 103, 104]) assert.ok(e.service.hasDelivered(DAY, id))
+  assert.equal(e.service.hasDelivered(DAY, 101), false)
+  clock('23:30:00'); await e.service.runSlot('23:30')
+  assert.equal(e.work.length, 4, '生成中或已发的群不重复补发')
+  release(); await task
+})
+await test('单群抛错不取消其余群；补发时仍仅处理确定未发的群', async () => {
+  const e = fixture({ concurrency: 2, groupIds: [101, 102, 103], action: async (id, opts, service) => {
+    if (id === 101 && opts.scheduleTime === '23:00') throw Error('单群模型失败')
+    service.acknowledged(service.beforeSend(id), { message_id: id })
+  } })
+  await e.service.runSlot('23:00')
+  assert.ok(e.service.hasDelivered(DAY, 102)); assert.ok(e.service.hasDelivered(DAY, 103))
+  clock('23:30:00'); await e.service.runSlot('23:30')
+  assert.deepEqual(e.work.filter(x => x.scheduleTime === '23:30').map(x => x.id), [101])
+})
+await test('补发历史核验超时释放该群，其他群发送不受影响', async () => {
+  const e = fixture({ concurrency: 2, groupIds: [101, 102, 103], history: id => id === 101 ? new Promise(() => {}) : { complete: true, rawMessages: [] } })
+  e.config.summaryTaskTimeoutMinutes = 2
+  clock('23:30:00'); const task = e.service.runSlot('23:30'); await flush()
+  assert.deepEqual(e.work.map(x => x.id), [102, 103])
+  mock.timers.tick(120000); await flush(); await task
+  assert.equal(e.service.hasDelivered(DAY, 101), false)
 })
 
 await test('完整总结流程：先存真实回执，23:30 不再次调用模型', async () => {

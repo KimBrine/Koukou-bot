@@ -50,6 +50,8 @@ NapCat 的 OneBot 地址、端口和 Access Token 必须与 `.env` 一致。自�
 | `SUMMARY_ENABLED` / `SUMMARY_TIMES` / `SUMMARY_GROUPS` | 定时群总结开关、时点与目标群 |
 | `SUMMARY_FALLBACK_ENABLED` | 启用 23:30 漏发检查与补发 |
 | `SUMMARY_MAX_MESSAGES` / `SUMMARY_MAX_TOKENS` | 输入记录预算与输出 token 预算，消息总数统计不受输入预算裁剪影响 |
+| `SUMMARY_CONCURRENCY` | 同时准备的报告群数，默认 2（1～3）；各群失败独立，发送串行且群间隔至少 5 秒 |
+| `SUMMARY_TASK_TIMEOUT_MINUTES` | 单群准备总时限，默认 6 分钟（2～30）；覆盖历史拉取、排队、生成和修正，超时取消该群 |
 | `SUMMARY_SEND_MODE` | `forward` 合并转发或 `split` 按报告条目发送 |
 | `AUTO_PLUS_ONE_ENABLED` | 纯文字自动 +1；仅白名单群，独立于普通聊天静音/安静时段 |
 | `DAILY_PING_*` | 定时 @ 指令与后续指令 |

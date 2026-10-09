@@ -52,5 +52,40 @@ try {
     await assert.rejects(c.chat('p',[]),error=>error.name==='AbortError')
     assert.equal(requests,2);assert.equal(c.active,0)
   })
+  await test('取消排队中的群不发起请求，也不抢占或泄漏生成位置', async () => {
+    const c=client(), controller=new AbortController();let release, requests=0
+    globalThis.fetch=async()=>{requests++;await new Promise(resolve=>{release=resolve});return success()}
+    const first=c.chat('p',[]);await Promise.resolve();await Promise.resolve()
+    const reason=Object.assign(new Error('单群总时限'),{code:'SUMMARY_DEADLINE'})
+    const queued=c.chat('p',[],{signal:controller.signal})
+    const rejection=assert.rejects(queued,error=>error===reason)
+    controller.abort(reason);await rejection
+    assert.equal(c.queue.length,0);assert.equal(requests,1);assert.equal(c.active,1)
+    release();await first;assert.equal(c.active,0)
+  })
+  await test('单群总时限中止已开始的请求，不再重试，释放后其他群可调用', async () => {
+    const c=client({maxRetries:2}), controller=new AbortController();let requests=0
+    globalThis.fetch=async(_, {signal})=>{requests++;return new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}))}
+    const reason=Object.assign(new Error('单群总时限'),{code:'SUMMARY_DEADLINE'})
+    const task=c.chat('p',[],{signal:controller.signal});const rejection=assert.rejects(task,error=>error===reason)
+    await Promise.resolve();await Promise.resolve();controller.abort(reason);await rejection
+    assert.equal(requests,1);assert.equal(c.active,0)
+    globalThis.fetch=async()=>success();assert.equal(await c.chat('p',[]),'完整回复')
+  })
+  await test('总时限也能中断重试退避，不在取消后再次请求', async () => {
+    const c=client({maxRetries:2}),controller=new AbortController();let requests=0
+    globalThis.fetch=async()=>{requests++;throw new Error('network error')}
+    const reason=new Error('cancel retries'), task=c.chat('p',[],{signal:controller.signal})
+    const rejection=assert.rejects(task,error=>error===reason)
+    for(let i=0;i<10;i++)await Promise.resolve()
+    controller.abort(reason);await rejection;assert.equal(requests,1);assert.equal(c.active,0)
+  })
+  await test('两个群真正并行调用模型，一群失败时另一个仍可完成', async () => {
+    const c=client({maxConcurrency:2});let release, requests=0
+    globalThis.fetch=async()=>{if(++requests===1){await new Promise(resolve=>{release=resolve});throw new Error('单群失败')}return success()}
+    const first=c.chat('p',[]), rejection=assert.rejects(first,/单群失败/)
+    assert.equal(await c.chat('p',[]),'完整回复');assert.equal(requests,2);assert.equal(c.active,1)
+    release();await rejection;assert.equal(c.active,0)
+  })
   console.log(`${passed} cases passed`)
 } finally {globalThis.fetch=originalFetch}

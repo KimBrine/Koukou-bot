@@ -65,6 +65,8 @@ const EDITABLE = [
   { key: 'SUMMARY_SEND_MODE', label: '报告发送方式', hint: '先按空行分段；forward=合并转发卡片，split=逐段发送', live: false, type: 'text' },
   { key: 'SUMMARY_MAX_MESSAGES', label: '报告消息条数上限', live: false, type: 'number' },
   { key: 'SUMMARY_MAX_TOKENS', label: '总结输出 token 上限', hint: '500～16000；控制总结篇幅，与普通聊天的输出上限分开设置', live: false, type: 'number' },
+  { key: 'SUMMARY_CONCURRENCY', label: '同时生成的群数', hint: '1～3，默认 2；慢群不会阻塞全部后续群。报告发送仍串行，群间至少间隔 5 秒。', live: false, type: 'number' },
+  { key: 'SUMMARY_TASK_TIMEOUT_MINUTES', label: '单群准备时限（分钟）', hint: '2～30，默认 6；历史拉取、模型排队、生成与修正共用此时限，超时取消本群，其他群继续。', live: false, type: 'number' },
   { key: 'SUMMARY_PROVIDER', label: '报告模型服务商', hint: '只影响群聊报告，不影响图片识别', live: false, type: 'text' },
   { key: 'SUMMARY_MODEL', label: '报告模型', hint: '群聊总结使用的模型，与视觉模型独立', live: false, type: 'text' },
   { key: 'DASHSCOPE_ENABLE_THINKING', label: '千问辅助模型思考模式', hint: '支持混合思考的千问报告、记忆整理和备用识图模型使用；默认关闭以减少长报告等待时间。', live: false, type: 'bool' },
@@ -446,6 +448,8 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       DASHSCOPE_MODEL: () => String(config.dashscopeModel),
       SUMMARY_PROVIDER: () => String(config.summaryProvider),
       SUMMARY_MODEL: () => String(config.summaryModel),
+      SUMMARY_CONCURRENCY: () => String(config.summaryConcurrency),
+      SUMMARY_TASK_TIMEOUT_MINUTES: () => String(config.summaryTaskTimeoutMinutes),
       DASHSCOPE_ENABLE_THINKING: () => config.dashscopeThinking ? '1' : '0',
       SUMMARY_FALLBACK_ENABLED: () => (config.summaryFallbackEnabled ? '1' : '0'),
       EMOJI_KEEP_RATE: () => String(config.emojiKeepRate),
@@ -585,6 +589,8 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         }
         if (field.type === 'number' && !Number.isFinite(Number(value))) throw new Error(`${field.label} 需要填写数字`)
         if (key === 'SUMMARY_MAX_TOKENS' && (!Number.isInteger(Number(value)) || Number(value) < 500 || Number(value) > 16000)) throw new Error('总结输出 token 上限应为 500～16000 的整数')
+        if (key === 'SUMMARY_CONCURRENCY' && (!Number.isInteger(Number(value)) || Number(value) < 1 || Number(value) > 3)) throw new Error('同时生成的群数应为 1～3 的整数')
+        if (key === 'SUMMARY_TASK_TIMEOUT_MINUTES' && (!Number.isInteger(Number(value)) || Number(value) < 2 || Number(value) > 30)) throw new Error('单群准备时限应为 2～30 分钟的整数')
         if (key === 'SUMMARY_TIMES' && value.split(',').some((v) => !/^([01]?\d|2[0-3]):[0-5]\d$/.test(v.trim()))) {
           throw new Error('报告时间应为 HH:mm，多个时间用逗号分隔')
         }
