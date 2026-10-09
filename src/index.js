@@ -5,7 +5,7 @@ import path from 'node:path'
 import { loadConfig } from './config.js'
 import { createLogger } from './logger.js'
 import { MemoryStore } from './memory.js'
-import { DeepSeekClient } from './deepseek.js'
+import { DeepSeekClient, isQwenHybridModel } from './deepseek.js'
 import { OneBotClient } from './onebot.js'
 import { buildSystemPrompt } from './persona.js'
 import { createBot } from './bot.js'
@@ -142,6 +142,7 @@ if (config.visionProvider === 'deepseek' ? config.deepseekApiKey : config.dashsc
     maxConcurrency: config.maxConcurrency,
     logger,
     label: isDeepseek ? 'DeepSeek 视觉' : '通义千问VL',
+    enableThinking: !isDeepseek && isQwenHybridModel(config.dashscopeModel) ? config.dashscopeThinking : undefined,
   })
 }
 
@@ -161,6 +162,7 @@ if (config.summaryModel) {
     maxConcurrency: 1,
     logger,
     label: useQwen ? '总结模型(通义千问)' : '总结模型(DeepSeek)',
+    enableThinking: useQwen && isQwenHybridModel(config.summaryModel) ? config.dashscopeThinking : undefined,
   })
 }
 
@@ -171,10 +173,17 @@ const wsUrl = config.onebotAccessToken
 const onebot = new OneBotClient({ url: wsUrl, logger, probeUserId: config.idCheckOperators?.[0] || config.dailyPingTarget })
 
 // 长期记忆：把被近期窗口挤出去的旧消息压缩成持续累积的摘要（用便宜的总结模型）
+// 共享型号与设置，但不共享并发队列；记忆整理不能占住定时群总结的等待位置。
+const memoryLLM = new DeepSeekClient({
+  apiKey: summaryLLM.apiKey, baseUrl: summaryLLM.baseUrl, model: summaryLLM.model,
+  temperature: summaryLLM.temperature, maxTokens: summaryLLM.maxTokens,
+  timeoutMs: summaryLLM.timeoutMs, maxRetries: summaryLLM.maxRetries, maxConcurrency: 1,
+  enableThinking: summaryLLM.enableThinking, logger, label: '长期记忆模型',
+})
 const longMemory = createLongMemory({
   file: path.join(config.dataDir, 'long-memory.json'),
   logger,
-  llm: { chat: (prompt, messages) => summaryLLM.chat(prompt, messages) },
+  llm: { chat: (prompt, messages) => memoryLLM.chat(prompt, messages) },
   maxChars: config.longMemoryMaxChars,
   intervalMs: config.longMemoryIntervalMs,
 })

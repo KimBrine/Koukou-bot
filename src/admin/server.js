@@ -67,6 +67,7 @@ const EDITABLE = [
   { key: 'SUMMARY_MAX_TOKENS', label: '总结输出 token 上限', hint: '500～16000；控制总结篇幅，与普通聊天的输出上限分开设置', live: false, type: 'number' },
   { key: 'SUMMARY_PROVIDER', label: '报告模型服务商', hint: '只影响群聊报告，不影响图片识别', live: false, type: 'text' },
   { key: 'SUMMARY_MODEL', label: '报告模型', hint: '群聊总结使用的模型，与视觉模型独立', live: false, type: 'text' },
+  { key: 'DASHSCOPE_ENABLE_THINKING', label: '千问辅助模型思考模式', hint: '支持混合思考的千问报告、记忆整理和备用识图模型使用；默认关闭以减少长报告等待时间。', live: false, type: 'bool' },
   { key: 'DAILY_PING_ENABLED', label: '定时指令', hint: '每天定点到群里 @ 某个账号发固定内容', live: false, type: 'bool' },
   { key: 'DAILY_PING_TIME', label: '定时指令时间', hint: 'HH:mm；00:00 会在 00:00:10 发送，留出跨日缓冲', live: false, type: 'text' },
   { key: 'DAILY_PING_GROUP', label: '定时指令目标群', live: false, type: 'text' },
@@ -445,6 +446,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       DASHSCOPE_MODEL: () => String(config.dashscopeModel),
       SUMMARY_PROVIDER: () => String(config.summaryProvider),
       SUMMARY_MODEL: () => String(config.summaryModel),
+      DASHSCOPE_ENABLE_THINKING: () => config.dashscopeThinking ? '1' : '0',
       SUMMARY_FALLBACK_ENABLED: () => (config.summaryFallbackEnabled ? '1' : '0'),
       EMOJI_KEEP_RATE: () => String(config.emojiKeepRate),
       QUIET_HOURS: () => String(config.quietHours ?? ''),
@@ -702,6 +704,12 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       return { ok: true, killed: 'old-instances-then-start', dir, task }
     },
     async summary(payload) {
+      if (payload?.missingOnly === true) {
+        if (!dailySummary || !config.summaryFallbackEnabled) throw new Error('请先启用群总结和漏发补发')
+        dailySummary.checkScheduled('23:30', undefined, { earlyFallback: true })
+          .catch(err => logger.error(`[手动提前补发] 失败：${err.message}`))
+        return { ok: true, missingOnly: true, replacesFallback: true }
+      }
       const groups = payload.groupId ? [Number(payload.groupId)] : config.summaryGroups.length ? config.summaryGroups : [...config.whitelistGroups]
       if (!dailySummary) throw new Error('日报模块未启用')
       dailySummary.trigger(groups, { days: Math.max(1, Math.min(30, Number(payload.days) || 1)) })

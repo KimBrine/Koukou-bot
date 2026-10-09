@@ -152,6 +152,7 @@ export function loadConfig() {
     dashscopeApiKey: String(env.DASHSCOPE_API_KEY ?? '').trim(),
     dashscopeBaseUrl: String(env.DASHSCOPE_BASE_URL ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1').replace(/\/+$/, ''),
     dashscopeModel: String(env.DASHSCOPE_MODEL ?? 'qwen-vl-plus'),
+    dashscopeThinking: ['1', 'true'].includes(String(env.DASHSCOPE_ENABLE_THINKING ?? '0').trim().toLowerCase()),
     visionMaxImages: Math.max(1, Math.min(9, Math.floor(num('VISION_MAX_IMAGES', 4)))),
     visionMaxImageBytes: Math.max(100000, Math.floor(num('VISION_MAX_IMAGE_BYTES', 6 * 1024 * 1024))),
     visionImageTimeoutMs: Math.max(5000, Math.floor(num('VISION_IMAGE_TIMEOUT_MS', 20000))),

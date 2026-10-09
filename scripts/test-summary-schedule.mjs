@@ -55,6 +55,16 @@ await test('只有 23:00 未发过的群补发，其他群不重发', async () =
   assert.deepEqual(e.work.map(x => [x.id, x.scheduleTime]), [[101, '23:00'], [102, '23:00'], [102, '23:30']])
   assert.deepEqual(e.reads.map(x => x.id), [102])
 })
+await test('人工提前执行只补缺失群，并替代当晚 23:30，不重复发送', async () => {
+  const e = fixture()
+  e.service.acknowledged(e.service.beforeSend(101), { message_id: 500 })
+  clock('23:20:00')
+  await e.service.runSlot('23:30', DAY, { earlyFallback: true })
+  assert.deepEqual(e.work.map(x => x.id), [102])
+  assert.deepEqual(e.reads.map(x => x.id), [102])
+  clock('23:30:00'); await e.service.runSlot('23:30')
+  assert.deepEqual(e.work.map(x => x.id), [102])
+})
 await test('23:00 未登录，23:30 恢复登录后确认未发再补一次', async () => {
   const e = fixture(); e.env.loggedIn = false; await e.service.runSlot('23:00'); assert.equal(e.work.length, 0)
   e.env.loggedIn = true; clock('23:30:00'); await e.service.runSlot('23:30'); assert.equal(e.work.length, 2)

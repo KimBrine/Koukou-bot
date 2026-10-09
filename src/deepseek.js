@@ -1,5 +1,8 @@
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
+// 仅为支持混合思考的千问型号传入该扩展参数，避免影响其他服务商。
+export const isQwenHybridModel = model => /^qwen(?:3(?:\.\d+)?-(?:flash|plus|vl-(?:flash|plus))|-(?:flash|plus))(?:$|-)/i.test(String(model))
+
 /**
  * OpenAI 兼容的 Chat Completions 客户端（DeepSeek / 通义千问 DashScope 通用）。
  * - 内置并发信号量（MAX_CONCURRENCY），防止群聊刷屏时打爆限流；
@@ -8,7 +11,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
  * - chatRaw() 支持函数调用（tools），返回 content 与 tool_calls。
  */
 export class DeepSeekClient {
-  constructor({ apiKey, baseUrl, model, temperature, maxTokens, timeoutMs, maxRetries, maxConcurrency, logger, label = '模型接口' }) {
+  constructor({ apiKey, baseUrl, model, temperature, maxTokens, timeoutMs, maxRetries, maxConcurrency, logger, label = '模型接口', enableThinking }) {
     this.apiKey = apiKey
     this.baseUrl = baseUrl
     this.model = model
@@ -18,6 +21,7 @@ export class DeepSeekClient {
     this.maxRetries = maxRetries
     this.logger = logger
     this.label = label
+    this.enableThinking = enableThinking
     this.active = 0
     this.queue = []
     this.concurrencyLimit = maxConcurrency
@@ -164,6 +168,7 @@ export class DeepSeekClient {
 
   /** 带重试的底层请求，返回解析后的 JSON */
   async #post(body) {
+    if (typeof this.enableThinking === 'boolean') body = { ...body, enable_thinking: this.enableThinking }
     let lastError = null
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       const controller = new AbortController()
@@ -178,7 +183,6 @@ export class DeepSeekClient {
           body: JSON.stringify(body),
           signal: controller.signal,
         })
-        clearTimeout(timer)
         if (!res.ok) {
           const rawDetail = await res.text().catch(() => '')
           const detail = rawDetail.slice(0, 300)
@@ -187,13 +191,18 @@ export class DeepSeekClient {
           try { const data = JSON.parse(rawDetail); err.code = data?.error?.code || data?.error?.type || data?.code } catch { /* 非 JSON 错误保留原文 */ }
           throw err
         }
+        // 超时覆盖响应正文读取；收到 HTTP 头不代表模型已经输出完毕。
         return await res.json()
       } catch (err) {
         clearTimeout(timer)
-        lastError = err
         // fetch 的 "fetch failed" 本身没有信息量，真正的原因在 err.cause 里（ECONNRESET / ETIMEDOUT / DNS…）
         const cause = err?.cause ? `（原因：${err.cause.code || err.cause.message || err.cause}）` : ''
         const msg = `${err?.message ?? err}${cause}`
+        // AbortError 可能是 message 只读的 DOMException，不能原地覆盖。
+        lastError = new Error(msg, { cause: err })
+        lastError.name = err?.name || 'Error'
+        if (err?.status !== undefined) lastError.status = err.status
+        if (err?.code !== undefined) lastError.code = err.code
         const retryable =
           !err?.status ||
           err.status === 429 ||
@@ -201,12 +210,13 @@ export class DeepSeekClient {
           err?.name === 'AbortError' ||
           /fetch failed|network|ECONN|ETIMEDOUT|UND_ERR/i.test(msg)
         if (!retryable || attempt >= this.maxRetries) {
-          err.message = msg
           break
         }
         const wait = Math.min(8000, 1000 * 2 ** attempt)
         this.logger.warn(`${this.label} 调用失败（第 ${attempt + 1}/${this.maxRetries + 1} 次）：${msg}，${wait / 1000}s 后重试`)
         await sleep(wait)
+      } finally {
+        clearTimeout(timer)
       }
     }
     throw lastError || new Error(`${this.label} 调用失败`)

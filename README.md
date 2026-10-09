@@ -41,6 +41,7 @@ NapCat 的 OneBot 地址、端口和 Access Token 必须与 `.env` 一致。自�
 | --- | --- |
 | `DEEPSEEK_API_KEY` / `DEEPSEEK_BASE_URL` / `DEEPSEEK_MODEL` | 对话模型接口 |
 | `VISION_PROVIDER` / `DEEPSEEK_VISION_MODEL` / `DASHSCOPE_MODEL` | 识图服务与模型，需选择支持图像输入的接口和模型 |
+| `DASHSCOPE_ENABLE_THINKING` | 千问辅助模型思考模式，默认关闭；支持混合思考的报告、记忆和备用识图型号使用，修改后需重启 |
 | `ONEBOT_WS_URL` / `ONEBOT_ACCESS_TOKEN` | NapCat OneBot 连接 |
 | `WHITELIST_GROUPS` | 允许主动搭话的群号，逗号分隔 |
 | `PROACTIVE_RATE` / `PROACTIVE_RATE_PER_GROUP` | 全局与按群主动搭话概率 |

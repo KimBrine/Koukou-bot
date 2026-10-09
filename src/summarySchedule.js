@@ -165,12 +165,13 @@ export function createSummarySchedule({ config, logger, onebot, groups, runGroup
     }
   }
 
-  async function runSlot(time, day = chinaDay(now())) {
+  async function runSlot(time, day = chinaDay(now()), { earlyFallback = false } = {}) {
     if (!config.summaryEnabled || chinaDay(now()) !== day) return
     const fallback = enabled() && time === '23:30'
     if (fallback && !configuredTimes().includes('23:00')) return
     const slot = `${day}:${time}`
     if (state.slots[slot]) return
+    if (earlyFallback && fallback) log('人工要求立即执行当晚查漏补发，本次替代 23:30；仍逐群核验发送记录')
     if (enabled()) { state.slots[slot] = { checkedAt: now() }; save() }
     if (!(await online())) {
       logger.info(`[定时总结] ${day} ${time} QQ 未登录或实际连接未确认，跳过；不在恢复登录后追补`)
@@ -191,7 +192,7 @@ export function createSummarySchedule({ config, logger, onebot, groups, runGroup
           if (hasDelivered(day, id)) continue
           if (chinaDay(now()) !== day) break
           if (!(await online())) { log(`QQ 已掉线，停止 ${time} 后续群的任务`); break }
-          if (fallback) log(`群 ${id} 已确认当晚未发送，开始唯一一次 23:30 补发`)
+          if (fallback) log(`群 ${id} 已确认当晚未发送，开始唯一一次 ${earlyFallback ? '手动提前' : '23:30'}补发`)
           await runGroup(id, { scheduled: true, scheduleDay: day, scheduleTime: time })
           if (index + 1 < targets.length) await pause(5000)
         } catch (err) { logger.error(`[定时总结] 群 ${id} ${time} 任务失败：${err.message}`) }
