@@ -1,5 +1,7 @@
 import { limitDecorationLines, typingDelay, isQuietHour } from './humanize.js'
 import { measureText, planReply, shapeReply, shapeHint, decorationHint, ensureDecoration, pickDecorationKind } from './replyShape.js'
+import { replyStillCurrent, currentMessageHint } from './messageFreshness.js'
+import { modelHistory } from './memory.js'
 
 /**
  * 盯人回复：每 N 秒检查一次目标群里指定用户是否发过言，
@@ -29,6 +31,7 @@ export function createTargetWatch({ config, logger, onebot, llm, memory, buildSy
 
   function note(evt, parsed) {
     if (!enabled) return
+    if (!replyStillCurrent(onebot, evt)) return
     if (evt.message_type !== 'group') return
     if (String(evt.group_id) !== groupId) return
     if (String(evt.user_id) !== userId) return
@@ -40,12 +43,17 @@ export function createTargetWatch({ config, logger, onebot, llm, memory, buildSy
       id,
       time: Number(evt.time) || Math.floor(Date.now() / 1000),
       text: parsed.text.slice(0, 200),
+      evt: { ...evt, messageContext: evt.messageContext, time: Number(evt.time) || Math.floor(Date.now() / 1000) },
     })
     logger.debug(`[盯人] 记录发言：${parsed.text.slice(0, 40)}（窗口内 ${pending.length} 条）`)
   }
 
   async function tick() {
     if (!enabled || busy || pending.length === 0) return
+    // 安静时段、限流或断线期间排队的消息不在恢复后追答。
+    for (let i = pending.length - 1; i >= 0; i--) {
+      if (!replyStillCurrent(onebot, pending[i].evt)) pending.splice(i, 1)
+    }
     // 只剔除"主流程已经回复过"的那几条，其余（尤其是之后到达的新消息）照常处理
     if (repliedIds.size > 0) {
       const before = pending.length
@@ -76,8 +84,15 @@ export function createTargetWatch({ config, logger, onebot, llm, memory, buildSy
     busy = true
     try {
       const memoryKey = `g${groupId}`
-      const count = pending.length
-      const said = pending.map((p) => p.text).join(' ／ ')
+      const batch = pending.slice()
+      const latest = batch.at(-1)
+      const canContinue = () => replyStillCurrent(onebot, latest.evt, { latestOnly: true }) && !repliedIds.has(latest.id)
+      if (!canContinue()) {
+        for (const item of batch) { const index = pending.indexOf(item); if (index >= 0) pending.splice(index, 1) }
+        return
+      }
+      const count = batch.length
+      const said = batch.map((p) => p.text).join(' ／ ')
       const base = buildSystemPrompt({ chatKey: memoryKey, now: new Date() })
       // 回复长度同样跟着对方走；盯人场景最多 2 行（@ 完顺手补一句就够，不宜刷屏）
       const plan = planReply({
@@ -91,13 +106,18 @@ export function createTargetWatch({ config, logger, onebot, llm, memory, buildSy
       const decoKind = allowDecoration ? pickDecorationKind() : ''
       const extra = `\n\n（现在的情况：群友（QQ ${userId}）刚才说了 ${count} 句话：「${said}」。请你自然回应他，像平时群聊那样随口接话，不用面面俱到，也不要罗列。）`
       const reply = await llm.chat(
-        base + extra + shapeHint(plan) + decorationHint(allowDecoration, decoKind),
-        memory.get(memoryKey).slice(-20),
+        base + extra + currentMessageHint(latest.evt) + shapeHint(plan) + decorationHint(allowDecoration, decoKind),
+        modelHistory(memory.get(memoryKey).slice(-20)),
       )
+      if (!canContinue()) {
+        for (const item of batch) { const index = pending.indexOf(item); if (index >= 0) pending.splice(index, 1) }
+        return
+      }
       let lines = shapeReply(reply, plan)
       if (lines.length === 0) lines = ['嗯嗯']
       if (allowDecoration) lines = ensureDecoration(lines, reply, { kind: decoKind })
       const finalLines = limitDecorationLines(lines, allowDecoration ? 1 : 0)
+      const sentLines = []
       await typingDelay({ min: config.humanDelayMinMs, max: config.humanDelayMaxMs })
       for (let i = 0; i < finalLines.length; i++) {
         if (i > 0) {
@@ -113,14 +133,17 @@ export function createTargetWatch({ config, logger, onebot, llm, memory, buildSy
         const segments = i === 0
           ? [{ type: 'at', data: { qq: userId } }, { type: 'text', data: { text: ` ${finalLines[i]}` } }]
           : [{ type: 'text', data: { text: finalLines[i] } }]
+        if (!canContinue()) break
         await onebot.sendGroup(groupId, segments)
+        sentLines.push(finalLines[i])
         rateLimiter?.record(chatKey)
       }
-      const record = finalLines.join('\n')
+      for (const item of batch) { const index = pending.indexOf(item); if (index >= 0) pending.splice(index, 1) }
+      if (!sentLines.length) return
+      const record = sentLines.join('\n')
       // 写入记忆时不加任何前缀标记，否则模型会模仿这种格式带进正式回复
       memory.push(memoryKey, 'assistant', record)
       logger.info(`[盯人回复]${finalLines.length > 1 ? `（${finalLines.length} 行分条）` : ''} @${userId}：${record.replace(/\n/g, ' ⏎ ')}`)
-      pending.length = 0
     } catch (err) {
       logger.warn(`[盯人回复] 失败：${err.message}`)
     } finally {

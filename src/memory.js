@@ -1,5 +1,15 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+const validTime = value => Number.isFinite(value) && value > 0 && value <= 8.64e15
+// QQ 发送时间精度为秒；同一秒内按接收/插入顺序保持问答关系。
+const chronological = (a, b) => Math.floor((a.time || 0) / 1000) - Math.floor((b.time || 0) / 1000)
+
+/** API 只接收 role/content；时间作为阅读提示，不泄露内部元数据字段。 */
+export function modelHistory(list) {
+  return list.map((m) => ({ role: m.role, content: m.role === 'user'
+    ? `【${m.historical ? '登录补读；' : ''}历史消息 ${validTime(m.time) ? new Date(m.time).toISOString() : '时间未知'}】${m.content}`
+    : m.content }))
+}
 
 /**
  * 每个会话（私聊按人、群聊按群）保留最近 N 条对话，
@@ -25,7 +35,11 @@ export class MemoryStore {
             const items = list
               .filter((m) => m && typeof m.role === 'string' && typeof m.content === 'string')
               .slice(-this.limit)
-              .map((m) => ({ role: m.role, content: m.content }))
+              .map((m) => ({ role: m.role, content: m.content,
+                time: validTime(m.time) ? m.time : null,
+                ...(m.historical ? { historical: true } : {}),
+                ...(m.messageId ? { messageId: String(m.messageId) } : {}) }))
+              .sort(chronological)
             if (items.length > 0) this.chats.set(key, items)
           }
         }
@@ -45,13 +59,17 @@ export class MemoryStore {
     return list
   }
 
-  push(key, role, content) {
+  push(key, role, content, meta = {}) {
     const list = this.get(key)
-    list.push({ role, content })
+    const messageId = meta.messageId == null ? '' : String(meta.messageId)
+    if (messageId && list.some(m => m.role === role && m.messageId === messageId)) return false
+    const time = meta.time === null ? null : validTime(meta.time) ? meta.time : Date.now()
+    list.push({ role, content, time, ...(meta.historical ? { historical: true } : {}), ...(messageId ? { messageId } : {}) })
+    list.sort(chronological)
     const evicted = []
     while (list.length > this.limit) {
       const old = list.shift()
-      if (old && old.role === 'user') evicted.push({ content: old.content })
+      if (old && old.role === 'user') evicted.push({ content: old.content, time: old.time })
     }
     this.dirty = true
     this.#scheduleSave()
@@ -63,6 +81,7 @@ export class MemoryStore {
         /* 长期记忆失败不影响主流程 */
       }
     }
+    return true
   }
 
   #scheduleSave() {

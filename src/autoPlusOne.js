@@ -147,5 +147,11 @@ export function createAutoPlusOne({ config, onebot, logger, onSent, now = Date.n
     }
   }
 
-  return { observe, send, flush, wasTriggered: result => active(result.groupId) && result.state?.fired === true }
+  function resetPending() {
+    // 断线前的一条不能与恢复后的消息凑成两条；保留已跟读段的一次性标记。
+    for (const state of groups.values()) state.count = 0
+    seen.clear()
+    save()
+  }
+  return { observe, send, flush, resetPending, wasTriggered: result => active(result.groupId) && result.state?.fired === true }
 }

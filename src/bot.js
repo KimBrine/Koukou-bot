@@ -3,6 +3,8 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { createImageCache } from './imageCache.js'
 import { createAutoPlusOne } from './autoPlusOne.js'
+import { replyStillCurrent, messageTime, currentMessageHint, LIVE_MESSAGE_MAX_AGE_MS } from './messageFreshness.js'
+import { modelHistory } from './memory.js'
 import { parseMessage } from './cq.js'
 import { renderFacesToCq } from './qqFace.js'
 import { limitDecorationLines, hasDecoration, typingDelay, isQuietHour } from './humanize.js'
@@ -275,6 +277,8 @@ export function createBot({ config, logger, onebot, llm, visionLLM, memory, buil
   const lastMuteNote = new Map()
   // 手动群总结指令：格式见 SUMMARY_CMD_RE
   const summaryCmdRe = SUMMARY_CMD_RE
+  let repeatSession = onebot.messageTimeline?.session
+  const lastReplayNote = new Map()
   const autoPlusOne = createAutoPlusOne({ config, onebot, logger, onSent(evt) {
     const key = `g${evt.group_id}`
     const parsed = parseMessage(evt.message ?? evt.raw_message, onebot.selfId)
@@ -286,6 +290,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, memory, buil
   } })
 
   async function sendTo(evt, text) {
+    if (!replyStillCurrent(onebot, evt)) return
     // 把模型写的 [表情:微笑] 转成 QQ 真实表情的 CQ 码
     const outgoing = renderFacesToCq(text)
     for (const piece of splitLongMessage(outgoing)) {
@@ -300,6 +305,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, memory, buil
    * - 每一行都计入每小时发言额度；后段行若触发限流则不再发（不会截断成半句话）。
    */
   async function sendReplyLines(evt, lines, key) {
+    const sent = []
     for (let i = 0; i < lines.length; i++) {
       if (i > 0) {
         const gate = rateLimiter?.check(key, Date.now(), { ignoreGap: true })
@@ -309,13 +315,16 @@ export function createBot({ config, logger, onebot, llm, visionLLM, memory, buil
         }
         await typingDelay({ min: config.lineGapMinMs, max: config.lineGapMaxMs })
       }
+      if (!replyStillCurrent(onebot, evt, { latestOnly: evt.message_type !== 'private' && !parseMessage(evt.message ?? evt.raw_message, onebot.selfId).atBot })) break
       const outgoing = renderFacesToCq(lines[i])
       for (const piece of splitLongMessage(outgoing)) {
         if (evt.message_type === 'private') await onebot.sendPrivate(evt.user_id, piece)
         else await onebot.sendGroup(evt.group_id, piece)
       }
+      sent.push(lines[i])
       rateLimiter?.record(key)
     }
+    return sent
   }
 
   /**
@@ -581,6 +590,32 @@ export function createBot({ config, logger, onebot, llm, visionLLM, memory, buil
     flush() { autoPlusOne.flush() },
 
     async handleMessage(evt) {
+      const isOwn = evt.post_type === 'message_sent' || evt.message_sent_type === 'self' ||
+        (onebot.selfId && String(evt.user_id) === String(onebot.selfId))
+      if (!replyStillCurrent(onebot, evt)) {
+        if (isOwn) return
+        const parsed = parseMessage(evt.message ?? evt.raw_message, onebot.selfId)
+        dailySummary?.capture(evt, parsed)
+        const key = evt.message_type === 'private' ? `p${evt.user_id}` : `g${evt.group_id}`
+        const tracked = evt.message_type === 'private' || config.whitelistGroups.has(Number(evt.group_id)) ||
+          dailySummary?.summaryGroups().includes(Number(evt.group_id))
+        if (tracked && parsed.text) {
+          const name = evt.sender?.card || evt.sender?.nickname || String(evt.user_id)
+          memory.push(key, 'user', evt.message_type === 'private' ? parsed.text : `【${name}】${parsed.text}`,
+            { time: messageTime(evt), messageId: evt.message_id, historical: true })
+        }
+        const last = lastReplayNote.get(key) || 0
+        if (Date.now() - last > 30_000) {
+          logger.info(`[登录补读] ${key} 的旧消息仅补上下文和总结，不触发回复、指令、盯人或 +1`)
+          lastReplayNote.set(key, Date.now())
+          if (lastReplayNote.size > 1000) lastReplayNote.delete(lastReplayNote.keys().next().value)
+        }
+        return
+      }
+      if (repeatSession !== onebot.messageTimeline?.session) {
+        autoPlusOne.resetPending()
+        repeatSession = onebot.messageTimeline?.session
+      }
       // 先同步计数并预留一次发送机会；自发消息只打断/保留复读段，绝不计入两条群友消息。
       const repetition = autoPlusOne.observe(evt)
       if (repetition.duplicate) return
@@ -627,7 +662,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, memory, buil
         runtimeStats?.noteMessage?.(key, Number(evt.time) * 1000 || Date.now())
         if (config.contextRememberAll && parsed.text) {
           const name = evt.sender?.card || evt.sender?.nickname || String(evt.user_id)
-          memory.push(key, 'user', `【${name}】${parsed.text}`)
+          memory.push(key, 'user', `【${name}】${parsed.text}`, { time: messageTime(evt) ?? Date.now(), messageId: evt.message_id })
         }
         await repeatTask
         return
@@ -741,7 +776,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, memory, buil
       const trackedGroup = dailySummary ? dailySummary.summaryGroups().includes(groupId) : config.whitelistGroups.has(groupId)
       const remember = isPrivate || trackedGroup
       if (remember && config.contextRememberAll) {
-        memory.push(key, 'user', content)
+        memory.push(key, 'user', content, { time: messageTime(evt) ?? Date.now(), messageId: evt.message_id })
       }
 
       if (!decision.reply) {
@@ -758,7 +793,9 @@ export function createBot({ config, logger, onebot, llm, visionLLM, memory, buil
       // history 已包含刚记下的本条消息；各路径会自行追加本条，故这里先排除掉它
       const history = memory.get(key)
       const pushed = remember && config.contextRememberAll
-      const baseHistory = pushed ? history.slice(0, -1) : history.slice()
+      const hasCurrentId = evt.message_id != null && history.some(m => m.role === 'user' && m.messageId === String(evt.message_id))
+      const rawHistory = pushed ? (hasCurrentId ? history.filter(m => m.role !== 'user' || m.messageId !== String(evt.message_id)) : history.slice(0, -1)) : history.slice()
+      const baseHistory = modelHistory(rawHistory)
 
       // 先把图片取下来。顺带确定"这条消息的图到底看不看得见"——这件事**代码知道，模型不知道**。
       // 以前把判断权交给模型，它看到历史里的 [图片] 就会套用"看不到就说图没加载出来"，
@@ -795,7 +832,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, memory, buil
       const incomingLen = measureText(parsed.text) || (allImages.length > 0 ? 6 : 0)
       const plan = planReply({
         incomingLen,
-        backlogLen: backlogLength(baseHistory),
+        backlogLen: backlogLength(rawHistory.filter(m => !m.historical && m.time && Date.now() - m.time <= LIVE_MESSAGE_MAX_AGE_MS)),
         maxLines: eff?.replyMaxLines ?? config.replyMaxLines,
         lineMaxChars: eff?.lineMaxChars ?? config.replyLineMaxChars,
         matchEnabled: config.replyLengthMatch,
@@ -810,10 +847,12 @@ export function createBot({ config, logger, onebot, llm, visionLLM, memory, buil
       const systemPrompt =
         buildSystemPrompt({ botName: config.botName, now: new Date(), chatKey: key }) +
         customPart +
+        currentMessageHint(evt) +
         imageNote +
         shapeHint(plan) +
         decorationHint(allowDecoration, decoKind)
-      if (autoPlusOne.wasTriggered(repetition)) return
+      const canContinue = () => replyStillCurrent(onebot, evt, { latestOnly: !isPrivate && !parsed.atBot }) && !autoPlusOne.wasTriggered(repetition)
+      if (!canContinue()) return
       try {
         let reply
         if (hasImages && imageParts.length > 0) {
@@ -874,7 +913,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, memory, buil
         // 因为发到群里它们就是字面的星号和井号，很难看
         reply = stripReportScaffold(reply)
         // 第一条的普通回复可能仍在生成；复读段已触发时取消这条迟到的搭话。
-        if (autoPlusOne.wasTriggered(repetition)) return
+        if (!canContinue()) return
         // 形态裁剪：按本次计划的行数与字数预算整理（超长在句子/逗号边界截断，不会砍出半句话）
         let lines = shapeReply(reply, plan)
         if (lines.length === 0) lines = [shortenReply(reply, config.replyLineMaxChars)]
@@ -883,20 +922,22 @@ export function createBot({ config, logger, onebot, llm, visionLLM, memory, buil
         // 装饰符号：这次允许就原样保留，不允许就清成纯文字（频率已在上面的提示里定好）
         let finalLines = limitDecorationLines(lines, allowDecoration ? 1 : 0)
         if (finalLines.length === 0) finalLines = lines.slice(0, 1)
-        const record = finalLines.join('\n')
+        let record = finalLines.join('\n')
         // 距上次发言太近 → 先等一等（拟人节奏）；等不了就整条放弃，且不写进记忆，
         // 保证"记忆里的话 = 真的发出去过的话"
         if (!(await waitForHumanGap(key, hourCap))) return
-        if (autoPlusOne.wasTriggered(repetition)) return
+        if (!canContinue()) return
         // 拟人延迟后再检查一次，避免第一条的慢回复打断刚触发的 +1。
         await typingDelay({ min: config.humanDelayMinMs, max: config.humanDelayMaxMs })
-        if (autoPlusOne.wasTriggered(repetition)) return
+        if (!canContinue()) return
         // 本条用户消息若未记入（未被追踪的群），这里补记，保证答案不悬空
-        if (!pushed) memory.push(key, 'user', content)
+        // 多行时逐行分条发送（像人说完一句再补一句）
+        finalLines = await sendReplyLines(evt, finalLines, key)
+        if (!finalLines.length) return
+        record = finalLines.join('\n')
+        if (!pushed) memory.push(key, 'user', content, { time: messageTime(evt) ?? Date.now(), messageId: evt.message_id })
         memory.push(key, 'assistant', record)
         failedRecently.delete(key)
-        // 多行时逐行分条发送（像人说完一句再补一句）
-        await sendReplyLines(evt, finalLines, key)
         // 记录"刚回复过这个人"，并精确标记这条消息已被主流程回复（盯人逻辑据此去重）
         if (replyLog && groupId) replyLog.set(`${groupId}:${evt.user_id}`, Date.now())
         if (groupId) targetWatch?.markReplied(evt.message_id)

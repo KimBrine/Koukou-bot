@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events'
+import { MessageTimeline } from './messageFreshness.js'
 import { renderFacesToCq, textToSegments } from './qqFace.js'
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -73,6 +74,7 @@ export class OneBotClient extends EventEmitter {
     this.probeVerified = false
     this.probeError = ''
     this.accountStatusVersion = 0
+    this.messageTimeline = new MessageTimeline()
   }
 
   async run() {
@@ -117,6 +119,7 @@ export class OneBotClient extends EventEmitter {
       }
 
       const onOpen = () => {
+        this.messageTimeline.begin()
         this.logger.info(`已连接 OneBot：${this.url}`)
         this.reconnectDelay = 1000
         this.refreshStatus({ maxAgeMs: 0 }).catch(() => {})
@@ -164,11 +167,13 @@ export class OneBotClient extends EventEmitter {
           return
         }
         if (!data || !['message', 'message_sent'].includes(data.post_type)) return
+        Object.defineProperty(data, 'messageContext', { value: this.messageTimeline.receive(data) })
         if (!this.probeUserId && data.user_id && String(data.user_id) !== this.selfId) this.probeUserId = String(data.user_id)
         this.emit('message', data)
       }
 
       const onClose = (event) => {
+        this.messageTimeline.end()
         cleanup()
         if (this.ws === ws) this.ws = null
         this.qqOnline = null
@@ -217,6 +222,8 @@ export class OneBotClient extends EventEmitter {
   updateAccountStatus(data) {
     if (typeof data?.online !== 'boolean') return false
     const previous = this.qqOnline
+    if (data.online && previous === false) this.messageTimeline.begin()
+    if (!data.online) this.messageTimeline.end()
     this.qqOnline = data.online
     if (!data.online) {
       this.accountStatusVersion++
@@ -396,6 +403,7 @@ export class OneBotClient extends EventEmitter {
   }
 
   stop() {
+    this.messageTimeline.end()
     this.stopped = true
     if (this.healthTimer) clearInterval(this.healthTimer)
     this.healthTimer = null
