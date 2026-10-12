@@ -45,7 +45,8 @@ export function backlogLength(history, { cap = 240 } = {}) {
   for (let i = list.length - 1; i >= 0; i--) {
     const item = list[i]
     if (!item || item.role !== 'user') break
-    sum += measureText(item.content)
+    // 引用与合并记录是阅读资料，累计未回消息时仍只计算外层提问的长度。
+    sum += Number.isFinite(item.replyLength) && item.replyLength >= 0 ? item.replyLength : measureText(item.content)
     if (sum >= cap) return cap
   }
   return sum

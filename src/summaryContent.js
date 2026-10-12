@@ -11,7 +11,7 @@ export function summaryRoutineKind(record) {
 
 export function summaryMeaningfulText(record) {
   return String(record.text ?? '')
-    .replace(/\[(?:图片|视频|语音|表情|动画表情)[^\]]*\]|\[@\d+\]/g, '')
+    .replace(/\[(?:图片|视频|语音|表情|动画表情|合并聊天记录)[^\]]*\]|\[@\d+\]/g, '')
     .replace(/[\p{Extended_Pictographic}\uFE0F\u200D]/gu, '').trim()
 }
 

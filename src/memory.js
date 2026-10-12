@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 const validTime = value => Number.isFinite(value) && value > 0 && value <= 8.64e15
+const validReplyLength = value => Number.isFinite(value) && value >= 0
 // QQ 发送时间精度为秒；同一秒内按接收/插入顺序保持问答关系。
 const chronological = (a, b) => Math.floor((a.time || 0) / 1000) - Math.floor((b.time || 0) / 1000)
 
@@ -38,6 +39,7 @@ export class MemoryStore {
               .map((m) => ({ role: m.role, content: m.content,
                 time: validTime(m.time) ? m.time : null,
                 ...(m.historical ? { historical: true } : {}),
+                ...(validReplyLength(m.replyLength) ? { replyLength: m.replyLength } : {}),
                 ...(m.messageId ? { messageId: String(m.messageId) } : {}) }))
               .sort(chronological)
             if (items.length > 0) this.chats.set(key, items)
@@ -64,7 +66,8 @@ export class MemoryStore {
     const messageId = meta.messageId == null ? '' : String(meta.messageId)
     if (messageId && list.some(m => m.role === role && m.messageId === messageId)) return false
     const time = meta.time === null ? null : validTime(meta.time) ? meta.time : Date.now()
-    list.push({ role, content, time, ...(meta.historical ? { historical: true } : {}), ...(messageId ? { messageId } : {}) })
+    list.push({ role, content, time, ...(meta.historical ? { historical: true } : {}),
+      ...(validReplyLength(meta.replyLength) ? { replyLength: meta.replyLength } : {}), ...(messageId ? { messageId } : {}) })
     list.sort(chronological)
     const evicted = []
     while (list.length > this.limit) {

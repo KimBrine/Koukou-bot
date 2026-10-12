@@ -1,14 +1,15 @@
 /**
  * 解析 OneBot 11 消息（兼容 NapCat 的 string / array 两种消息格式）。
- * 返回 { text, atBot, images }：
+ * 返回 { text, atBot, images, replyId, forwards }：
  * - text：可读文本（QQ 表情转成 [表情:名字]，图片转为占位符）
  * - atBot：是否 @ 了机器人
  * - images：[{ file, url }] 消息里的图片/表情包（供视觉模型识图）
+ * - replyId / forwards：外层引用 ID 与合并卡片；内层消息不参与触发判断
  */
 
 import { faceName } from './qqFace.js'
 
-function cqUnescape(value) {
+export function cqUnescape(value) {
   return String(value ?? '')
     .replace(/&amp;/g, '&')
     .replace(/&#91;/g, '[')
@@ -16,12 +17,44 @@ function cqUnescape(value) {
     .replace(/&#44;/g, ',')
 }
 
-export function parseMessage(raw, selfId) {
+/** 只识别外层卡片；节点内的 @、reply 等不会被提升成当前消息的触发条件。 */
+export function forwardSegments(raw) {
+  const segments = typeof raw === 'string'
+    ? [...raw.matchAll(/\[CQ:(forward|node|json),([^\]]*)\]/g)].map(match => {
+      const data = {}
+      for (const field of match[2].split(',')) {
+        const equal = field.indexOf('=')
+        if (equal > 0) data[field.slice(0, equal)] = cqUnescape(field.slice(equal + 1))
+      }
+      return { type: match[1], data }
+    })
+    : Array.isArray(raw) ? raw : []
+  const result = []
+  for (const segment of segments) {
+    if (!segment || typeof segment !== 'object') continue
+    if (segment.type === 'forward' || segment.type === 'node') {
+      result.push(segment)
+      continue
+    }
+    if (segment.type !== 'json') continue
+    try {
+      const card = typeof segment.data?.data === 'string' ? JSON.parse(segment.data.data) : segment.data?.data
+      if (card?.app !== 'com.tencent.multimsg') continue
+      const detail = card.meta?.detail || card.meta?.detail_1
+      const id = detail?.resid ?? detail?.resId ?? detail?.m_resid
+      if (typeof id === 'string' && id.trim()) result.push({ type: 'forward', data: { id: id.trim() } })
+    } catch { /* 其他 JSON 卡片不当作合并聊天记录。 */ }
+  }
+  return result
+}
+
+export function parseMessage(raw, selfId, { preserveNewlines = false } = {}) {
   const self = selfId == null ? '' : String(selfId)
   let text = ''
   let atBot = false
   let replyId = ''
   const images = []
+  const forwards = forwardSegments(raw)
 
   if (typeof raw === 'string') {
     // CQ 码格式：检测是否 @ 了机器人本人（排除 @全体 与号码前缀误匹配）
@@ -49,6 +82,8 @@ export function parseMessage(raw, selfId) {
       .replace(/\[CQ:video[^\]]*\]/g, '[视频]')
       .replace(/\[CQ:at,qq=(\d+)[^\]]*\]/g, (m, qq) => (qq === self ? '' : qq === 'all' ? '[@全体]' : `[@${qq}]`))
       .replace(/\[CQ:reply[^\]]*\]/g, '')
+      .replace(/\[CQ:(?:forward|node),[^\]]*\]/g, '[合并聊天记录]')
+      .replace(/\[CQ:json,[^\]]*\]/g, whole => forwardSegments(whole).length ? '[合并聊天记录]' : '')
       .replace(/\[CQ:[^\]]*\]/g, '')
       .trim()
   } else if (Array.isArray(raw)) {
@@ -86,12 +121,21 @@ export function parseMessage(raw, selfId) {
           // 引用消息：记下被引用消息的 id，稍后由上层取回原文
           replyId = String(data.id ?? '')
           break
+        case 'forward':
+        case 'node':
+          parts.push('[合并聊天记录]')
+          break
+        case 'json':
+          if (forwardSegments([seg]).length) parts.push('[合并聊天记录]')
+          break
         default:
           break
       }
     }
-    text = parts.join(' ').replace(/\s+/g, ' ').trim()
+    text = preserveNewlines
+      ? parts.join(' ').replace(/\r\n?/g, '\n').replace(/[^\S\n]+/g, ' ').trim()
+      : parts.join(' ').replace(/\s+/g, ' ').trim()
   }
 
-  return { text, atBot, images, replyId }
+  return { text, atBot, images, replyId, forwards }
 }

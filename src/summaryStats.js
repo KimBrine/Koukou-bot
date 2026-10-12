@@ -17,7 +17,7 @@ export function analyzeText(text) {
   const emojis = (s.match(EMOJI_RE) || []).length
   const cleaned = s
     .replace(FACE_TAG_RE, '表')
-    .replace(/\[(图片|语音|视频)\]/g, '')
+    .replace(/\[(图片|语音|视频|合并聊天记录)\]/g, '')
     .replace(/\s/g, '')
   // 用码点计数：'🍥'.length 是 2（UTF-16 代理对），但人眼里它就是 1 个字
   const chars = [...cleaned].length

@@ -397,7 +397,7 @@ export class OneBotClient extends EventEmitter {
     return this.api('get_msg', { message_id: String(messageId) }, timeoutMs)
   }
 
-  /** 读取合并转发卡片内容，用于确认当晚报告确实已发出。 */
+  /** 读取合并转发卡片内容，供嵌套记录阅读与报告发送核验使用。 */
   getForwardMsg(messageId, timeoutMs = 15000) {
     return this.api('get_forward_msg', { message_id: String(messageId) }, timeoutMs)
   }

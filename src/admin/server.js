@@ -47,7 +47,7 @@ const EDITABLE = [
   { key: 'LINE_GAP_MIN_MS', label: '分条间隔下限(ms)', live: true, type: 'number' },
   { key: 'LINE_GAP_MAX_MS', label: '分条间隔上限(ms)', live: true, type: 'number' },
   { key: 'RATE_LIMIT_PER_HOUR', label: '每小时发言上限(主动/盯人)', hint: '防止刷屏特征', live: false, type: 'number' },
-  { key: 'RATE_LIMIT_AT_PER_HOUR', label: '每小时发言上限(被@/私聊)', hint: '必回消息用更高额度，避免被盯人挤掉', live: false, type: 'number' },
+  { key: 'RATE_LIMIT_AT_PER_HOUR', label: '每小时发言上限(@/引用/私聊)', hint: '直接对话用更高额度，避免被主动搭话或盯人挤掉', live: false, type: 'number' },
   { key: 'RATE_LIMIT_MIN_GAP_MS', label: '两条消息最小间隔(ms)', hint: '间隔不够时会等一会儿再发，不会丢消息', live: false, type: 'number' },
   { key: 'RATE_LIMIT_WAIT_MAX_MS', label: '为凑间隔最多等多久(ms)', hint: '超过这个时长还轮不到就放弃这条（防刷屏洪水）', live: true, type: 'number' },
   { key: 'HISTORY_LIMIT', label: '上下文窗口(条)', live: false, type: 'number' },

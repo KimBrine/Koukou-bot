@@ -14,7 +14,7 @@ import path from 'node:path'
 
 const DEFAULTS = {
   enabled: true, // 总开关：关掉后这个会话完全不理
-  atReplyEnabled: true, // 被 @ 必回
+  atReplyEnabled: true, // 被 @ 或引用机器人消息时直接回复
   proactiveEnabled: true, // 允许主动搭话（仅在白名单群里才有意义）
   proactiveRate: null, // 覆盖全局主动搭话概率
   customPrompt: '', // 这个会话的客制化人设/要求，附加到系统提示词

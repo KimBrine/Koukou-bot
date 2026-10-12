@@ -330,7 +330,7 @@ function chatRow(c){
     </div>
     <div class="body">
       <div class="frow"><label>聊天开关</label><div><label class="switch"><input type="checkbox" data-f="enabled" ${r.enabled === false ? '' : 'checked'}><i></i></label> <span class="mut">关掉后停止普通聊天；拍一拍、自动 +1 在“回复行为”单独控制</span></div></div>
-      <div class="frow"><label>被 @ 必回</label><div><label class="switch"><input type="checkbox" data-f="atReplyEnabled" ${r.atReplyEnabled === false ? '' : 'checked'}><i></i></label></div></div>
+      <div class="frow"><label>被 @ / 引用时回复</label><div><label class="switch"><input type="checkbox" data-f="atReplyEnabled" ${r.atReplyEnabled === false ? '' : 'checked'}><i></i></label> <span class="mut">引用机器人自己的发言也视为直接对话，无需另加 @</span></div></div>
       <div class="frow"><label>允许主动搭话</label><div><label class="switch"><input type="checkbox" data-f="proactiveEnabled" ${r.proactiveEnabled === false ? '' : 'checked'}><i></i></label> <span class="mut">仅在白名单群里有效${override('proactiveEnabled')}</span></div></div>
       <div class="frow"><label>主动搭话概率</label><div>
         <div class="row"><input type="range" min="0" max="1" step="0.01" data-f="proactiveRate" value="${rateVal}">
