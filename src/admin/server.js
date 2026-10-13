@@ -647,6 +647,28 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       const file = personaPath(payload.name)
       return { name: payload.name, content: existsSync(file) ? readFileSync(file, 'utf8') : '' }
     },
+    async 'export-persona'() {
+      const { buildSystemPrompt } = await import('../persona.js')
+      // 导出运行中实际使用的人格，不混入记忆、密钥或临时聊天上下文。
+      const name = String(config.activePersona || config.botName || '默认人格')
+      const safe = name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').slice(0, 60)
+      const content = config.persona || buildSystemPrompt({ botName: config.botName || 'Koukou' })
+      return { name, filename: `Koukou-${safe}-人格.txt`, content }
+    },
+    async 'import-persona'(payload) {
+      const name = String(payload?.name ?? '').trim()
+      if (typeof payload?.content !== 'string') throw Error('人格内容必须是纯文本')
+      const content = String(payload?.content ?? '').replace(/^\uFEFF/, '')
+      if (!name || name.length > 60 || /[\\/:*?"<>|\u0000-\u001f]/.test(name) || /[. ]$/.test(name) ||
+          /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/i.test(name)) throw Error('人格名称需为 1～60 字，不能含路径或文件名保留字符')
+      if (!content.trim()) throw Error('人格文件内容为空')
+      if (content.length > 262144 || content.includes('\u0000')) throw Error('人格文件过大或不是纯文本')
+      const file = personaPath(name)
+      if (existsSync(file) || listPersonas().some(p => p.name.toLowerCase() === name.toLowerCase())) throw Error('同名人格已存在，请修改名称；原人格不会被覆盖')
+      mkdirSync(personaDir, { recursive: true })
+      writeFileSync(file, content, { encoding: 'utf8', flag: 'wx' })
+      return { ok: true, name, content }
+    },
     async 'get-appendix'() {
       const { buildChatAppendix } = await import('../chatAppendix.js')
       return { text: buildChatAppendix({ time: new Date().toLocaleString('zh-CN', { hour12: false }) }) }

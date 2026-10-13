@@ -1,6 +1,6 @@
 {
   "name": "deepseek-qq-bot",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
   "description": "DeepSeek API 接入 QQ 的非官方聊天机器人（OneBot 11 协议，零依赖）",

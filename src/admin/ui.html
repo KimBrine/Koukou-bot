@@ -181,6 +181,7 @@ let chats = []
 let configItems = []
 let personas = []
 let activePersona = ''
+let selectedPersona = ''
 let openChats = new Set()
 let logAuto = true
 let logFilter = ''
@@ -393,13 +394,84 @@ function pageChats(){
 }
 
 // ── 页面：人格 ──────────────────────────────────────────
+function downloadPersonaFile(filename, content){
+  const blob = new Blob(['\uFEFF', String(content)], {type:'text/plain;charset=utf-8'})
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url; link.download = filename; document.body.appendChild(link)
+  link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+async function readPersonaFile(file){
+  if (!/\.(txt|md)$/i.test(file.name)) throw Error('请选择 .txt 或 .md 人格文件')
+  if (file.size > 262144) throw Error('人格文件不能超过 256 KB')
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  let content
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) content = new TextDecoder('utf-16le').decode(bytes)
+  else if (bytes[0] === 0xfe && bytes[1] === 0xff) content = new TextDecoder('utf-16be').decode(bytes)
+  else {
+    try { content = new TextDecoder('utf-8', {fatal:true}).decode(bytes) }
+    catch { content = new TextDecoder('gb18030').decode(bytes) }
+  }
+  content = content.replace(/^\uFEFF/, '')
+  if (!content.trim() || content.includes('\u0000')) throw Error('文件为空或不是可读取的纯文本人格')
+  return content
+}
+function suggestPersonaName(filename){
+  const stem = filename.replace(/\.(txt|md)$/i, '')
+  const match = /^Koukou-(.+?)-人格(?:-\d{4}-\d{2}-\d{2})?$/.exec(stem)
+  const base = (match?.[1] || stem).replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').replace(/[. ]+$/, '').slice(0, 50) || '导入人格'
+  let name = base, number = 2
+  const names = new Set(personas.map(p => p.name.toLowerCase()))
+  while (names.has(name.toLowerCase())) name = `${base}（${number++}）`
+  return name
+}
+function previewPersonaImport(file, content){
+  const root = document.getElementById('modalRoot')
+  root.innerHTML = `<div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="personaImportTitle"><h2 id="personaImportTitle">导入人格</h2><p>预览后保存到人格库。已有的人格会保留，可随时切换。</p><div class="note">文件：${esc(file.name)}</div><label class="field-label" for="personaImportName">人格名称</label><input id="personaImportName" type="text" maxlength="60"><label class="field-label" for="personaImportContent">内容预览（可以编辑）</label><textarea id="personaImportContent" style="min-height:210px"></textarea><label class="row"><input id="personaImportActivate" type="checkbox">导入后立即使用</label><div class="inline-error" id="personaImportError" role="status"></div><div class="row"><button class="btn" id="personaImportCancel">取消</button><button class="btn primary" id="personaImportCommit">保存到人格库</button></div></div>`
+  root.classList.add('show'); root.setAttribute('aria-hidden', 'false')
+  root.querySelector('#personaImportName').value = suggestPersonaName(file.name)
+  root.querySelector('#personaImportContent').value = content
+  let pending = false
+  const close = () => {
+    if (pending) return
+    root.classList.remove('show'); root.setAttribute('aria-hidden', 'true'); root.innerHTML = ''; root.onclick = null
+    document.removeEventListener('keydown', onKey); document.getElementById('importPersonaBtn')?.focus()
+  }
+  const onKey = ev => { if (ev.key === 'Escape') close() }
+  document.addEventListener('keydown', onKey)
+  root.onclick = ev => { if (ev.target === root) close() }
+  root.querySelector('#personaImportCancel').onclick = close
+  root.querySelector('#personaImportCommit').onclick = async () => {
+    const name = root.querySelector('#personaImportName').value.trim()
+    const text = root.querySelector('#personaImportContent').value
+    const activate = root.querySelector('#personaImportActivate').checked
+    const button = root.querySelector('#personaImportCommit'), error = root.querySelector('#personaImportError')
+    if (pending) return
+    pending = true; button.disabled = true; error.textContent = ''
+    try {
+      const imported = await api('/api/action/import-persona', {name, content:text})
+      personaCache[imported.name] = imported.content; selectedPersona = imported.name
+      let activationError = ''
+      if (activate) {
+        try { await api('/api/action/activate-persona', {name:imported.name}) }
+        catch(e){ activationError = '；切换未成功，可稍后选择“切换使用”：' + e.message }
+      }
+      pending = false; close(); await load()
+      toast('已保存「' + imported.name + '」' + (activate && !activationError ? '并立即使用' : '，可从人格库切换') + activationError, !!activationError)
+    } catch(e){ error.textContent = e.message; pending = false; button.disabled = false }
+  }
+  root.querySelector('#personaImportName').focus()
+}
 function pagePersona(){
-  const cur = personas.find(p=>p.active)
+  const cur = personas.find(p=>p.name === selectedPersona) || personas.find(p=>p.active) || personas[0]
   return `
   <h1>人格编辑</h1><div class="sub">当前生效：<b>${esc(activePersona || '（默认 persona.txt）')}</b> · 切换后下一条消息立刻使用新人格</div>
+  <h2>人格库 <span class="pill">${personas.length} 个</span></h2><div class="note">导入或新建的人格会保存在列表中。选择后可编辑、导出或切换使用。</div>
   <div class="flexbar">
-    <select id="personaSel">${personas.map(p=>`<option value="${esc(p.name)}" ${p.active?'selected':''}>${esc(p.name)}${p.active?'（使用中）':''}</option>`).join('')}</select>
+    <select id="personaSel" aria-label="选择人格">${personas.map(p=>`<option value="${esc(p.name)}" ${cur?.name === p.name?'selected':''}>${esc(p.name)}${p.active?'（使用中）':''}</option>`).join('')}</select>
     <button class="btn primary" id="activate">切换使用</button>
+    <button class="btn" id="importPersonaBtn">导入文件</button><input id="importPersonaFile" type="file" accept=".txt,.md,text/plain,text/markdown" hidden>
+    <button class="btn" id="exportActivePersona">导出当前使用</button>
     <input id="newPersona" type="text" placeholder="新人格名称" style="width:160px">
     <button class="btn" id="createPersona">新建</button>
     <button class="btn danger" id="delPersona">删除当前选中</button>
@@ -409,9 +481,11 @@ function pagePersona(){
     <textarea id="personaText" style="min-height:340px;font-size:13.5px">${esc(cur ? (personaCache[cur.name] ?? '') : '')}</textarea>
     <div class="flexbar">
       <button class="btn primary" id="savePersona">保存</button>
+      <button class="btn" id="exportEditedPersona">导出编辑内容</button>
       <span class="mut" id="personaHint">选择左侧下拉可切换要编辑的人格</span>
     </div>
   </div>
+  <div class="note">导出当前使用：下载正在生效的人格。导出编辑内容：下载编辑框中的文字，包含尚未保存的改动。均为可分享的 .txt 文件。</div>
   <h2>系统附加说明（只读）</h2>
   <div class="card"><div class="mono" style="max-height:260px;overflow:auto">${esc(appendixText)}</div></div>`
 }
@@ -672,7 +746,27 @@ async function bind(){
       return personaCache[name]
     }
     document.getElementById('personaText').value = await loadOne(sel.value)
-    sel.addEventListener('change', async () => { document.getElementById('personaText').value = await loadOne(sel.value) })
+    sel.addEventListener('change', async () => { selectedPersona = sel.value; document.getElementById('personaText').value = await loadOne(sel.value) })
+  }
+  const exportActive = document.getElementById('exportActivePersona')
+  if (exportActive) exportActive.onclick = async () => {
+    try { const p = await api('/api/action/export-persona', {}); downloadPersonaFile(p.filename, p.content); toast('已导出当前使用的人格') }
+    catch(e){ toast(e.message, true) }
+  }
+  const exportEdited = document.getElementById('exportEditedPersona')
+  if (exportEdited) exportEdited.onclick = () => {
+    const name = document.getElementById('personaSel').value || '编辑中人格'
+    downloadPersonaFile('Koukou-' + name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_') + '-人格.txt', document.getElementById('personaText').value)
+    toast('已导出编辑框内容')
+  }
+  const personaImportButton = document.getElementById('importPersonaBtn'), personaImportFile = document.getElementById('importPersonaFile')
+  if (personaImportButton && personaImportFile) {
+    personaImportButton.onclick = () => personaImportFile.click()
+    personaImportFile.onchange = async () => {
+      const file = personaImportFile.files?.[0]; personaImportFile.value = ''; if (!file) return
+      try { previewPersonaImport(file, await readPersonaFile(file)) }
+      catch(e){ toast(e.message, true) }
+    }
   }
   const sp = document.getElementById('savePersona')
   if (sp) sp.onclick = async () => {
