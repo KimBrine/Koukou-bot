@@ -100,14 +100,19 @@ export async function expandForwardRecords({
   }
 
   async function fetchCard(id) {
-    const waitMs = Math.min(requestTimeoutMs, Math.max(1, deadline - Date.now()))
+    const remaining = Math.max(1, deadline - Date.now())
+    const waitMs = Math.min(requestTimeoutMs, remaining)
     let timer
     let onAbort
     try {
       return await Promise.race([
         Promise.resolve().then(() => onebot.getForwardMsg(id, waitMs)),
         new Promise((_, reject) => {
-          timer = setTimeout(() => reject(new Error('合并聊天记录读取超时')), waitMs)
+          timer = setTimeout(() => {
+            // 定时器可能比墙钟截止时刻提前不足一毫秒触发；总预算用尽后不能再请求下一张。
+            if (remaining <= requestTimeoutMs) { issue('TIME_LIMIT', '', { truncated: true }); stopped = true }
+            reject(new Error('合并聊天记录读取超时'))
+          }, waitMs)
           if (signal) {
             onAbort = () => reject(new Error('合并聊天记录读取已取消'))
             signal.addEventListener('abort', onAbort, { once: true })
@@ -193,7 +198,7 @@ export async function expandForwardRecords({
     if (!available()) break
     await readForward(root, 0)
   }
-  const status = [result.truncated ? '[资料有省略或达到读取上限；不能据此声称已读完整记录。]' : '', result.failed ? '[部分聊天记录未能读取；不得补写未读取的内容。]' : ''].filter(Boolean).join('\n')
+  const status = [result.truncated ? '[资料有省略或达到读取上限；不能据此声称已读完整记录。]' : '', result.failed ? '[部分聊天记录未能读取（读取失败或超时）；不得补写未读取的内容。]' : ''].filter(Boolean).join('\n')
   result.text = `${HEADER}${parts.join('\n')}${status ? `\n${status}` : ''}${FOOTER}`
   return result
 }

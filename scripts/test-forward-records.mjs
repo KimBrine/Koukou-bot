@@ -174,6 +174,16 @@ await check('already aborted and abort during read cannot launch further reads',
   assert.equal(calls, 1)
 })
 
+await check('total-budget timeout stops new requests even before the wall clock reaches its deadline', async () => {
+  const originalNow = Date.now, frozen = Date.now(), calls = []
+  try {
+    Date.now = () => frozen
+    const result = await expandForwardRecords({message:[forward('hung'),forward('never')],timeoutMs:5,requestTimeoutMs:100,
+      onebot:{getForwardMsg(id){calls.push(id);return new Promise(()=>{})}}})
+    assert.deepEqual(calls,['hung']);assert.equal(result.truncated,true);assert.match(result.text,/读取失败或超时/)
+  } finally { Date.now = originalNow }
+})
+
 await check('missing ID, empty response, missing node body, and absent API are explicit failures', async () => {
   for (const options of [
     { message: [{ type: 'forward', data: {} }] },
