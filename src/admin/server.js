@@ -70,7 +70,7 @@ const EDITABLE = [
   { key: 'SUMMARY_PROVIDER', label: '报告模型服务商', hint: '只影响群聊报告，不影响图片识别', live: false, type: 'text' },
   { key: 'SUMMARY_MODEL', label: '报告模型', hint: '群聊总结使用的模型，与视觉模型独立', live: false, type: 'text' },
   { key: 'SUMMARY_VISION_MODEL', label: '转发参考图片模型（通义千问）', hint: '仅用于群总结展开记录里的图片；默认沿用 DashScope 型号，与普通聊天识图独立', live: false, type: 'text' },
-  { key: 'SUMMARY_REFERENCE_MAX_IMAGES', label: '每份总结最多读取的参考图片', hint: '0～12，默认6；0只展开文字。图片与内层消息不增加统计或话题权重', live: false, type: 'number' },
+  { key: 'SUMMARY_REFERENCE_MAX_IMAGES', label: '每份总结最多读取的参考图片', hint: '先筛选相关记录再读图；0～12，默认6；0只展开文字。图片与内层消息不增加统计或话题权重', live: false, type: 'number' },
   { key: 'DASHSCOPE_ENABLE_THINKING', label: '千问辅助模型思考模式', hint: '支持混合思考的千问报告、记忆整理和备用识图模型使用；默认关闭以减少长报告等待时间。', live: false, type: 'bool' },
   { key: 'DAILY_PING_ENABLED', label: '定时指令', hint: '每天定点到群里 @ 某个账号发固定内容', live: false, type: 'bool' },
   { key: 'DAILY_PING_TIME', label: '定时指令时间', hint: 'HH:mm；00:00 会在 00:00:10 发送，留出跨日缓冲', live: false, type: 'text' },

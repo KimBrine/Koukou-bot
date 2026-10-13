@@ -106,6 +106,7 @@ export function buildSummaryPrompt({ botName, dateLabel, days = 1, stats = null,
 【数据说明】
 - 记录格式：[时间] 昵称：内容；[表情:名字] 是 QQ 表情，[图片]/[语音]/[视频] 是非文本消息；
 - 标有「模板已压缩，非原话」的例行结果是程序简述，不能引用为群圣经，不能据此脑补群友反应；
+- 合并记录先按外层引用、卡片摘要与附近群内讨论筛选，仅展开有关联依据的材料；未展开的卡片内容未知，不要从占位符猜测其内容；
 - 标有「低权重转发参考资料」的部分不参与统计、热度和话题数量，不得作为本群原话。只有转发资料而没有有效群内交流时，保留小节标题并说明没有足够依据，不为凑条目另列转发话题或虚构群圣经；
 - 下面「每人数据」和统计概览都是系统精确统计的，直接引用，不要自己估算；
 - 「回复比例」统计的是"用 QQ 引用回复功能"的比例，数值低只代表很少用这个功能，**绝不代表他不理别人**；
@@ -156,8 +157,14 @@ export function mergeRecords(history, captured, startSec, endSec = Infinity) {
   for (const m of captured) {
     if (m.time < startSec || m.time >= endSec) continue
     const prev = byId.get(m.id)
+    const forwards = m.forwards?.map(segment => {
+      if (segment.data?.preview) return segment
+      const old = prev?.forwards?.find(item => item.data?.id && item.data.id === segment.data?.id)
+      return old?.data?.preview ? { ...segment, data: { ...segment.data, preview: old.data.preview } } : segment
+    })
     byId.set(m.id, { ...m,
       ...(prev && !m.replyId && prev.replyId ? { replyId: prev.replyId } : {}),
+      ...(forwards?.length ? { forwards } : {}),
       ...(prev?.forwards?.length && !m.forwards?.length ? { forwards: prev.forwards } : {}) })
   }
   return [...byId.values()].sort((a, b) => a.time - b.time)

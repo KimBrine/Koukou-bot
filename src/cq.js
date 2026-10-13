@@ -42,7 +42,12 @@ export function forwardSegments(raw) {
       if (card?.app !== 'com.tencent.multimsg') continue
       const detail = card.meta?.detail || card.meta?.detail_1
       const id = detail?.resid ?? detail?.resId ?? detail?.m_resid
-      if (typeof id === 'string' && id.trim()) result.push({ type: 'forward', data: { id: id.trim() } })
+      if (typeof id === 'string' && id.trim()) {
+        // 摘要已随外层卡片到达，供群总结在读取完整记录前判断关联性。
+        const preview = [detail?.desc, detail?.summary, ...(Array.isArray(detail?.news) ? detail.news.slice(0, 3).map(item => item?.text) : [])]
+          .filter(value => typeof value === 'string').map(value => value.slice(0, 200)).join(' ').slice(0, 600)
+        result.push({ type: 'forward', data: { id: id.trim(), ...(preview ? { preview } : {}) } })
+      }
     } catch { /* 其他 JSON 卡片不当作合并聊天记录。 */ }
   }
   return result

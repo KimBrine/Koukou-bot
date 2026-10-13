@@ -20,8 +20,9 @@ const dir=mkdtempSync(path.join(os.tmpdir(),'koukou-summary-references-'))
 const record={id:'1',userId:'200000011',name:'转发者',time:Math.floor(Date.now()/1000),text:'[合并聊天记录]',forwards:[forward('outer')]}
 let passed=0
 async function test(name,fn){await fn();passed++;console.log(`PASS ${name}`)}
-const run=options=>prepareSummaryReferences({records:[record],onebot:{async getForwardMsg(){return {messages:[node('外部人物',[text('这是转发资料'),picture])]}}},
-  logger,mainChars:40000,loadImage:async()=>part,visionLLM:{model:'qwen3.8-flash',baseUrl:'https://example.invalid',async describeImages(){return '图片中的考试通知'}} ,...options})
+const run=options=>prepareSummaryReferences({onebot:{async getForwardMsg(){return {messages:[node('外部人物',[text('这是转发资料'),picture])]}}},
+  logger,mainChars:40000,loadImage:async()=>part,visionLLM:{model:'qwen3.8-flash',baseUrl:'https://example.invalid',async describeImages(){return '图片中的考试通知'}} ,...options,
+  records:[...(options?.records??[record]),...(options?.records??[record]).map(r=>({id:`reply-${r.id}`,replyId:r.id,time:r.time+10,userId:'200000012',text:'这份资料与报名安排有关'}))]})
 const report='💬 热门话题\n1. 报名安排\n   参与者: 甲、乙\n   甲通知报名截止时间，乙确认已报名；分享的资料补充了集合地点。\n\n🏆 群友称号\n• 甲 - 通知员\n  按本群两条消息说明。\n\n• 乙 - 行动派\n  按本群一条消息说明。\n\n💬 群圣经\n1. "我已报名" —— 乙\n   直接行动。'
 try {
   await test('群总结图片客户端固定使用通义千问，与聊天识图、正文模型独立',async()=>{
@@ -110,7 +111,7 @@ try {
     const start=new Date();start.setHours(0,0,0,0);const sec=start.getTime()/1000
     const packets=[{message_id:10,message_seq:10,time:sec-60,user_id:200000011,message:[text('昨日')]},
       {message_id:11,message_seq:11,time:sec+10,user_id:200000011,sender:{nickname:'甲'},message:[forward('outer')]},
-      {message_id:12,message_seq:12,time:sec+20,user_id:200000011,sender:{nickname:'甲'},message:[text('明天报名截止')]},
+      {message_id:12,message_seq:12,time:sec+20,user_id:200000011,sender:{nickname:'甲'},message:[{type:'reply',data:{id:'11'}},text('明天报名截止')]},
       {message_id:13,message_seq:13,time:sec+30,user_id:200000012,sender:{nickname:'乙'},message:[text('我已报名')]}]
     let input,prompt,bodyCalls=0,visionCalls=0,sends=0
     const cfg={dataDir:path.join(dir,'daily'),summaryEnabled:true,summaryGroups:[200000002],whitelistGroups:new Set(),summaryMaxMessages:600,summaryMaxBlocks:20,summarySendMode:'forward',summaryUserRows:20,botName:'测试机器人'}
