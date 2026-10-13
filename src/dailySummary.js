@@ -148,13 +148,13 @@ export function buildReportBlocks({ startKey, endKey, stats, modelText, nameInde
  * 同一 id 以实时捕获的文本为准；但捕获记录若缺 replyId（早期版本捕获的没有这个字段），
  * 就从历史记录里继承——否则「回复比例」会全变成 0，模型还会据此编出"他不听别人说话"之类的理由。
  */
-export function mergeRecords(history, captured, startSec) {
+export function mergeRecords(history, captured, startSec, endSec = Infinity) {
   const byId = new Map()
   for (const m of history) {
-    if (m.time >= startSec && !byId.has(m.id)) byId.set(m.id, m)
+    if (m.time >= startSec && m.time < endSec && !byId.has(m.id)) byId.set(m.id, m)
   }
   for (const m of captured) {
-    if (m.time < startSec) continue
+    if (m.time < startSec || m.time >= endSec) continue
     const prev = byId.get(m.id)
     byId.set(m.id, { ...m,
       ...(prev && !m.replyId && prev.replyId ? { replyId: prev.replyId } : {}),
@@ -236,9 +236,10 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
    *（NapCat 的历史缓存还没热起来）。2026-09-27 的教训：用户 23:33 跑总结，机器人 23:32 才启动，
    * 单次请求只拿回 42 条，当天真实有 218 条 —— 代码却静默用了残缺数据把报告发出去了。
    * NapCat 的无游标“首屏”可能跳过离线期间的消息，即使最早时间早于零点也不能视为完整。
-   * 先取首屏定位最新 seq，再从该 seq 显式向前翻；重复扫描直到本日 ID 集合稳定。
+   * 先取首屏定位最新 seq，再从该 seq 显式向前翻；重复扫描直到固定窗口的 ID 集合稳定。
+   * 截止秒不含在内：同秒及之后到达的新消息继续捕获，不延长这次历史核验窗口。
    */
-  async function backfillHistory(groupId, count, startSec = 0, { includeSelf = false, signal } = {}) {
+  async function backfillHistory(groupId, count, startSec = 0, { includeSelf = false, signal, endSec = Math.floor(Date.now() / 1000) } = {}) {
     const byId = new Map()
     // ⚠️ 单页别要太多：NapCat 拉历史实测一次要 ~17 秒，要 900 条会直接超时，
     //    翻页循环一断就又变成"只有部分数据"。小页多翻几页更稳。
@@ -256,7 +257,7 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
         const id = String(m.message_id)
         if (byId.has(id)) continue
         byId.set(id, m)
-        if (Number(m.time) >= startSec) newWindow++
+        if (Number(m.time) >= startSec && Number(m.time) < endSec) newWindow++
       }
       return newWindow
     }
@@ -318,12 +319,13 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
         seq = nextSeq
       }
       if (failed) break
-      logger.info(`群 ${groupId} 历史同步第 ${round} 轮：新增窗口内 ${newWindow} 条，已${covered ? '' : '未'}回溯到起点`)
+      logger.info(`群 ${groupId} 历史同步第 ${round} 轮：新增窗口内 ${newWindow} 条，已${covered ? '' : '未'}回溯到起点（固定截止 ${fmtDate(endSec)} ${fmtTime(endSec)}，不含截止秒）`)
       if (covered && newWindow === 0 && round > 1) { complete = true; break }
       if (round < maxRounds) await sleep(700)
     }
     const out = []
     for (const m of byId.values()) {
+      if (Number(m.time) >= endSec) continue
       // 机器人自己的发言不计入统计（报告的"参与人数/发言条数"应该是群友的数据）
       if (onebot.selfId && String(m.user_id) === String(onebot.selfId)) continue
       const parsed = parseMessage(m.message ?? m.raw_message, null)
@@ -429,15 +431,16 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
   /** 只算统计、不调模型（自检/排查用）：返回 { records, stats } */
   async function previewStats(groupId, days = 1) {
     const dayCount = Math.max(1, Math.min(30, Math.floor(Number(days) || 1)))
+    const endSec = Math.floor(Date.now() / 1000)
     const startSec = dayStartSec(dayCount - 1)
     const captured = readCapturedRange(groupId, dayCount)
     let history = { records: [], complete: false }
     try {
-      history = await backfillHistory(groupId, Math.min(2000, dayCount * 300), startSec)
+      history = await backfillHistory(groupId, Math.min(2000, dayCount * 300), startSec, { endSec })
     } catch (err) {
       logger.warn(`群 ${groupId} 历史回填失败：${err.message}`)
     }
-    const records = mergeRecords(history.records, captured, startSec)
+    const records = mergeRecords(history.records, captured, startSec, endSec)
     return { records, stats: computeSummaryStats(records), complete: history.complete }
   }
 
@@ -451,11 +454,12 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
     const deadline = createSummaryDeadline(config)
     let stage = 'model'
     try {
+      const endSec = Math.floor(Date.now() / 1000)
       const startSec = dayStartSec(dayCount - 1)
       const captured = readCapturedRange(groupId, dayCount)
       let history = { records: [], complete: false }
       try {
-        history = await deadline.wait(backfillHistory(groupId, dayCount * 300, startSec, { signal: deadline.signal }))
+        history = await deadline.wait(backfillHistory(groupId, dayCount * 300, startSec, { signal: deadline.signal, endSec }))
       } catch (err) {
         deadline.signal.throwIfAborted()
         logger.warn(`群 ${groupId} 历史回填失败：${err.message}`)
@@ -464,7 +468,7 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
         logger.warn(`群 ${groupId} 历史未确认完整，本次总结暂缓，避免发送偏少的统计`)
         return
       }
-      let records = mergeRecords(history.records, captured, startSec)
+      let records = mergeRecords(history.records, captured, startSec, endSec)
       const total = records.length
       const scopeText = dayCount === 1 ? '今日' : `近 ${dayCount} 天`
       if (total === 0) {

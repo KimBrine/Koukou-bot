@@ -232,5 +232,46 @@ console.log('\n=== 11. 历史接口失败时不发送残缺报告 ===')
   ok('历史不完整时不发送报告', sent === 0)
 }
 
+console.log('\n=== 12. 活跃群固定窗口收敛，旧记录补齐仍须核验 ===')
+{
+  const realNow = Date.now
+  const endSec = Math.floor(realNow() / 1000)
+  const midnight = new Date(); midnight.setHours(0, 0, 0, 0)
+  const start = Math.floor(midnight.getTime() / 1000)
+  const msg = (id, time) => ({ message_id: id, message_seq: id, time, user_id: 123,
+    sender: { nickname: '测试群友' }, message: '真实群内讨论' })
+  const base = [msg(1, start - 60), msg(2, endSec - 2)]
+  const config = { dataDir: '__missing_summary_test_data__', summaryEnabled: true,
+    summaryGroups: [200000002], whitelistGroups: new Set() }
+  const logger = { info() {}, warn() {}, error() {} }
+  try {
+    for (const mode of ['hot', 'warming', 'incomplete']) {
+      let round = 0
+      Date.now = () => (endSec + round * 10) * 1000
+      const service = createDailySummary({ config, logger, llm: {}, onebot: {
+        selfId: '999', async getGroupMsgHistory(groupId, seq) {
+          if (seq === null) round++
+          const older = mode === 'warming' && round >= 2 ? [msg(3, endSec - 1)]
+            : mode === 'incomplete' ? Array.from({ length: round }, (_, i) => msg(10 + i, endSec - 1)) : []
+          // 每轮新增群友消息和机器人发言，截止秒本身也有新消息。
+          return { messages: [...base, ...older, msg(100 + round, endSec + round),
+            { ...msg(200 + round, endSec), user_id: 999 }] }
+        },
+      } })
+      const preview = await service.previewStats(200000002)
+      if (mode === 'hot') {
+        ok('扫描期间持续聊天不阻止固定窗口收敛', preview.complete && round === 2)
+        ok('截止秒及之后的群友和机器人消息不进入统计', preview.stats.total === 1)
+      } else if (mode === 'warming') {
+        ok('新补齐的截止点之前消息仍触发下一轮核验', preview.complete && round === 3 && preview.stats.total === 2)
+      } else {
+        ok('旧窗口仍不断补齐时保持不完整，不能放宽为强行发送', !preview.complete && round === 5)
+      }
+    }
+    const rows = [{ id: 'before', time: endSec - 1 }, { id: 'at', time: endSec }, { id: 'after', time: endSec + 1 }]
+    ok('历史与捕获记录使用相同的独占截止点', mergeRecords(rows, rows, start, endSec).map(r => r.id).join() === 'before')
+  } finally { Date.now = realNow }
+}
+
 console.log(`\n=== 结果：${pass} 通过 / ${fail} 失败 ===`)
 process.exit(fail === 0 ? 0 : 1)
