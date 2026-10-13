@@ -577,7 +577,7 @@ function pageApi(){
 }
 function pageReport(){
   return `<h1>群聊报告</h1><div class="sub">每日自动生成「群聊日常分析报告」，也可以在这里随时手动生成</div>
-  <div class="card">${configForm(['SUMMARY_ENABLED','SUMMARY_FALLBACK_ENABLED','SUMMARY_TIMES','SUMMARY_GROUPS','SUMMARY_SEND_MODE','SUMMARY_MAX_MESSAGES','SUMMARY_MAX_TOKENS','SUMMARY_PROVIDER','SUMMARY_MODEL'],'')}</div>
+  <div class="card">${configForm(['SUMMARY_ENABLED','SUMMARY_FALLBACK_ENABLED','SUMMARY_TIMES','SUMMARY_GROUPS','SUMMARY_SEND_MODE','SUMMARY_MAX_MESSAGES','SUMMARY_MAX_TOKENS','SUMMARY_CONCURRENCY','SUMMARY_TASK_TIMEOUT_MINUTES','SUMMARY_PROVIDER','SUMMARY_MODEL','SUMMARY_VISION_MODEL','SUMMARY_REFERENCE_MAX_IMAGES'],'')}</div>
   <h2>立即生成</h2>
   <div class="card"><div class="row">
     <select id="sumGroup">${chats.filter(c=>c.type==='group').map(c=>`<option value="${c.id}">${esc(c.name)}（${c.id}）</option>`).join('')}</select>

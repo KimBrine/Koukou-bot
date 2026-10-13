@@ -153,12 +153,12 @@ function sniffMime(buf) {
   return null
 }
 
-async function fetchImageBytes(url, timeoutMs, maxBytes) {
+async function fetchImageBytes(url, timeoutMs, maxBytes, signal) {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
     const res = await fetch(url, {
-      signal: controller.signal,
+      signal: signal ? AbortSignal.any([controller.signal, signal]) : controller.signal,
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
     })
     if (!res.ok) {
@@ -181,7 +181,8 @@ async function fetchImageBytes(url, timeoutMs, maxBytes) {
 }
 
 /** 下载链接失效时回退到 NapCat 的本地缓存；只重试临时网络错误。 */
-export async function imageToDataUrl(img, onebot, config, logger) {
+export async function imageToDataUrl(img, onebot, config, logger, { signal } = {}) {
+  signal?.throwIfAborted()
   const timeoutMs = config.visionImageTimeoutMs ?? 20000
   const maxBytes = config.visionMaxImageBytes ?? 6 * 1024 * 1024
   let lastError = null
@@ -200,21 +201,24 @@ export async function imageToDataUrl(img, onebot, config, logger) {
     return toPart(readFileSync(localPath))
   }
   const temporary = (err) => err.retryable === true || ['AbortError', 'TimeoutError', 'TypeError'].includes(err.name)
-  const download = async (url) => toPart(await fetchImageBytes(url, timeoutMs, maxBytes))
+  const download = async (url) => toPart(await fetchImageBytes(url, timeoutMs, maxBytes, signal))
   try {
     const part = localPart(img.file)
     if (part) return part
   } catch (err) { lastError = err }
+  signal?.throwIfAborted()
   // 原链接通常最快；失败后先找缓存，避免对已经失效的 rkey 反复请求。
   if (img.url) {
     try { return await download(img.url) }
     catch (err) { lastError = err }
   }
+  signal?.throwIfAborted()
   const originalError = lastError
   let refreshedUrl = ''
   if (img.file) {
     try {
       const got = await onebot.getImage(img.file, timeoutMs)
+      signal?.throwIfAborted()
       // 同一条失效 URL 仍可能对应已经下载好的有效缓存。
       try {
         const part = localPart(got?.file)
@@ -229,15 +233,18 @@ export async function imageToDataUrl(img, onebot, config, logger) {
       logger?.warn?.(`[识图下载] NapCat 图片解析失败：${err.message}`)
     }
   }
+  signal?.throwIfAborted()
   if (refreshedUrl && refreshedUrl !== img.url) {
     try { return await download(refreshedUrl) }
     catch (err) { lastError = err }
   }
+  signal?.throwIfAborted()
   const retryUrl = refreshedUrl || img.url
   const retryError = refreshedUrl === img.url || !refreshedUrl ? originalError : lastError
   if (retryUrl && retryError && temporary(retryError)) {
     logger?.info?.('[识图下载] 临时下载失败，重试一次')
     await new Promise(resolve => setTimeout(resolve, 250))
+    signal?.throwIfAborted()
     try { return await download(retryUrl) }
     catch (err) { lastError = err }
   }
@@ -258,15 +265,15 @@ const SEARCH_TOOLS = [{
   },
 }]
 
-export function createBot({ config, logger, onebot, llm, visionLLM, memory, buildSystemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, rand = Math.random }) {
-  const imageCache = config.dataDir && config.visionCacheEnabled !== false ? createImageCache({
+export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, rand = Math.random }) {
+  const imageCache = sharedImageCache ?? (config.dataDir && config.visionCacheEnabled !== false ? createImageCache({
     dir: path.join(config.dataDir, 'image-cache'),
     maxBytes: config.visionCacheMaxBytes,
     maxEntries: config.visionCacheMaxEntries,
     maxImageBytes: config.visionMaxImageBytes,
     ttlMs: config.visionCacheTtlMs,
     logger,
-  }) : null
+  }) : null)
   // 只缓存客观画面；模型或识图提示词改变后使用新描述，不缓存聊天口吻。
   const visionCacheScope = JSON.stringify([visionLLM?.baseUrl, visionLLM?.model, VISION_DESCRIBE_PROMPT, VISION_DESCRIBE_ASK])
   const failedRecently = new Map() // 私聊报错提示限频：key -> 上次提示时间戳

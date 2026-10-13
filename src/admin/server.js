@@ -69,6 +69,8 @@ const EDITABLE = [
   { key: 'SUMMARY_TASK_TIMEOUT_MINUTES', label: '单群准备时限（分钟）', hint: '2～30，默认 6；历史拉取、模型排队、生成与修正共用此时限，超时取消本群，其他群继续。', live: false, type: 'number' },
   { key: 'SUMMARY_PROVIDER', label: '报告模型服务商', hint: '只影响群聊报告，不影响图片识别', live: false, type: 'text' },
   { key: 'SUMMARY_MODEL', label: '报告模型', hint: '群聊总结使用的模型，与视觉模型独立', live: false, type: 'text' },
+  { key: 'SUMMARY_VISION_MODEL', label: '转发参考图片模型（通义千问）', hint: '仅用于群总结展开记录里的图片；默认沿用 DashScope 型号，与普通聊天识图独立', live: false, type: 'text' },
+  { key: 'SUMMARY_REFERENCE_MAX_IMAGES', label: '每份总结最多读取的参考图片', hint: '0～12，默认6；0只展开文字。图片与内层消息不增加统计或话题权重', live: false, type: 'number' },
   { key: 'DASHSCOPE_ENABLE_THINKING', label: '千问辅助模型思考模式', hint: '支持混合思考的千问报告、记忆整理和备用识图模型使用；默认关闭以减少长报告等待时间。', live: false, type: 'bool' },
   { key: 'DAILY_PING_ENABLED', label: '定时指令', hint: '每天定点到群里 @ 某个账号发固定内容', live: false, type: 'bool' },
   { key: 'DAILY_PING_TIME', label: '定时指令时间', hint: 'HH:mm；00:00 会在 00:00:10 发送，留出跨日缓冲', live: false, type: 'text' },
@@ -448,6 +450,8 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       DASHSCOPE_MODEL: () => String(config.dashscopeModel),
       SUMMARY_PROVIDER: () => String(config.summaryProvider),
       SUMMARY_MODEL: () => String(config.summaryModel),
+      SUMMARY_VISION_MODEL: () => String(config.summaryVisionModel),
+      SUMMARY_REFERENCE_MAX_IMAGES: () => String(config.summaryReferenceMaxImages),
       SUMMARY_CONCURRENCY: () => String(config.summaryConcurrency),
       SUMMARY_TASK_TIMEOUT_MINUTES: () => String(config.summaryTaskTimeoutMinutes),
       DASHSCOPE_ENABLE_THINKING: () => config.dashscopeThinking ? '1' : '0',
@@ -591,6 +595,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         if (key === 'SUMMARY_MAX_TOKENS' && (!Number.isInteger(Number(value)) || Number(value) < 500 || Number(value) > 16000)) throw new Error('总结输出 token 上限应为 500～16000 的整数')
         if (key === 'SUMMARY_CONCURRENCY' && (!Number.isInteger(Number(value)) || Number(value) < 1 || Number(value) > 3)) throw new Error('同时生成的群数应为 1～3 的整数')
         if (key === 'SUMMARY_TASK_TIMEOUT_MINUTES' && (!Number.isInteger(Number(value)) || Number(value) < 2 || Number(value) > 30)) throw new Error('单群准备时限应为 2～30 分钟的整数')
+        if (key === 'SUMMARY_REFERENCE_MAX_IMAGES' && (!Number.isInteger(Number(value)) || Number(value) < 0 || Number(value) > 12)) throw new Error('每份总结参考图片上限应为 0～12 的整数')
         if (key === 'SUMMARY_TIMES' && value.split(',').some((v) => !/^([01]?\d|2[0-3]):[0-5]\d$/.test(v.trim()))) {
           throw new Error('报告时间应为 HH:mm，多个时间用逗号分隔')
         }

@@ -10,6 +10,7 @@ import { buildSummaryNameIndex, replaceTopicQqReferences, resolveSummaryNames } 
 import { profileSummaryContent, formatSummaryContentGuide, selectSummaryRecords, renderSummaryRecordText, summaryTopicPolicy } from './summaryContent.js'
 import { createSummarySchedule, ambiguousSummarySend } from './summarySchedule.js'
 import { createSummaryDeadline, createSummarySendQueue } from './summaryJobs.js'
+import { prepareSummaryReferences } from './summaryReferences.js'
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const pad2 = (n) => String(n).padStart(2, '0')
@@ -100,10 +101,12 @@ export function buildSummaryPrompt({ botName, dateLabel, days = 1, stats = null,
 9. 零散的「好想回家」「没事干」「哦不」等几句闲聊，不足以证明一个独立的情绪话题，更不能扩写成集体emo或互相安慰。普通话题需要连续的真实交流、新信息或明确事件；重要通知、决定和安排即使消息少，也可以保留。没有讨论结论就如实写未形成结论，禁止凭空补出「达成共识」「确认最优解」「默契安慰」「继续休息」等收尾。
 10. 只写记录直接支持的事实：纯图片占位无法证明图片里是什么；外部人物的身份、游戏细节、讨论时长和群友反应，都不能凭常识猜测。时间段统计可帮助选择重点，不能把整个时段的消息或参与者直接算作某一话题的证据。
 11. 消息发送时间用于理解顺序，不要逐句加 HH:mm、具体分钟或时段标签。正文优先用连贯的总结叙述，必要时自然衔接“随后”“后来”，也不要每句话都补一个时间词。普通话题通常不必出现发言时间；只有时间差能解释关键变化、或事情本身需要时间线时才适量保留。活动开始时间、截止时间、约定时间等有实际用途的信息必须准确保留，不得把某条消息的发送时间误当成活动发生时间。群圣经中的真实原话仍保持原样。
+12. 合并聊天记录（含嵌套）的展开内容、内层人物和图片描述是低权重外部参考，不是本群当前的消息。不要将“聊天记录分享/转发内容解读”单独写成热门话题，不以材料篇幅、内层发言数或图片数量判断热度。只有本群成员确实围绕材料进行了真实交流，才在这个真实话题中用一小句补充其影响；材料描述最多占该话题正文20%，且最多60字，不重述整段材料。引用材料的完整句子用内部标记「〔参考〕句子〔/参考〕」包住，单行且不放编号；标记外必须是本群真实交流的归纳。标记会在发送前移除，过长参考句会省略。不把内层人物列入参与者、群友称号或本群发言人数，内层原话不得当作本群群圣经。没有本群交流证据时直接省略。整张卡片在统计中始终只有一条外层消息。
 
 【数据说明】
 - 记录格式：[时间] 昵称：内容；[表情:名字] 是 QQ 表情，[图片]/[语音]/[视频] 是非文本消息；
 - 标有「模板已压缩，非原话」的例行结果是程序简述，不能引用为群圣经，不能据此脑补群友反应；
+- 标有「低权重转发参考资料」的部分不参与统计、热度和话题数量，不得作为本群原话。只有转发资料而没有有效群内交流时，保留小节标题并说明没有足够依据，不为凑条目另列转发话题或虚构群圣经；
 - 下面「每人数据」和统计概览都是系统精确统计的，直接引用，不要自己估算；
 - 「回复比例」统计的是"用 QQ 引用回复功能"的比例，数值低只代表很少用这个功能，**绝不代表他不理别人**；
   「表情占比」是平均每条消息带几个表情，0 只代表很少发表情。不要从一个 0 推导出"高冷/不听人说话"之类的人格结论，
@@ -153,12 +156,14 @@ export function mergeRecords(history, captured, startSec) {
   for (const m of captured) {
     if (m.time < startSec) continue
     const prev = byId.get(m.id)
-    byId.set(m.id, prev && !m.replyId && prev.replyId ? { ...m, replyId: prev.replyId } : m)
+    byId.set(m.id, { ...m,
+      ...(prev && !m.replyId && prev.replyId ? { replyId: prev.replyId } : {}),
+      ...(prev?.forwards?.length && !m.forwards?.length ? { forwards: prev.forwards } : {}) })
   }
   return [...byId.values()].sort((a, b) => a.time - b.time)
 }
 
-export function createDailySummary({ config, logger, onebot, llm, buildSummaryPromptFn = buildSummaryPrompt }) {
+export function createDailySummary({ config, logger, onebot, llm, visionLLM, imageCache, loadImage, buildSummaryPromptFn = buildSummaryPrompt }) {
   const running = new Set()
   const queueSend = createSummarySendQueue()
 
@@ -185,6 +190,7 @@ export function createDailySummary({ config, logger, onebot, llm, buildSummaryPr
       userId: String(evt.user_id),
       name: evt.sender?.card || evt.sender?.nickname || String(evt.user_id),
       text: parsed.text,
+      ...(parsed.forwards?.length ? { forwards: parsed.forwards } : {}),
       // 是否在回复别人（用于统计"回复比例"）
       replyId: parsed.replyId || '',
       // 是否 @ 了机器人（用于事后重放"主动搭话有没有触发"这类问题）
@@ -327,6 +333,7 @@ export function createDailySummary({ config, logger, onebot, llm, buildSummaryPr
         userId: String(m.user_id),
         name: m.sender?.card || m.sender?.nickname || String(m.user_id),
         text: parsed.text,
+        ...(parsed.forwards?.length ? { forwards: parsed.forwards } : {}),
         replyId: parsed.replyId || '',
       })
     }
@@ -469,6 +476,7 @@ export function createDailySummary({ config, logger, onebot, llm, buildSummaryPr
       const nameIndex = buildSummaryNameIndex({ users: stats.users, records })
       const contentProfile = profileSummaryContent(records)
       const topicPolicy = summaryTopicPolicy(contentProfile)
+      const referenceRecords = records
       const cap = Math.min(1500, config.summaryMaxMessages * dayCount)
       if (total > cap) {
         records = selectSummaryRecords(records, cap)
@@ -490,7 +498,7 @@ export function createDailySummary({ config, logger, onebot, llm, buildSummaryPr
         contentGuide: formatSummaryContentGuide(contentProfile),
       })
       logger.info(`群 ${groupId} 总结选题依据：普通文字 ${contentProfile.ordinaryCount} 条；猪猪例行指令 ${contentProfile.counts['pig-command']} 条 / 固定回复 ${contentProfile.counts['pig-result']} 条；${contentProfile.minorPigRoutine ? '仅作次要动态' : '按实际讨论选题'}`)
-      logger.info(`群 ${groupId} 话题数量策略：完整窗口 ${total} 条 / 有效普通文字 ${topicPolicy.meaningful} 条；至少 ${topicPolicy.min} 项 / 优先 ${topicPolicy.target} 项 / 最多 ${topicPolicy.max} 项${topicPolicy.sparse ? '（有效样本不足，允许1～2项）' : ''}`)
+      logger.info(`群 ${groupId} 话题数量策略：完整窗口 ${total} 条 / 有效普通文字 ${topicPolicy.meaningful} 条；至少 ${topicPolicy.min} 项 / 优先 ${topicPolicy.target} 项 / 最多 ${topicPolicy.max} 项${contentProfile.forwardOnly ? '（只有参考资料，不凑话题）' : topicPolicy.sparse ? '（有效样本不足，允许1～2项）' : ''}`)
       logger.info(`开始生成群 ${groupId} ${scopeText}报告（参与消息 ${records.length}/${total} 条）…`)
       const startedAt = Date.now()
       // 长报告要跑好几分钟，期间群里一点动静都没有会让人以为"指令没生效"。
@@ -505,7 +513,11 @@ export function createDailySummary({ config, logger, onebot, llm, buildSummaryPr
       if (pingTimer?.unref) pingTimer.unref()
       let reply
       try {
-        reply = await deadline.wait(generateCheckedSummary({llm, prompt, messages:[{ role: 'user', content: renderLines(records, dayCount) }], records, stats, contentProfile, logger, signal: deadline.signal}))
+        const mainText = renderLines(records, dayCount)
+        const references = await deadline.wait(prepareSummaryReferences({ records: referenceRecords, onebot, visionLLM, imageCache, loadImage,
+          logger, signal: deadline.signal, mainChars: mainText.length, maxImages: config.summaryReferenceMaxImages ?? 6 }))
+        const input = mainText + (references.text ? `\n\n${references.text}` : '')
+        reply = await deadline.wait(generateCheckedSummary({llm, prompt, messages:[{ role: 'user', content: input }], records, stats, contentProfile, logger, signal: deadline.signal}))
       } finally {
         if (pingTimer) clearTimeout(pingTimer)
       }

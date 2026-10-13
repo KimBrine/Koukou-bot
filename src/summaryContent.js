@@ -43,9 +43,11 @@ export function profileSummaryContent(records = []) {
     window.end = sec; window.messages++; window.users.add(String(record.userId ?? record.name ?? '?'))
   }
   const routineCount = Object.values(counts).reduce((a, b) => a + b, 0)
+  const forwardCount = records.filter(r => r.forwards?.length || String(r.text ?? '').includes('[合并聊天记录]')).length
   const pigRoutineCount = counts['pig-command'] + counts['pig-result']
   const pigDiscussionChars = pigDiscussion.reduce((sum, text) => sum + [...text].length, 0)
   return { total: records.length, counts, routineCount, pigRoutineCount, ordinaryCount: ordinary.length,
+    forwardCount, forwardOnly: forwardCount > 0 && ordinary.every(r => r.forwards?.length || String(r.text ?? '').includes('[合并聊天记录]')),
     pigDiscussionCount: pigDiscussion.length, pigDiscussionChars,
     minorPigRoutine: ordinary.length >= 50 && pigRoutineCount > 0 && pigRoutineCount / records.length < 0.2 && pigDiscussion.length < 8 && pigDiscussionChars < 500,
     windows: windows.filter(w => w.messages >= 3).map(w => ({ ...w, people: w.users.size, users: undefined })),
@@ -56,6 +58,7 @@ export function profileSummaryContent(records = []) {
 export function summaryTopicPolicy(profile) {
   const meaningful = Math.max(0, Number(profile.ordinaryCount) || 0)
   const sparse = meaningful <= 40
+  if (profile.forwardOnly) return { meaningful, sparse: true, min: 0, target: 0, max: 0 }
   return {
     meaningful, sparse,
     min: sparse ? 1 : 3,
@@ -72,10 +75,13 @@ export function formatSummaryContentGuide(profile) {
     `完整窗口 ${total} 条；可识别的例行交互 ${routineCount} 条；有实际文字内容的普通聊天 ${ordinaryCount} 条（均按消息计数，普通聊天剔除了纯图片/表情和上述例行交互）。`,
     `猪猪例行交互 ${profile.pigRoutineCount} 条（指令 ${counts['pig-command']}、固定回复 ${counts['pig-result']}），占原始消息 ${total ? (100 * profile.pigRoutineCount / total).toFixed(1) : '0.0'}%；此外普通聊天中直接提到「猪」的 ${pigDiscussionCount} 条。这个词命中数不等于完整话题规模。`,
     ...peakWindows.map(w => `- ${stamp(w.start)}～${stamp(w.end)}：普通文字聊天 ${w.messages} 条、${w.people} 人；这是时间段统计，不是程序认定的单一话题。`),
-    topicPolicy.sparse
+    profile.forwardOnly
+      ? '本期只有转发参考资料或非文本内容，没有有效群内交流；热门话题不凑数，保留标题并说明暂无足够依据。内层原话不能做本群群圣经。'
+      : topicPolicy.sparse
       ? `本期有效普通文字样本只有 ${ordinaryCount} 条（不超过40条），允许按证据写1～2项话题，优先${topicPolicy.target}项；原始图片和固定模板条数不代表可总结的讨论量。`
       : `话题数量要求：完整窗口有效普通文字 ${ordinaryCount} 条，热门话题至少${topicPolicy.min}项，优先${topicPolicy.target}项，最多${topicPolicy.max}项；不能只写两项就结束。先检索整个窗口中的独立讨论、重要信息、通知、决定与安排，再按实际证据组织条目，不能为了数量编造或把同一件事机械拆分。`,
     '时间分布用于帮助通读上下文，不规定话题个数；同一时段可以有多个独立主题，同一主题也可能跨越多个时段，不能将两个活跃时段等同于两个话题。',
+    profile.forwardCount ? `合并记录外层 ${profile.forwardCount} 条；只按外层消息计数。内层内容只作低权重参考，不能单列转发热门话题，也不能扩大有效文字样本或参与人数。` : '',
     profile.minorPigRoutine ? '本期猪猪主要是少量例行交互：不要排在热门话题首位；若保留独立条目，放在主要讨论之后，用一两句简述（正文最多90字），不要与主要讨论占用同样篇幅。' : '',
   ].filter(Boolean).join('\n')
 }

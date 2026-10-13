@@ -8,7 +8,9 @@ import { MemoryStore } from './memory.js'
 import { DeepSeekClient, isQwenHybridModel } from './deepseek.js'
 import { OneBotClient } from './onebot.js'
 import { buildSystemPrompt } from './persona.js'
-import { createBot } from './bot.js'
+import { createBot, imageToDataUrl } from './bot.js'
+import { createImageCache } from './imageCache.js'
+import { createSummaryVisionClient } from './summaryReferences.js'
 import { createDailySummary, buildSummaryPrompt } from './dailySummary.js'
 import { createWebSearch } from './search.js'
 import { loadPokeReplies, createPokeReplier } from './pokeReplies.js'
@@ -167,6 +169,12 @@ const wsUrl = config.onebotAccessToken
   : config.onebotWsUrl
 
 const onebot = new OneBotClient({ url: wsUrl, logger, probeUserId: config.idCheckOperators?.[0] || config.dailyPingTarget })
+const sharedImageCache = config.dataDir && config.visionCacheEnabled !== false ? createImageCache({
+  dir: path.join(config.dataDir, 'image-cache'), maxBytes: config.visionCacheMaxBytes,
+  maxEntries: config.visionCacheMaxEntries, maxImageBytes: config.visionMaxImageBytes,
+  ttlMs: config.visionCacheTtlMs, logger,
+}) : null
+const summaryVisionLLM = createSummaryVisionClient({ config, logger })
 
 // 长期记忆：把被近期窗口挤出去的旧消息压缩成持续累积的摘要（用便宜的总结模型）
 // 共享型号与设置，但不共享并发队列；记忆整理不能占住定时群总结的等待位置。
@@ -199,7 +207,9 @@ const summaryPromptFn = (opts) => {
 // 总结调用：失败直接抛出（由上层通知群里），不用聊天模型兜底（其 token 预算远不够写长文）
 const summaryChat = async (prompt, messages, options) => summaryLLM.chat(prompt, messages, options)
 
-const dailySummary = createDailySummary({ config, logger, onebot, llm: { chat: summaryChat }, buildSummaryPromptFn: summaryPromptFn })
+const dailySummary = createDailySummary({ config, logger, onebot, llm: { chat: summaryChat },
+  visionLLM: summaryVisionLLM, imageCache: sharedImageCache,
+  loadImage: (image, signal) => imageToDataUrl(image, onebot, config, logger, {signal}), buildSummaryPromptFn: summaryPromptFn })
 
 const systemPrompt = config.persona
   ? (opts) => {
@@ -259,7 +269,7 @@ const runtimeStats = {
   },
 }
 
-const bot = createBot({ config, logger, onebot, llm, visionLLM, memory, buildSystemPrompt: systemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats })
+const bot = createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt: systemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats })
 
 // 本地控制台：机器人自己托管界面，用 Edge/Chrome 的 app 模式窗口打开就像一个桌面应用
 let adminServer = null
@@ -371,6 +381,7 @@ logger.info(targetWatch.enabled
 logger.info(`反检测/拟人化：装饰符号保留 ${Math.round(config.emojiKeepRate * 100)}%｜打字延迟 ${config.humanDelayMinMs}-${config.humanDelayMaxMs}ms｜每会话每小时：主动/盯人 ≤${config.rateLimitPerHour} 条、被@或私聊 ≤${config.rateLimitAtPerHour} 条、间隔 ≥${Math.round(config.rateLimitMinGapMs / 1000)}s（不够时最多等 ${Math.round((config.rateLimitWaitMaxMs ?? 8000) / 1000)}s，不丢消息）｜${config.quietHours ? `安静时段 ${config.quietHours}（${config.quietHoursBlockAll ? '彻底静音：连被@和私聊都不回' : '只挡主动搭话，被@仍回'}）` : '安静时段未启用'}`)
 logger.info(`群聊报告：${config.summarySendMode === 'forward' ? '合并转发成「聊天记录」卡片（失败自动退回逐条）' : '按空行逐条发送'}｜卡片最多 ${config.summaryMaxBlocks} 条｜统计数字由代码精确计算`)
 logger.info(`总结调度：最多 ${config.summaryConcurrency} 群并行准备｜单群准备时限 ${config.summaryTaskTimeoutMinutes} 分钟｜报告发送串行，群间至少间隔 5 秒`)
+logger.info(`总结转发资料：嵌套记录仅作低权重参考｜读图 ${summaryVisionLLM ? `${summaryVisionLLM.model}（通义千问）` : '未启用，缺少 DashScope Key'}｜每份最多 ${config.summaryReferenceMaxImages} 张参考图片`)
 logger.info(config.replyLengthMatch
   ? `回复长度自适应：跟着对方长度走｜最多 ${config.replyMaxLines} 行、单行 ≤${config.replyLineMaxChars} 字｜行间补句间隔 ${config.lineGapMinMs}-${config.lineGapMaxMs}ms｜多行时逐行分条发送`
   : '回复长度自适应已关闭（固定单行）')
