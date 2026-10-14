@@ -16,6 +16,7 @@ export const ambiguousSummarySend = err => err?.code === 'SUMMARY_SEND_UNCERTAIN
 export function createSummarySchedule({ config, logger, onebot, groups, runGroup, isRunning, readEveningHistory, now = Date.now, pause = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
   const timers = new Set()
   const planned = new Set()
+  let manualInProgress = false
   const file = config.dataDir ? path.join(config.dataDir, 'summary-delivery-state.json') : null
   let state = { version: 1, deliveries: {}, slots: {} }
   let scheduled = false
@@ -46,15 +47,25 @@ export function createSummarySchedule({ config, logger, onebot, groups, runGroup
     renameSync(`${file}.tmp`, file)
   }
 
-  async function online() {
-    try {
-      const health = await onebot.refreshStatus({ maxAgeMs: 0, forceProbe: true })
-      return health.online === true && health.connected === true
-    } catch (err) {
-      logger.warn(`[定时总结] QQ 实际连接核验失败：${err.message}`)
-      return false
+  async function checkOnline() {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      let health
+      try {
+        health = await onebot.refreshStatus({ maxAgeMs: 0, forceProbe: true })
+        if (health.online === true && health.connected === true) return { online: true, offline: false }
+        // 真正断连或明确下线不重试；探针超时只表示未知，不能冒充“QQ 已掉线”。
+        if (health.connected === false || health.qqOnline === false || health.reportedOnline === false)
+          return { online: false, offline: true }
+      } catch (err) { logger.warn(`[定时总结] QQ 实际连接核验失败：${err.message}`) }
+      if (attempt < 2) {
+        logger.info(`[定时总结] QQ 实际连接暂未确认，短暂等待后重新核验（${attempt + 1}/2）；不使用缓存在线状态`)
+        await pause(700)
+      }
     }
+    return { online: false, offline: false }
   }
+
+  async function online() { return (await checkOnline()).online }
 
   function hasDelivered(day, groupId) {
     return Number(state.deliveries[deliveryKey(day, groupId)]?.confirmed) > 0
@@ -168,19 +179,28 @@ export function createSummarySchedule({ config, logger, onebot, groups, runGroup
     }
   }
 
-  async function runSlot(time, day = chinaDay(now()), { earlyFallback = false } = {}) {
+  async function runSlot(time, day = chinaDay(now()), options = {}) {
+    // 在第一个 await 前锁定，覆盖在线及历史核验，不让并发点击重复读取。
+    if (options.earlyFallback && manualInProgress) return
+    if (options.earlyFallback) manualInProgress = true
+    try { return await executeSlot(time, day, options) }
+    finally { if (options.earlyFallback) manualInProgress = false }
+  }
+
+  async function executeSlot(time, day, { earlyFallback = false, groupIds, statsOnly = false } = {}) {
     if (!config.summaryEnabled || chinaDay(now()) !== day) return
     const fallback = enabled() && time === '23:30'
     if (fallback && !configuredTimes().includes('23:00')) return
     const slot = `${day}:${time}`
-    if (state.slots[slot]) return
-    if (earlyFallback && fallback) log('人工要求立即执行当晚查漏补发，本次替代 23:30；仍逐群核验发送记录')
+    if (state.slots[slot] && !earlyFallback) return
+    if (earlyFallback && fallback) log('人工要求立即执行当晚查漏补发；已检查过 23:30 也可重新核验，但已发、正在生成或发送结果未确认的群仍跳过')
     if (enabled()) { state.slots[slot] = { checkedAt: now() }; save() }
     if (!(await online())) {
       logger.info(`[定时总结] ${day} ${time} QQ 未登录或实际连接未确认，跳过；不在恢复登录后追补`)
       return
     }
-    const targets = [...new Set(groups().map(Number))]
+    const allowed = [...new Set(groups().map(Number))]
+    const targets = groupIds ? allowed.filter(id => groupIds.map(Number).includes(id)) : allowed
     if (!fallback) for (const id of targets) planned.add(deliveryKey(day, id))
     let cursor = 0, stopped = false
     const worker = async () => {
@@ -200,9 +220,14 @@ export function createSummarySchedule({ config, logger, onebot, groups, runGroup
           }
           if (hasDelivered(day, id)) continue
           if (chinaDay(now()) !== day) { stopped = true; break }
-          if (!(await online())) { log(`QQ 已掉线，停止 ${time} 后续群的任务`); stopped = true; break }
-          if (fallback) log(`群 ${id} 已确认当晚未发送，开始唯一一次 ${earlyFallback ? '手动提前' : '23:30'}补发`)
-          await runGroup(id, { scheduled: true, scheduleDay: day, scheduleTime: time })
+          const health = await checkOnline()
+          if (!health.online) {
+            if (health.offline) { log(`QQ 已明确下线或连接断开，停止 ${time} 后续群的任务`); stopped = true; break }
+            log(`群 ${id} 实际连接多次未确认，本群暂缓；其他群继续独立核验`)
+            continue
+          }
+          if (fallback) log(`群 ${id} 已确认当晚未发送，开始${earlyFallback ? '人工查漏补发' : '唯一一次 23:30补发'}`)
+          await runGroup(id, { scheduled: true, scheduleDay: day, scheduleTime: time, ...(statsOnly ? { statsOnly: true } : {}) })
           if (cursor < targets.length) await pause(5000)
         } catch (err) { logger.error(`[定时总结] 群 ${id} ${time} 任务失败，其他群继续：${err.message}`) }
         finally { if (!fallback) planned.delete(key) }

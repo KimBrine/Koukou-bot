@@ -3,7 +3,7 @@ import path from 'node:path'
 import { parseMessage } from './cq.js'
 import { splitLongMessage } from './bot.js'
 import { computeSummaryStats, formatUserTable, formatStatsBlock, formatReportDate } from './summaryStats.js'
-import { summaryFailureMessage } from './summaryFailure.js'
+import { summaryFailureMessage, isSummaryContentRefusal, statisticsOnlySummaryBody } from './summaryFailure.js'
 import { generateCheckedSummary } from './summaryQuality.js'
 import { parseSummaryFormat } from './summaryFormat.js'
 import { buildSummaryNameIndex, replaceTopicQqReferences, resolveSummaryNames } from './summaryNames.js'
@@ -138,8 +138,8 @@ export function chunkReportBlocks(blocks, max) {
 }
 
 /** 组装完整报告：标题 + 日期 + 基础统计（均由代码生成，保证数字准确）+ 模型正文 */
-export function buildReportBlocks({ startKey, endKey, stats, modelText, nameIndex = buildSummaryNameIndex({ users: stats?.users }) }) {
-  const head = `🎯 群聊日常分析报告\n📅 ${formatReportDate(startKey, endKey)}`
+export function buildReportBlocks({ startKey, endKey, stats, modelText, statsOnly = false, nameIndex = buildSummaryNameIndex({ users: stats?.users }) }) {
+  const head = `🎯 群聊日常分析报告${statsOnly ? '（统计版）' : ''}\n📅 ${formatReportDate(startKey, endKey)}`
   const body = replaceTopicQqReferences(splitReportBlocks(modelText), nameIndex)
   return [head, formatStatsBlock(stats), ...body]
 }
@@ -451,7 +451,7 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
     return { records, stats: computeSummaryStats(records), complete: history.complete }
   }
 
-  async function runSummary(groupId, { dryRun = false, days = 1, scheduled = false, scheduleDay = '', scheduleTime = '' } = {}) {
+  async function runSummary(groupId, { dryRun = false, days = 1, scheduled = false, scheduleDay = '', scheduleTime = '', statsOnly = false } = {}) {
     const dayCount = Math.max(1, Math.min(30, Math.floor(Number(days) || 1)))
     if (running.has(groupId)) {
       logger.info(`群 ${groupId} 的总结正在生成中，跳过本次`)
@@ -510,11 +510,11 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
       })
       logger.info(`群 ${groupId} 总结选题依据：普通文字 ${contentProfile.ordinaryCount} 条；猪猪例行指令 ${contentProfile.counts['pig-command']} 条 / 固定回复 ${contentProfile.counts['pig-result']} 条；${contentProfile.minorPigRoutine ? '仅作次要动态' : '按实际讨论选题'}`)
       logger.info(`群 ${groupId} 话题数量策略：完整窗口 ${total} 条 / 有效普通文字 ${topicPolicy.meaningful} 条；至少 ${topicPolicy.min} 项 / 优先 ${topicPolicy.target} 项 / 最多 ${topicPolicy.max} 项${contentProfile.forwardOnly ? '（只有参考资料，不凑话题）' : topicPolicy.sparse ? '（有效样本不足，允许1～2项）' : ''}`)
-      logger.info(`开始生成群 ${groupId} ${scopeText}报告（参与消息 ${records.length}/${total} 条）…`)
+      logger.info(`开始${statsOnly ? '准备统计版' : '生成'}群 ${groupId} ${scopeText}报告（参与消息 ${records.length}/${total} 条）…`)
       const startedAt = Date.now()
       // 长报告要跑好几分钟，期间群里一点动静都没有会让人以为"指令没生效"。
       // 超过 3 分钟就报一声平安（只报一次，不刷屏）。
-      const pingTimer = dryRun
+      const pingTimer = dryRun || statsOnly
         ? null
         : setTimeout(() => {
             onebot
@@ -522,20 +522,29 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
               .catch(() => {})
           }, 180000)
       if (pingTimer?.unref) pingTimer.unref()
-      let reply
+      let reply, degraded = statsOnly
       try {
-        const mainText = renderLines(records, dayCount)
-        const references = await deadline.wait(prepareSummaryReferences({ records: referenceRecords, onebot, visionLLM, imageCache, loadImage,
-          logger, signal: deadline.signal, mainChars: mainText.length, maxImages: config.summaryReferenceMaxImages ?? 6 }))
-        const input = mainText + (references.text ? `\n\n${references.text}` : '')
-        reply = await deadline.wait(generateCheckedSummary({llm, prompt, messages:[{ role: 'user', content: input }], records, stats, contentProfile, logger, signal: deadline.signal}))
+        if (statsOnly) reply = statisticsOnlySummaryBody()
+        else {
+          const mainText = renderLines(records, dayCount)
+          const references = await deadline.wait(prepareSummaryReferences({ records: referenceRecords, onebot, visionLLM, imageCache, loadImage,
+            logger, signal: deadline.signal, mainChars: mainText.length, maxImages: config.summaryReferenceMaxImages ?? 6 }))
+          const input = mainText + (references.text ? `\n\n${references.text}` : '')
+          reply = await deadline.wait(generateCheckedSummary({llm, prompt, messages:[{ role: 'user', content: input }], records, stats, contentProfile, logger, signal: deadline.signal}))
+        }
+      } catch (error) {
+        if (!isSummaryContentRefusal(error)) throw error
+        deadline.signal.throwIfAborted()
+        degraded = true
+        reply = statisticsOnlySummaryBody({ contentRefused: true })
+        logger.warn(`群 ${groupId} 总结模型内容检查未通过，改发明确标注的统计版；不重复提交原始内容`)
       } finally {
         if (pingTimer) clearTimeout(pingTimer)
       }
-      await deadline.wait(resolveSummaryNames({ text: reply, index: nameIndex, onebot, groupId, logger }))
+      if (!degraded) await deadline.wait(resolveSummaryNames({ text: reply, index: nameIndex, onebot, groupId, logger }))
       deadline.signal.throwIfAborted()
       deadline.close()
-      const blocks = buildReportBlocks({ startKey, endKey, stats, modelText: reply, nameIndex })
+      const blocks = buildReportBlocks({ startKey, endKey, stats, modelText: reply, statsOnly: degraded, nameIndex })
       if (dryRun) {
         logger.info(`[dryRun] 群 ${groupId} ${scopeText}报告共 ${blocks.length} 块：\n\n${blocks.join('\n\n──── 分条 ────\n\n')}`)
         return
@@ -554,7 +563,7 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
       })
       if (!how) return
       const cost = ((Date.now() - startedAt) / 1000).toFixed(0)
-      logger.info(`群 ${groupId} ${scopeText}报告已发送（${blocks.length} 块，方式：${how}，耗时 ${cost}s）`)
+      logger.info(`群 ${groupId} ${scopeText}报告已发送（${degraded ? '统计版，' : ''}${blocks.length} 块，方式：${how}，耗时 ${cost}s）`)
     } catch (err) {
       logger.error(`群 ${groupId} 总结失败：${err?.stack || err}`)
       if (!dryRun && (!scheduled || (!ambiguousSummarySend(err) && await summarySchedule.online()))) {

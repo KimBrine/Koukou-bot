@@ -39,8 +39,17 @@ try {
   const config = {dataDir:'__missing_summary_failure_test_data__',summaryEnabled:true,summaryGroups:[200000002],whitelistGroups:new Set(),summaryMaxMessages:600,summaryMaxBlocks:20,summarySendMode:'forward',summaryUserRows:20,botName:'测试机器人'}
   const summary = createDailySummary({config,logger,onebot,llm:{async chat(prompt,messages,options){assert.equal(options.rejectTruncated,true);throw blocked}}})
   await summary.runSummary(200000002)
-  assert.equal(notices.length,1)
-  assert.match(notices[0],/内容检查拦截/)
+  assert.equal(notices.length,3)
+  assert.match(notices[0],/统计版/)
+  assert.match(notices[1],/消息总数: 1/)
+  assert.match(notices[2],/内容检查未通过/)
+  assert.doesNotMatch(notices.join('\n'),/今日测试消息|旧消息/,'降级报告不拼接原始聊天内容')
   assert.equal(summary.isRunning(200000002),false)
+  let modelCalls=0, cardSends=0
+  const statsService=createDailySummary({config,logger,
+    onebot:{...onebot,async sendGroupForward(id,nodes){cardSends++;assert.match(nodes[0].text,/统计版/);assert.match(nodes[1].text,/消息总数: 1/);return {message_id:100}}},
+    llm:{async chat(){modelCalls++;throw Error('统计版不能调用模型')}}})
+  await statsService.runSummary(200000002,{statsOnly:true})
+  assert.equal(modelCalls,0);assert.equal(cardSends,1)
   console.log('Summary failure checks passed: provider rejection, output limit, timeout, send failure, real notification path, no external requests or messages')
 } finally { globalThis.fetch = originalFetch }

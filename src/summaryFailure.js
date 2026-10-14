@@ -1,3 +1,11 @@
+export const isSummaryContentRefusal = error => /DataInspectionFailed|data_inspection_failed|content_filter|content_policy_violation/i
+  .test(`${error?.code || ''} ${error?.message || ''}`)
+
+/** 仅使用代码统计，不重发被拒绝的输入，也不拼接原话或虚构话题。 */
+export function statisticsOnlySummaryBody({ contentRefused = false } = {}) {
+  return `ℹ️ 统计版说明\n${contentRefused ? '总结模型的内容检查未通过，本次无法生成正文。' : '本次补发统计版，未调用模型生成正文。'}\n本报告仅包含程序核验的消息统计，未生成热门话题、群友称号或原话点评；不代表今天没有讨论。`
+}
+
 /** 给群友解释真实失败原因，不把接口拒绝误报成可稍后重试的故障。 */
 export function summaryFailureMessage(error, stage = 'model') {
   if (stage === 'send') return '群总结已经生成，但 QQ 发送失败了。请检查机器人是否在线，以及群聊发送权限。'

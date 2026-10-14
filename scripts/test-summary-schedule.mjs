@@ -21,7 +21,7 @@ function fixture({ dir, history, action, groupIds = [101, 102], enabled = true, 
   const work = [], active = new Set(), reads = [], probes = []
   const env = { loggedIn: true }
   const config = { summaryEnabled: true, summaryFallbackEnabled: enabled, summaryTimes: ['23:00'], dataDir: dir, summaryConcurrency: concurrency }
-  const onebot = { selfId: '999', async refreshStatus(opts) { probes.push(opts); return { connected: true, online: env.loggedIn } },
+  const onebot = { selfId: '999', async refreshStatus(opts) { probes.push(opts); return { connected: true, online: env.loggedIn, qqOnline: env.loggedIn } },
     async getForwardMsg(id) { if (id === 'fail') throw Error('timeout'); return { messages: [{ message: [{ type: 'text', data: { text: header } }] }] } } }
   let service
   service = createSummarySchedule({ config, logger, onebot, groups: () => groupIds, isRunning: id => active.has(id), pause: async () => {},
@@ -229,5 +229,34 @@ await test('完整总结流程：先存真实回执，23:30 不再次调用模�
     assert.equal(sent, 1, logs.join('\n')); assert.equal(calls, 1)
     clock('23:30:00'); await summary.checkScheduled('23:30'); assert.equal(sent, 1); assert.equal(calls, 1); summary.stop()
   } finally { removeTemp(dir) }
+})
+await test('暂时探针超时后重新真实核验，成功后继续当前群，界面状态不被强行改为在线', async () => {
+  const e=fixture(); let calls=0
+  e.onebot.refreshStatus=async opts=>{assert.equal(opts.forceProbe,true);calls++
+    return calls===2?{connected:true,reportedOnline:true,online:false,qqOnline:null}:{connected:true,online:true}}
+  await e.service.runSlot('23:00')
+  assert.deepEqual(e.work.map(x=>x.id),[101,102]);assert.equal(calls,4)
+})
+await test('单群三次核验未知不阻断后续群，明确下线仍停止', async () => {
+  const e=fixture({groupIds:[101,102,103]});let calls=0
+  e.onebot.refreshStatus=async()=>{calls++;return calls>=2&&calls<=4?{connected:true,reportedOnline:true,online:false,qqOnline:null}:{connected:true,online:true}}
+  await e.service.runSlot('23:00');assert.deepEqual(e.work.map(x=>x.id),[102,103])
+  const offline=fixture();let probes=0
+  offline.onebot.refreshStatus=async()=>{probes++;return {connected:true,online:false,qqOnline:false}}
+  await offline.service.runSlot('23:00');assert.equal(probes,1);assert.equal(offline.work.length,0)
+})
+await test('23:30 已检查但未送达，人工立即补发仍重新核验，只处理指定的未发群', async () => {
+  const e=fixture({action:async(id,opts,service)=>{if(opts.statsOnly)service.acknowledged(service.beforeSend(id),{message_id:id})}})
+  clock('23:30:00');await e.service.runSlot('23:30');assert.equal(e.work.length,2)
+  clock('23:35:00');await e.service.runSlot('23:30',undefined,{earlyFallback:true,groupIds:[102,999],statsOnly:true})
+  assert.deepEqual(e.work.map(x=>x.id),[101,102,102]);assert.equal(e.work.at(-1).statsOnly,true)
+  await e.service.runSlot('23:30',undefined,{earlyFallback:true,groupIds:[102],statsOnly:true});assert.equal(e.work.length,3)
+  await e.service.runSlot('23:30');assert.equal(e.work.length,3,'自动时点不能重复运行')
+})
+await test('人工补发并发调用不启动重复历史检查或重复报告', async () => {
+  let release;const e=fixture({groupIds:[101],history:()=>new Promise(resolve=>{release=resolve})})
+  clock('23:35:00');const a=e.service.runSlot('23:30',undefined,{earlyFallback:true})
+  const b=e.service.runSlot('23:30',undefined,{earlyFallback:true});await flush();await b;assert.equal(e.reads.length,1)
+  release({complete:true,rawMessages:[]});await a;assert.equal(e.work.length,1)
 })
 console.log(`${passed} cases passed`)

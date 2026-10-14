@@ -739,7 +739,8 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     async summary(payload) {
       if (payload?.missingOnly === true) {
         if (!dailySummary || !config.summaryFallbackEnabled) throw new Error('请先启用群总结和漏发补发')
-        dailySummary.checkScheduled('23:30', undefined, { earlyFallback: true })
+        dailySummary.checkScheduled('23:30', undefined, { earlyFallback: true,
+          ...(payload.groupId ? { groupIds: [Number(payload.groupId)] } : {}), statsOnly: payload.statsOnly === true })
           .catch(err => logger.error(`[手动提前补发] 失败：${err.message}`))
         return { ok: true, missingOnly: true, replacesFallback: true }
       }
