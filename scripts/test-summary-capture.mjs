@@ -10,8 +10,9 @@ const dir = mkdtempSync(path.join(os.tmpdir(), 'koukou-summary-capture-'))
 const logger = { info() {}, warn() {}, error() {} }
 const config = { dataDir: dir, summaryEnabled: true, summaryGroups: [101], whitelistGroups: new Set([101, 102]),
   summaryMaxMessages: 600, summaryMaxBlocks: 20, summaryUserRows: 20, summarySendMode: 'forward', botName: '测试机器人' }
-mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-16T23:00:00+08:00').getTime() })
-const now = Math.floor(Date.now() / 1000), start = new Date('2026-10-16T00:00:00+08:00').getTime() / 1000
+// 构造测试进程所在时区的日界，与被测 dayStartSec 的本地日历语义一致。
+mock.timers.enable({ apis: ['Date'], now: new Date(2026, 9, 16, 23, 0, 0).getTime() })
+const now = Math.floor(Date.now() / 1000), start = new Date(2026, 9, 16, 0, 0, 0).getTime() / 1000
 const packet = (id, time) => ({ message_id: id, message_seq: id, time, user_id: 123, sender: { nickname: '甲' }, message: '群内真实消息' })
 let passed = 0
 async function test(name, fn) { await fn(); passed++; console.log(`PASS ${name}`) }
