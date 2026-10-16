@@ -2,6 +2,7 @@ import { limitDecorationLines, typingDelay, isQuietHour } from './humanize.js'
 import { measureText, planReply, shapeReply, shapeHint, decorationHint, ensureDecoration, pickDecorationKind } from './replyShape.js'
 import { replyStillCurrent, currentMessageHint } from './messageFreshness.js'
 import { modelHistory } from './memory.js'
+import { CONVERSATION_RULES } from './conversationRules.js'
 
 /**
  * 盯人回复：每 N 秒检查一次目标群里指定用户是否发过言，
@@ -106,7 +107,7 @@ export function createTargetWatch({ config, logger, onebot, llm, memory, buildSy
       const decoKind = allowDecoration ? pickDecorationKind() : ''
       const extra = `\n\n（现在的情况：群友（QQ ${userId}）刚才说了 ${count} 句话：「${said}」。请你自然回应他，像平时群聊那样随口接话，不用面面俱到，也不要罗列。）`
       const reply = await llm.chat(
-        base + extra + currentMessageHint(latest.evt) + shapeHint(plan) + decorationHint(allowDecoration, decoKind),
+        base + extra + currentMessageHint(latest.evt) + CONVERSATION_RULES + shapeHint(plan) + decorationHint(allowDecoration, decoKind),
         modelHistory(memory.get(memoryKey).slice(-20)),
       )
       if (!canContinue()) {
@@ -142,7 +143,9 @@ export function createTargetWatch({ config, logger, onebot, llm, memory, buildSy
       if (!sentLines.length) return
       const record = sentLines.join('\n')
       // 写入记忆时不加任何前缀标记，否则模型会模仿这种格式带进正式回复
-      memory.push(memoryKey, 'assistant', record)
+      memory.push(memoryKey, 'assistant', record, { replyToUserId: userId,
+        replyToName: latest.evt.sender?.card || latest.evt.sender?.nickname,
+        replyToMessageId: latest.evt.message_id })
       logger.info(`[盯人回复]${finalLines.length > 1 ? `（${finalLines.length} 行分条）` : ''} @${userId}：${record.replace(/\n/g, ' ⏎ ')}`)
     } catch (err) {
       logger.warn(`[盯人回复] 失败：${err.message}`)

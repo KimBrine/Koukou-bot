@@ -19,7 +19,7 @@ const node=(name, content)=>({sender:{nickname:name,user_id:200000020},time:1,me
 const dir=mkdtempSync(path.join(os.tmpdir(),'koukou-context-')),stores=[]
 let files=0,ids=1000,passed=0
 async function test(name,fn){await fn();passed++;console.log(`PASS ${name}`)}
-function setup({config={},getMsg,forwards={},chat,chatSettings,rateLimiter,visionLLM}={}) {
+function setup({config={},getMsg,forwards={},chat,chatSettings,rateLimiter,visionLLM,summaryGroups=[group]}={}) {
   let time=Math.floor(Date.now()/1000)*1000
   const timeline=new MessageTimeline({now:()=>time});timeline.begin()
   const memory=new MemoryStore({file:path.join(dir,`${++files}.json`),limit:99,logger});stores.push(memory)
@@ -35,7 +35,7 @@ function setup({config={},getMsg,forwards={},chat,chatSettings,rateLimiter,visio
     visionMaxImages:2,rateLimitAtPerHour:45,...config}
   const bot=createBot({config:cfg,logger,onebot,memory,chatSettings,rateLimiter,visionLLM,rand:()=>0.5,
     buildSystemPrompt:()=> '群聊人设',llm:{async chat(...args){requests.push(args);return chat?chat(...args):'明白了，继续聊呀'}},
-    dailySummary:{capture(evt){captured.push(evt.message_id)},summaryGroups:()=>[group]}})
+    dailySummary:{capture(evt){captured.push(evt.message_id)},summaryGroups:()=>summaryGroups}})
   function event(message,extra={}){const evt={post_type:'message',message_type:'group',user_id:user,group_id:group,
     message_id:++ids,time:time/1000,sender:{nickname:'群友甲'},message:typeof message==='string'?[text(message)]:message,...extra}
     evt.messageContext=timeline.receive(evt);return evt}
@@ -44,6 +44,95 @@ function setup({config={},getMsg,forwards={},chat,chatSettings,rateLimiter,visio
 const lastUser=t=>t.requests.at(-1)[1].at(-1).content
 const shape=t=>t.requests.at(-1)[0].match(/【本次回复的形态要求[^]*?(?=\n\n【|$)/)?.[0]
 try {
+  await test('连续短句和动作保留完整问答，多人明确引用可以接入前文',async()=>{
+    const replies=['也分你一块饼干呀','张嘴，啊——','咬一小口，慢慢吃呀']
+    const t=setup({chat:()=>replies.shift()})
+    await t.bot.handleMessage(t.event([at(),text('我也想吃饼干')]))
+    await t.bot.handleMessage(t.event([quote(ids),text('来')],{user_id:user+1,sender:{nickname:'群友乙'}}))
+    await t.bot.handleMessage(t.event([quote(ids),text('（咬一口）')],{user_id:user+1,sender:{nickname:'群友乙'}}))
+    assert.equal(t.requests.length,3);assert.equal(t.sent.length,3)
+    const [prompt,messages]=t.requests.at(-1)
+    assert.deepEqual(messages.map(m=>m.role),['user','assistant','user','assistant','user'])
+    assert.match(messages[0].content,/我也想吃饼干/)
+    assert.match(messages[1].content,/此前回复对象.*群友甲/)
+    assert.match(messages[1].content,/也分你一块饼干呀/)
+    assert.match(messages[2].content,/群友乙.*引用.*也分你一块饼干呀.*来/)
+    assert.match(messages[3].content,/此前回复对象.*群友乙/)
+    assert.match(messages[3].content,/张嘴，啊——/)
+    assert.match(messages.at(-1).content,/引用.*张嘴，啊——.*咬一口/)
+    assert.match(prompt,new RegExp(`当前发言者的用户标识为 ${user+1}`))
+    assert.match(prompt,/短句、代词、省略和括号动作/)
+    assert.match(prompt,/沿用已经建立的对象、动作和情境/)
+    assert.ok(messages.every(m=>Object.keys(m).sort().join(',')==='content,role'))
+    assert.equal(t.memory.get(`g${group}`).at(-1).content,'咬一小口，慢慢吃呀')
+    assert.equal(t.memory.get(`g${group}`).at(-1).replyToUserId,String(user+1))
+  })
+  await test('没有引用的连续@也携带前轮；另一位群友插话不会抹掉回复对象',async()=>{
+    const t=setup({chat:()=> '刚才说周末一起去呀'})
+    const first=t.event([at(),text('周末去公园吗')]);await t.bot.handleMessage(first)
+    await t.bot.handleMessage(t.event('我要去图书馆',{user_id:user+1,sender:{nickname:'群友乙'}}))
+    await t.bot.handleMessage(t.event([at(),text('那几点')]))
+    const messages=t.requests.at(-1)[1]
+    assert.match(messages[0].content,/周末去公园吗/)
+    assert.match(messages[1].content,new RegExp(`群友甲.*${user}.*刚才说周末一起去呀`))
+    assert.match(messages[2].content,/群友乙.*我要去图书馆/)
+    assert.match(messages.at(-1).content,/那几点/)
+    assert.equal(t.memory.get(`g${group}`)[1].replyToMessageId,String(first.message_id))
+    assert.match(t.requests.at(-1)[0],/不能把其他人的经历或承诺算到当前发言者身上/)
+  })
+  await test('发言和回复归属重启后保留，旧记录不猜对象且不改变字数预算',async()=>{
+    const t=setup();await t.bot.handleMessage(t.event([at(),text('你好呀')]))
+    const before=backlogLength(t.memory.get(`g${group}`))
+    t.memory.push(`g${group}`,'assistant','旧版回复')
+    t.memory.flush()
+    const restored=new MemoryStore({file:t.memory.file,limit:99,logger});restored.load()
+    const history=restored.get(`g${group}`)
+    assert.equal(history[0].userId,String(user));assert.equal(history[0].senderName,'群友甲')
+    assert.equal(history[1].replyToUserId,String(user));assert.equal(history[1].replyToName,'群友甲')
+    assert.equal(backlogLength(history.slice(0,2)),before)
+    const messages=modelHistory(history)
+    assert.match(messages[1].content,/此前回复对象.*群友甲/)
+    assert.equal(messages[2].content,'旧版回复')
+    assert.ok(messages.every(m=>Object.keys(m).sort().join(',')==='content,role'))
+    assert.ok(!history[1].content.includes('此前回复对象'))
+    t.memory.push('g2','assistant','有界元数据',{replyToName:'甲\n'.repeat(100),replyToUserId:{bad:true}})
+    t.memory.flush();restored.load()
+    const bounded=restored.get('g2')[0]
+    assert.ok(bounded.replyToName.length<=80);assert.ok(!bounded.replyToName.includes('\n'))
+    assert.equal(bounded.replyToUserId,undefined)
+  })
+  await test('独立定时目标不剥夺其他白名单群的日常记忆',async()=>{
+    const t=setup({summaryGroups:[group+1]})
+    await t.bot.handleMessage(t.event('周末想去看花'))
+    assert.equal(t.requests.length,0)
+    assert.equal(t.memory.get(`g${group}`).length,1)
+    await t.bot.handleMessage(t.event([at(),text('你觉得呢')]))
+    assert.match(t.requests[0][1][0].content,/周末想去看花/)
+  })
+  await test('现实分寸规则对群聊与私聊生效，不由可爱人格覆盖或扩大回复预算',async()=>{
+    for(const message_type of ['group','private']){
+      const t=setup();await t.bot.handleMessage(t.event([at(),text('我有点怕疼')],{message_type}))
+      const prompt=t.requests[0][0]
+      assert.ok(prompt.indexOf('【对话衔接与分寸')>prompt.indexOf('群聊人设'))
+      assert.match(prompt,/不为卖萌擅自增加次数、剂量、伤害或强迫行为/)
+      assert.match(prompt,/对方害怕、拒绝或不舒服时收住玩笑/)
+      assert.match(prompt,/自己上一句夸张了就自然纠正/)
+      assert.match(prompt,/【本次回复的形态要求/)
+    }
+  })
+  await test('隐语按上下文区分激素药物、食物和玩笑，不按单个表情决定用药含义',async()=>{
+    const t=setup()
+    await t.bot.handleMessage(t.event('这里的符号说的是激素药物，不是零食'))
+    await t.bot.handleMessage(t.event([at(),text('那这个🍥呢')]))
+    const [prompt,messages]=t.requests[0]
+    assert.match(messages[0].content,/激素药物，不是零食/)
+    assert.match(prompt,/可能代指激素或其他药物/)
+    assert.match(prompt,/结合群内前文、明确引用和已知用语含义判断/)
+    assert.match(prompt,/不能仅凭一个表情就断定对方在用药/)
+    assert.match(prompt,/不能再套用零食喂食的解释/)
+    assert.match(prompt,/不鼓励摄入、加量、补针/)
+    assert.match(prompt,/对话明确在说普通食物时/)
+  })
   await test('主动概率为零、没有@、不在白名单，引用机器人消息仍直接回复',async()=>{
     const t=setup({config:{whitelistGroups:new Set()}})
     await t.bot.handleMessage(t.event([quote(42),text('接着说呢')]))
@@ -82,7 +171,8 @@ try {
   })
   await test('引用仍遵守会话关闭、直接回复关闭、静音及全静音时段',async()=>{
     const cases=[{config:{mutedGroups:new Set([group])}},
-      {config:{quietHours:'00:00-23:59'}},
+      // 结束点不包含在区间内；覆盖到24:00，避免23:59运行时误放行。
+      {config:{quietHours:'00:00-24:00'}},
       {chatSettings:{get:()=>({enabled:false}),resolve:()=>({})}},
       {chatSettings:{get:()=>({enabled:true,atReplyEnabled:false}),resolve:()=>({})}}]
     for(const opts of cases){const t=setup(opts);await t.bot.handleMessage(t.event([quote(42),text('继续')]))

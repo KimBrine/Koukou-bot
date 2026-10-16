@@ -159,16 +159,18 @@ try {
     assert.equal(t.sent.length, 1); assert.equal(t.requests.length, 1)
   })
   await test('盯人队列跳过历史、过期及旧登录会话，不在解禁或恢复后补答', async () => {
-    const t = setup(), sent = []
+    const t = setup(), sent = [], prompts = []
     const watch = createTargetWatch({ config: { ...t.cfg, targetWatchEnabled: true, targetWatchGroup: group, targetWatchUser: user },
       logger, onebot: { ...t.onebot, sendGroup: async (_, msg) => sent.push(msg) }, memory: t.memory,
-      llm: { chat: async () => '当前回应' }, buildSystemPrompt: () => '聊天' })
+      llm: { chat: async (prompt) => { prompts.push(prompt); return '当前回应' } }, buildSystemPrompt: () => '聊天' })
     watch.note(t.event('旧', { time: t.time() / 1000 - 3600 }), { text: '旧' }); assert.equal(watch.pendingCount(), 0)
     watch.note(t.event('当时新'), { text: '当时新' }); t.advance(91_000); await watch.tick()
     assert.equal(watch.pendingCount(), 0); assert.equal(sent.length, 0)
     watch.note(t.event('重新登录前'), { text: '重新登录前' }); t.timeline.end(); t.advance(1000); t.timeline.begin(); await watch.tick()
     assert.equal(watch.pendingCount(), 0); assert.equal(sent.length, 0)
     watch.note(t.event('当前'), { text: '当前' }); await watch.tick(); assert.equal(sent.length, 1)
+    assert.match(prompts[0], /对方害怕、拒绝或不舒服时收住玩笑/)
+    assert.equal(t.memory.get(`g${group}`).at(-1).replyToUserId, String(user))
   })
   await test('盯人生成期间断线，旧回复不发；生成期间的新消息不被整队清空', async () => {
     const t = setup(), sent = []; let complete
