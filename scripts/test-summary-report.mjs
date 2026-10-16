@@ -171,6 +171,14 @@ console.log('\n=== 9. 历史回填与实时捕获的合并（回复比例曾全�
 
 console.log('\n=== 10. 历史翻页与报告分卡的端到端行为（本地模拟，不发 QQ）===')
 {
+  // 固定到本地日历日的傍晚；凌晨运行时，中午的测试记录也应位于截止点之前。
+  const RealDate = Date
+  const fixedNow = new RealDate(2026, 8, 4, 18, 0, 0).getTime()
+  globalThis.Date = class extends RealDate {
+    constructor(...args) { super(...(args.length ? args : [fixedNow])) }
+    static now() { return fixedNow }
+  }
+  try {
   const midnight = new Date()
   midnight.setHours(0, 0, 0, 0)
   const start = Math.floor(midnight.getTime() / 1000)
@@ -215,6 +223,7 @@ console.log('\n=== 10. 历史翻页与报告分卡的端到端行为（本地模
   await service.runSummary(200000002)
   ok('超长报告分成多张卡片', cards.length > 1 && cards.every((c) => c.nodes.length <= 5), `→ ${cards.map((c) => c.nodes.length)}`)
   ok('每个顶层条目保持独立节点', cards.flatMap((c) => c.nodes).filter((n) => /(?:^|\n)\d+\. 第\d+件事/.test(n.text)).length === 12)
+  } finally { globalThis.Date = RealDate }
 }
 
 console.log('\n=== 11. 历史接口失败时不发送残缺报告 ===')

@@ -169,7 +169,7 @@ try {
     watch.note(t.event('重新登录前'), { text: '重新登录前' }); t.timeline.end(); t.advance(1000); t.timeline.begin(); await watch.tick()
     assert.equal(watch.pendingCount(), 0); assert.equal(sent.length, 0)
     watch.note(t.event('当前'), { text: '当前' }); await watch.tick(); assert.equal(sent.length, 1)
-    assert.match(prompts[0], /对方害怕、拒绝或不舒服时收住玩笑/)
+    assert.match(prompts[0], /明确表达现实担心、拒绝或不适时，再认真回应/)
     assert.equal(t.memory.get(`g${group}`).at(-1).replyToUserId, String(user))
   })
   await test('盯人生成期间断线，旧回复不发；生成期间的新消息不被整队清空', async () => {

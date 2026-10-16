@@ -114,8 +114,8 @@ try {
       const t=setup();await t.bot.handleMessage(t.event([at(),text('我有点怕疼')],{message_type}))
       const prompt=t.requests[0][0]
       assert.ok(prompt.indexOf('【对话衔接与分寸')>prompt.indexOf('群聊人设'))
-      assert.match(prompt,/不为卖萌擅自增加次数、剂量、伤害或强迫行为/)
-      assert.match(prompt,/对方害怕、拒绝或不舒服时收住玩笑/)
+      assert.match(prompt,/避免毫无依据地把数量、剂量或动作强度突然放大许多倍/)
+      assert.match(prompt,/明确表达现实担心、拒绝或不适时，再认真回应/)
       assert.match(prompt,/自己上一句夸张了就自然纠正/)
       assert.match(prompt,/【本次回复的形态要求/)
     }
@@ -129,8 +129,12 @@ try {
     assert.match(prompt,/可能代指激素或其他药物/)
     assert.match(prompt,/结合群内前文、明确引用和已知用语含义判断/)
     assert.match(prompt,/不能仅凭一个表情就断定对方在用药/)
-    assert.match(prompt,/不能再套用零食喂食的解释/)
-    assert.match(prompt,/不鼓励摄入、加量、补针/)
+    assert.match(prompt,/已明确的药物隐语保留原意/)
+    assert.match(prompt,/明确在玩梗时可以适度调侃、撒娇和轻度夸张/)
+    assert.match(prompt,/不因提到激素或药物就拒绝接梗、劝停或说教/)
+    assert.match(prompt,/不把这类用药本身视为负面或不正当/)
+    assert.match(prompt,/日常玩笑不自动附加风险教育、免责声明或劝阻/)
+    assert.match(prompt,/现实用药问题不擅自决定具体药物、剂量、次数或停换方案/)
     assert.match(prompt,/对话明确在说普通食物时/)
   })
   await test('主动概率为零、没有@、不在白名单，引用机器人消息仍直接回复',async()=>{
