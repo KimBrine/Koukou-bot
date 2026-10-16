@@ -24,7 +24,7 @@ function segments(raw) {
   return out
 }
 
-/** 只允许纯文字，保留原始空白和换行；非文字段会打断复读链。 */
+/** 允许文字夹 QQ 自带表情，保留文字空白与表情顺序；须含有效文字。 */
 export function plusOneFingerprint(raw) {
   const parts = []
   let text = ''
@@ -36,8 +36,14 @@ export function plusOneFingerprint(raw) {
       if (!value) continue
       if (parts.at(-1)?.[0] === 'text') parts.at(-1)[1] += value
       else parts.push(['text', value])
+    } else if (segment?.type === 'face') {
+      const id = String(data.id ?? '')
+      if (!/^\d{1,10}$/.test(id)) return null
+      // 昵称/显示名等附加信息不影响同一表情；有随机结果时仍区分结果。
+      const result = String(data.resultId ?? data.raw?.resultId ?? '')
+      parts.push(['face', String(Number(id)), result])
     } else {
-      // 图片、QQ 表情、@、引用等均不跟读，文字与它们混合也不跟读。
+      // 图片及图片表情包、@、引用等均不跟读，文字与它们混合也不跟读。
       return null
     }
   }
@@ -135,7 +141,7 @@ export function createAutoPlusOne({ config, onebot, logger, onSent, now = Date.n
     if (!result.trigger || result.attempted || !active(result.groupId) || groups.get(result.groupId) !== result.state) return false
     result.attempted = true
     try {
-      // QQ 原生单条转发：保留原文字、换行和空白，不经过回复格式处理或 LLM。
+      // QQ 原生单条转发：保留原文字、QQ 表情、换行和空白，不经过格式处理或 LLM。
       await onebot.repeatGroupMessage(result.groupId, result.evt.message_id)
       onSent?.(result.evt)
       logger?.info?.(`[自动+1] 群 ${result.groupId} 已跟读一次（原消息 ${result.evt.message_id}；连续段不再跟读）`)

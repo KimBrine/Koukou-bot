@@ -370,7 +370,7 @@ if (config.mutedGroups && config.mutedGroups.size > 0) {
 }
 logger.info(webSearch ? '联网搜索已启用（百度千帆，私聊/被@时模型按需调用）' : '联网搜索未启用（未配置 BAIDU_QIANFAN_API_KEY）')
 logger.info(config.pokeEnabled ? `拍一拍回应已启用（冷却 ${Math.round(config.pokeCooldownMs / 1000)}s，语料 poke-replies.txt）` : '拍一拍回应未启用（POKE_REPLY_ENABLED=0）')
-logger.info(config.autoPlusOneEnabled ? '自动+1已启用：仅白名单群，两条连续相同纯文字群友消息后原生跟一次；不受静音/安静时段限制，不调用模型' : '自动+1未启用（AUTO_PLUS_ONE_ENABLED=0）')
+logger.info(config.autoPlusOneEnabled ? '自动+1已启用：仅白名单群，两条连续相同文字消息（可夹QQ自带表情）后原生跟一次；图片/纯表情不跟读，不受静音/安静时段限制，不调用模型' : '自动+1未启用（AUTO_PLUS_ONE_ENABLED=0）')
 logger.info(config.longMemoryEnabled
   ? `长期记忆已启用（摘要上限 ${config.longMemoryMaxChars} 字，每 ${Math.round(config.longMemoryIntervalMs / 60000)} 分钟整理一次）`
   : '长期记忆未启用（LONG_MEMORY_ENABLED=0）')

@@ -53,7 +53,7 @@ const EDITABLE = [
   { key: 'HISTORY_LIMIT', label: '上下文窗口(条)', live: false, type: 'number' },
   { key: 'CONTEXT_REMEMBER_ALL', label: '记住未回复的消息', live: true, type: 'bool' },
   { key: 'POKE_REPLY_ENABLED', label: '拍一拍回应', live: true, type: 'bool' },
-  { key: 'AUTO_PLUS_ONE_ENABLED', label: '自动 +1', hint: '仅白名单群：群友连续两条相同纯文字后跟一次。图片、QQ表情及混合消息不跟读。同一连续段只跟一次，机器人自己的消息不计数。不调用模型，独立于普通聊天开关、静音和安静时段。', live: true, type: 'bool' },
+  { key: 'AUTO_PLUS_ONE_ENABLED', label: '自动 +1', hint: '仅白名单群：群友连续两条相同文字消息后跟一次，可夹QQ自带表情，文字及表情顺序须一致。图片、图片表情包及纯QQ表情不跟读。同一连续段只跟一次，机器人自己的消息不计数。不调用模型，独立于普通聊天开关、静音和安静时段。', live: true, type: 'bool' },
   { key: 'TARGET_WATCH_ENABLED', label: '盯人回复', live: false, type: 'bool' },
   { key: 'TARGET_WATCH_GROUP', label: '盯人目标群', live: false, type: 'text' },
   { key: 'TARGET_WATCH_USER', label: '盯人目标QQ', live: false, type: 'text' },
