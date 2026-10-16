@@ -189,7 +189,8 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
   function capture(evt, parsed) {
     if (!config.summaryEnabled) return
     if (evt.message_type !== 'group') return
-    if (!summaryGroups().includes(evt.group_id)) return
+    // 手动总结可用于白名单群；独立的定时目标不能让这些群失去实时存档。
+    if (!summaryGroups().includes(Number(evt.group_id)) && !config.whitelistGroups.has(Number(evt.group_id))) return
     if (onebot.selfId && String(evt.user_id) === onebot.selfId) return
     const record = {
       id: String(evt.message_id),
@@ -258,6 +259,9 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
     let pages = 0
     let complete = false
     let failed = false
+    let reachedStart = false
+    let uncoveredStableRounds = 0
+    let rounds = 0
     const add = (msgs) => {
       let newWindow = 0
       for (const m of msgs) {
@@ -269,6 +273,7 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
       return newWindow
     }
     for (let round = 1; round <= maxRounds; round++) {
+      rounds = round
       signal?.throwIfAborted()
       let first
       try {
@@ -326,8 +331,14 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
         seq = nextSeq
       }
       if (failed) break
-      logger.info(`群 ${groupId} 历史同步第 ${round} 轮：新增窗口内 ${newWindow} 条，已${covered ? '' : '未'}回溯到起点（固定截止 ${fmtDate(endSec)} ${fmtTime(endSec)}，不含截止秒）`)
+      reachedStart ||= covered
+      logger.info(`群 ${groupId} 历史同步第 ${round} 轮：新增窗口内 ${newWindow} 条，${covered ? '已' : '未'}回溯到起点（固定截止 ${fmtDate(endSec)} ${fmtTime(endSec)}，不含截止秒）`)
       if (covered && newWindow === 0 && round > 1) { complete = true; break }
+      uncoveredStableRounds = !covered && newWindow === 0 ? uncoveredStableRounds + 1 : 0
+      if (uncoveredStableRounds >= 2) {
+        logger.warn(`群 ${groupId} 可见历史连续两轮未增加且尚未到达起点，停止重复扫描；不将可见边界冒充完整历史`)
+        break
+      }
       if (round < maxRounds) await sleep(700)
     }
     const out = []
@@ -359,8 +370,11 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
     } else {
       logger.warn(`群 ${groupId} 历史回填一条都没拿到（${pages} 页）`)
     }
-    if (!complete) logger.warn(`群 ${groupId} 历史在 ${maxRounds} 轮内未确认稳定${failed ? '（接口失败）' : ''}，禁止发送可能缺失消息的报告`)
-    return { records: out, complete, ...(includeSelf ? { rawMessages: [...byId.values()] } : {}) }
+    const reason = complete ? '' : failed ? 'api_failed' : reachedStart ? 'history_not_stable' : 'start_not_reached'
+    const firstTime = out.reduce((earliest, record) => record.time > 0 && Number.isFinite(record.time) ? Math.min(earliest, record.time) : earliest, Infinity)
+    const earliestSec = Number.isFinite(firstTime) ? firstTime : 0
+    if (!complete) logger.warn(`群 ${groupId} 历史经 ${rounds} 轮仍未确认完整（${reason}${earliestSec ? `，最早可见 ${fmtDate(earliestSec)} ${fmtTime(earliestSec)}` : ''}），禁止发送可能缺失消息的报告`)
+    return { records: out, complete, reason, earliestSec, ...(includeSelf ? { rawMessages: [...byId.values()] } : {}) }
   }
 
   /** 渲染成给模型的聊天记录；跨天时带上日期 */
@@ -448,7 +462,7 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
       logger.warn(`群 ${groupId} 历史回填失败：${err.message}`)
     }
     const records = mergeRecords(history.records, captured, startSec, endSec)
-    return { records, stats: computeSummaryStats(records), complete: history.complete }
+    return { records, stats: computeSummaryStats(records), complete: history.complete, reason: history.reason, earliestSec: history.earliestSec }
   }
 
   async function runSummary(groupId, { dryRun = false, days = 1, scheduled = false, scheduleDay = '', scheduleTime = '', statsOnly = false } = {}) {
@@ -469,10 +483,19 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
         history = await deadline.wait(backfillHistory(groupId, dayCount * 300, startSec, { signal: deadline.signal, endSec }))
       } catch (err) {
         deadline.signal.throwIfAborted()
+        history.reason = 'api_failed'
         logger.warn(`群 ${groupId} 历史回填失败：${err.message}`)
       }
       if (!history.complete) {
         logger.warn(`群 ${groupId} 历史未确认完整，本次总结暂缓，避免发送偏少的统计`)
+        if (!dryRun && (!scheduled || await summarySchedule.online())) {
+          const detail = history.reason === 'start_not_reached' && history.earliestSec
+            ? `目前 QQ 接口最早只能读到 ${fmtDate(history.earliestSec)} ${fmtTime(history.earliestSec)}，还没覆盖本次要求的 ${fmtDate(startSec)} 00:00。`
+            : history.reason === 'api_failed' ? 'QQ 历史读取接口出现异常，暂时无法确认记录完整。'
+              : '多轮读取后仍无法确认这段时间的历史完整。'
+          try { await onebot.sendGroup(groupId, `这次群总结未能生成：${detail}\n为避免把部分记录当作完整总结，本次没有发布报告；后续消息会继续存档。`) }
+          catch (error) { logger.warn(`群 ${groupId} 总结历史不完整提示发送失败：${error.message}`) }
+        }
         return
       }
       let records = mergeRecords(history.records, captured, startSec, endSec)

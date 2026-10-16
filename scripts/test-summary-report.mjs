@@ -219,17 +219,18 @@ console.log('\n=== 10. 历史翻页与报告分卡的端到端行为（本地模
 
 console.log('\n=== 11. 历史接口失败时不发送残缺报告 ===')
 {
-  let sent = 0
+  let sent = 0; const notices = []
   const service = createDailySummary({
     config: { dataDir: '__missing_summary_test_data__', summaryEnabled: true, summaryGroups: [200000002], whitelistGroups: new Set(), summaryMaxMessages: 600, summaryMaxBlocks: 20, summarySendMode: 'forward', summaryUserRows: 20, botName: '测试机器人' },
     logger: { info() {}, warn() {}, error() {} },
-    onebot: { selfId: '99999', async getGroupMsgHistory() { throw new Error('断线') }, async sendGroupForward() { sent++ }, async sendGroup() { sent++ } },
+    onebot: { selfId: '99999', async getGroupMsgHistory() { throw new Error('断线') }, async sendGroupForward() { sent++ }, async sendGroup(id, text) { notices.push(text) } },
     llm: { async chat() { throw new Error('不应调用模型') } },
   })
   const preview = await service.previewStats(200000002)
   ok('预览明确标记历史不完整', preview.complete === false)
   await service.runSummary(200000002)
   ok('历史不完整时不发送报告', sent === 0)
+  ok('明确告知历史读取异常，不再收到指令后静默退出', notices.length === 1 && /历史读取接口出现异常/.test(notices[0]))
 }
 
 console.log('\n=== 12. 活跃群固定窗口收敛，旧记录补齐仍须核验 ===')
