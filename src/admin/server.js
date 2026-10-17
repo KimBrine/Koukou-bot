@@ -40,7 +40,7 @@ const EDITABLE = [
     live: true,
     type: 'bool',
   },
-  { key: 'EMOJI_KEEP_RATE', label: '装饰符号频率', hint: '颜文字/emoji/🍥 出现在多少比例的回复里', live: true, type: 'rate' },
+  { key: 'EMOJI_KEEP_RATE', label: '装饰符号频率', hint: '表情与颜文字出现在多少比例的回复里；种类由人格或私有偏好决定', live: true, type: 'rate' },
   { key: 'HUMAN_DELAY_MIN_MS', label: '打字延迟下限(ms)', live: true, type: 'number' },
   { key: 'HUMAN_DELAY_MAX_MS', label: '打字延迟上限(ms)', live: true, type: 'number' },
   { key: 'REPLY_LENGTH_MATCH', label: '回复长度自适应', hint: '1=跟着对方长度走 0=固定单行', live: true, type: 'bool' },
@@ -182,7 +182,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
   // 本实例自己的 .env（并行跑两个实例时，写死 rootDir\.env 会改到另一个实例的配置上）
   const envFile = config.envFile || path.join(config.rootDir, '.env')
   const logFile = path.join(config.logDir || path.join(config.rootDir, 'logs'), 'bot.log')
-  const personaDir = path.join(config.rootDir, 'personas')
+  const personaDir = config.personaDir || path.join(config.dataDir, 'personas')
   const dailyDir = path.join(config.dataDir, 'daily')
 
   let groupListCache = { at: 0, items: [] }

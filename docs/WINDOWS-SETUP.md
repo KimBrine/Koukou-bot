@@ -5,8 +5,8 @@
 安装 Git、Node.js 22 以上、QQ 与 NapCat，并在 NapCat 配置 OneBot 11 正向 WebSocket 服务端。客户端、安装目录和 QQ 登录态由部署者管理。
 
 ```powershell
-git clone https://github.com/KimBrine/Koukou.git
-cd Koukou
+git clone https://github.com/KimBrine/Koukou-bot.git
+cd Koukou-bot
 Copy-Item .env.example .env
 notepad .env
 npm start
@@ -77,3 +77,7 @@ set "BOT_PROFILE=example"
 - 控制台分别显示进程、OneBot 和 QQ 实际连接状态。没有消息回复时，可先核对事件是否到达及静音/安静时段设置。
 
 离线验证命令：`npm test` 与 `npm run check:repo`。
+
+## 公共默认与私有资料
+
+新安装使用通用助手。自定义人格保存在实例数据目录的 `personas/`，参考资料不会自动导入。1.x 升级前先备份并迁移旧人格和语料，详见 [私有资料说明](PRIVATE-PROFILES.md)。

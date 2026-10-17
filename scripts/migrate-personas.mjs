@@ -1,45 +1,18 @@
-/**
- * 一次性迁移：把根目录的 persona.txt 收进 personas/ 目录，并在 .env 里设 ACTIVE_PERSONA。
- * 之后控制台就能在多个「人格」之间切换、逐个编辑（人设文件不再只有一份）。
- *
- *   node scripts/migrate-personas.mjs
- */
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+// 显式迁移旧人格文件到当前实例的私有人格库；不修改 .env，不自动激活，不覆盖已有文件。
+// 设置好 BOT_ENV_FILE / BOT_DATA_DIR 后运行：node scripts/migrate-personas.mjs [--source=旧文件或目录]
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, constants } from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
-
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const personaDir = path.join(ROOT, 'personas')
-const legacy = path.join(ROOT, 'persona.txt')
-const envFile = path.join(ROOT, '.env')
-
-mkdirSync(personaDir, { recursive: true })
-const existing = readdirSync(personaDir).filter((f) => f.endsWith('.txt'))
-
-if (existing.length > 0) {
-  console.log(`personas/ 里已有 ${existing.length} 个人格：${existing.join(', ')}`)
-} else if (existsSync(legacy)) {
-  const content = readFileSync(legacy, 'utf8')
-  // 取人设里的角色名当文件名（第一行的「XXX」），取不到就用 default
-  const name = /「([^」]{1,20})」/.exec(content)?.[1] ?? 'default'
-  const target = path.join(personaDir, `${name}.txt`)
-  copyFileSync(legacy, target)
-  console.log(`已把 persona.txt 复制为 personas/${name}.txt（原文件保留作备份）`)
-
-  let env = existsSync(envFile) ? readFileSync(envFile, 'utf8') : ''
-  if (!/^\s*ACTIVE_PERSONA\s*=/m.test(env)) {
-    env += `${env.endsWith('\n') || env === '' ? '' : '\n'}# 当前生效的人格（personas/<名字>.txt），控制台里可切换\nACTIVE_PERSONA=${name}\n`
-    writeFileSync(envFile, env)
-    console.log(`已在 .env 写入 ACTIVE_PERSONA=${name}`)
-  } else {
-    console.log('ACTIVE_PERSONA 已存在，未改动')
-  }
-} else {
-  console.log('没有找到 persona.txt，也没有现成的人格文件，跳过迁移')
+import { ROOT_DIR, PERSONA_DIR } from '../src/config.js'
+const sourceArg = process.argv.find(a => a.startsWith('--source='))?.slice(9)
+const source = sourceArg ? path.resolve(sourceArg) : path.join(ROOT_DIR, 'personas')
+if (!existsSync(source)) throw new Error('未找到旧人格，请用 --source= 指定备份文件或目录')
+const files = statSync(source).isDirectory() ? readdirSync(source).filter(f=>f.endsWith('.txt')).map(f=>path.join(source,f)) : [source]
+mkdirSync(PERSONA_DIR, { recursive: true })
+let copied=0, skipped=0
+for (const file of files) {
+  if (!readFileSync(file,'utf8').trim()) continue
+  const dest=path.join(PERSONA_DIR,path.basename(file))
+  if (existsSync(dest)) { skipped++; continue }
+  copyFileSync(file,dest,constants.COPYFILE_EXCL);copied++
 }
-
-console.log('\n当前人格列表：')
-for (const f of readdirSync(personaDir).filter((x) => x.endsWith('.txt'))) {
-  const size = readFileSync(path.join(personaDir, f), 'utf8').length
-  console.log(`  ${f}  (${size} 字)`)
-}
+console.log(`已复制 ${copied} 个，跳过 ${skipped} 个已有文件；未改变当前选定人格。请在控制台选择并激活。`)

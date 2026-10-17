@@ -199,7 +199,7 @@ memory.onEvict = (key, entries) => longMemory.addEvicted(key, entries)
 // 联网搜索（百度千帆）：仅私聊与被@时可用，模型自行判断是否需要
 const webSearch = createWebSearch({ apiKey: config.baiduApiKey, timeoutMs: 20000, logger })
 
-// 总结提示词：先注入小口口子人设（口吻一致），再给出报告格式与统计要求
+// 总结提示词：先注入当前实例人格，再给出报告格式与统计要求。
 const summaryPromptFn = (opts) => {
   const personaPart = config.persona
     ? `${config.persona}\n\n（注意：现在是在写「群聊日常分析报告」，不是日常聊天——上面人设里"一两句话、别长篇大论、回复长度跟着对方走"等聊天规则不适用于报告场景，口吻和语气保持一致即可，篇幅与格式以下面的报告要求为准。）\n\n`
@@ -217,7 +217,7 @@ const dailySummary = createDailySummary({ config, logger, onebot, llm: { chat: s
 const systemPrompt = createChatPromptBuilder({ config, longMemory, todayNote: key => dailyPing?.todayNote?.(key) ?? '' })
 
 // 拍一拍回复语（poke-replies.txt，可自行增删）
-const pokeReplier = createPokeReplier(loadPokeReplies(config.rootDir, logger))
+const pokeReplier = createPokeReplier(loadPokeReplies(config.rootDir, logger, config.pokeRepliesFile))
 
 // 盯人回复：定期检查目标群里指定用户是否发过言，有则 @ 他回一两句
 const replyLog = new Map() // `${groupId}:${userId}` -> 上次回复时间戳

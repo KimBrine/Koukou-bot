@@ -253,58 +253,35 @@ export function shapeReply(raw, plan) {
   return out.length > 0 ? out : fallback()
 }
 
-/**
- * 本条回复的装饰"种类"：鱼板 / 颜文字 / 两者都行。
- * **不强绑定**——两者一起用只是其中一种可能（约 2 成），大多数时候只出现一种，
- * 这样看起来才像人的习惯，而不是"每条都 🍥(=^▽^=)"的模板。
- */
-export function pickDecorationKind(rand = Math.random) {
-  const r = rand()
-  if (r < 0.45) return 'fishcake'
-  if (r < 0.8) return 'kaomoji'
-  return 'both'
+/** 装饰类型与权重由实例明确提供；缺省时按当前人格自行选择。 */
+export function pickDecorationKind(rand = Math.random, preset) {
+  if (!preset) return 'persona'
+  const weights = preset.weights || {}, total = ['emoji','kaomoji','both'].reduce((n,k)=>n+(weights[k]||0),0)
+  let value = rand() * total
+  for (const kind of ['emoji','kaomoji','both']) { value -= weights[kind] || 0; if (value < 0) return kind }
+  return 'persona'
 }
 
-const KAOMOJI_POOL = ['(=^▽^=)', 'awa', 'QAQ', '(๑•̀ㅂ•́)و✧', 'ヾ(^▽^*)))']
-
-/**
- * 生成本条"要不要带装饰、带哪一种"的要求。
- *
- * 频率只在这里控制（代码按 EMOJI_KEEP_RATE 决定），**不要再在 persona / 系统提示里写百分比**——
- * 两边各写一次等于砍两刀，20% × 20% = 4%，表现就是"几乎不出现颜文字"。
- */
-export function decorationHint(allowed, kind = 'fishcake') {
-  if (!allowed) {
-    return '\n\n【本条回复的装饰】这条请用纯文字回，不要颜文字、emoji，也不要写 [表情:xx]（但"呀/啦/嘛/诶嘿/人家"这类口气照常用）。'
-  }
-  if (kind === 'kaomoji') {
-    return '\n\n【本条回复的装饰】这次可以卖萌：带一个颜文字就好（(=^▽^=)、awa、QAQ、ヾ(^▽^*))) 这类），放句末最自然。'
-  }
-  if (kind === 'both') {
-    return '\n\n【本条回复的装饰】这次可以卖萌：🍥 配一个颜文字一起用也行，两个就够，别堆。'
-  }
-  return '\n\n【本条回复的装饰】这次可以卖萌：带上你最喜欢的 🍥，放句末，一个就够。'
+export function decorationHint(allowed, kind = 'persona', preset) {
+  if (!allowed) return '\n\n【本条回复的装饰】只使用纯文字，不加颜文字、emoji 或 QQ 表情；语气仍以当前人格为准。'
+  if (kind === 'persona' || !preset) return '\n\n【本条回复的装饰】可选择一个符合当前人格与语境的表情；没有合适的就不加，不固定偏爱某个符号。'
+  const voice = preset.voiceHint || ''
+  const symbol = preset.symbol || '', kaomoji = (preset.kaomoji || []).slice(0,5).join('、')
+  if (kind === 'kaomoji') return `\n\n【本条回复的装饰】${voice}这次可以用一个颜文字：${kaomoji}。`
+  if (kind === 'both') return `\n\n【本条回复的装饰】${voice}这次可用 ${symbol} 配一个颜文字，别堆。`
+  return `\n\n【本条回复的装饰】${voice}这次可以带一个 ${symbol}，放句末。`
 }
 
-/**
- * 兜底：代码已经决定"这条要卖萌"，模型却一个装饰都没写（或装饰被裁剪弄丢了）→ 按本次种类补上。
- * 模型自己带了装饰就不动它——补的只是"完全没有"这种情况，避免变成强制配对。
- */
-export function ensureDecoration(lines, sourceText, { kind = 'fishcake', rand = Math.random } = {}) {
-  const list = Array.isArray(lines) ? lines.filter((s) => s && s.length > 0) : []
-  if (list.length === 0) return lines
-  const present = list.join('')
-  // 已经有任何装饰 → 尊重模型的选择，不强加另一种
-  if (decorationRe().test(present)) return lines
-
-  const kao = KAOMOJI_POOL[Math.floor(rand() * KAOMOJI_POOL.length) % KAOMOJI_POOL.length]
-  let deco = '🍥'
-  if (kind === 'kaomoji') deco = kao
-  else if (kind === 'both') deco = `🍥${kao}`
-
-  const out = list.slice()
-  out[out.length - 1] = `${out[out.length - 1]}${deco}`
-  return out
+/** 仅实例显式提供装饰偏好时补齐；通用模式尊重模型与当前人格。 */
+export function ensureDecoration(lines, sourceText, { kind = 'persona', rand = Math.random, preset } = {}) {
+  if (!preset || kind === 'persona') return lines
+  const list = Array.isArray(lines) ? lines.filter(Boolean) : []
+  if (!list.length || decorationRe().test(list.join(''))) return lines
+  const pool = preset.kaomoji || [], kao = pool[Math.min(pool.length-1, Math.floor(rand()*pool.length))] || ''
+  const symbol = preset.symbol || ''
+  const deco = kind === 'kaomoji' ? kao : kind === 'both' ? symbol + kao : symbol
+  if (!deco) return lines
+  const out = list.slice(); out[out.length-1] += deco; return out
 }
 
 /**

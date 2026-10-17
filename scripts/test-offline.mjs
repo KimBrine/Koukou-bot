@@ -15,6 +15,7 @@ const scripts = [
   'test-vision-knowledge.mjs',
   'test-reply-metadata.mjs',
   'test-persona-memory.mjs',
+  'test-private-profiles.mjs',
 ]
 for (const file of scripts) {
   const result = spawnSync(process.execPath, [path.join(root, 'scripts', file)], { cwd: root, stdio: 'inherit', windowsHide: true })

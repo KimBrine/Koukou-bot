@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { readLocalProfile } from './localProfile.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 export const ROOT_DIR = path.resolve(__dirname, '..')
@@ -50,28 +51,33 @@ const num = (key, fallback) => {
   return Number.isFinite(v) ? v : fallback
 }
 
-/** 自定义人设：PERSONA 环境变量 > 控制台选定的人格文件 > PERSONA_FILE > 项目根目录 persona.txt */
+export const PERSONA_DIR = env.PERSONA_DIR ? path.resolve(path.dirname(envFile), env.PERSONA_DIR) : path.join(DATA_DIR, 'personas')
+
+/** 自定义人设：环境变量 > 本实例选定人格 > 指定文件 > 本实例默认文件 > 通用模板。 */
 function readPersona() {
   const explicit = env.PERSONA ? String(env.PERSONA).trim() : ''
   if (explicit) return explicit
-  // 控制台选定的当前人格（personas/<名字>.txt）
+  // 每个实例的人格库独立；不自动扫描仓库中的旧人格或参考包。
   const active = String(env.ACTIVE_PERSONA ?? '').trim()
   if (active) {
-    const file = path.join(ROOT_DIR, 'personas', `${active}.txt`)
+    if (/[\\/:*?"<>|\u0000-\u001f]/.test(active) || /[. ]$/.test(active)) throw new Error('当前人格名称无效')
+    const file = path.join(PERSONA_DIR, `${active}.txt`)
     if (existsSync(file)) {
       try {
         const text = readFileSync(file, 'utf8').trim()
         if (text) return text
+        throw new Error('当前人格正文为空')
       } catch {
-        /* 读取失败继续往下找 */
+        throw new Error('读取当前实例人格失败')
       }
-    }
+    } else throw new Error('当前实例的选定人格不存在，请导入或迁移人格文件')
   }
-  const file = env.PERSONA_FILE || path.join(ROOT_DIR, 'persona.txt')
+  const file = env.PERSONA_FILE ? path.resolve(path.dirname(envFile), env.PERSONA_FILE)
+    : existsSync(path.join(DATA_DIR, 'persona.txt')) ? path.join(DATA_DIR, 'persona.txt') : path.join(ROOT_DIR, 'persona.txt')
   if (existsSync(file)) {
     try {
       const text = readFileSync(file, 'utf8').trim()
-      if (text) return text
+      if (text) return text.replaceAll('{{BOT_NAME}}', String(env.BOT_NAME || 'Koukou'))
     } catch {
       /* 读取失败走默认人设 */
     }
@@ -80,6 +86,7 @@ function readPersona() {
 }
 
 export function loadConfig() {
+  const localProfile = readLocalProfile(DATA_DIR)
   const whitelist = new Set(
     String(env.WHITELIST_GROUPS ?? '')
       .split(',')
@@ -193,10 +200,11 @@ export function loadConfig() {
     onebotWsUrl: String(env.ONEBOT_WS_URL ?? 'ws://127.0.0.1:3001'),
     onebotAccessToken: String(env.ONEBOT_ACCESS_TOKEN ?? '').trim(),
 
-    botName: String(env.BOT_NAME ?? '小深').trim() || '小深',
+    botName: String(env.BOT_NAME ?? 'Koukou').trim() || 'Koukou',
     persona: readPersona(),
-    // 多个人格：控制台里可新建/切换，文件放在 personas/<名字>.txt
-    personaDir: path.join(ROOT_DIR, 'personas'),
+    personaDir: PERSONA_DIR,
+    localProfile,
+    pokeRepliesFile: env.POKE_REPLIES_FILE ? path.resolve(path.dirname(envFile), env.POKE_REPLIES_FILE) : path.join(DATA_DIR, 'poke-replies.txt'),
     activePersona: String(env.ACTIVE_PERSONA ?? '').trim(),
     // 控制台（本地管理界面）
     adminEnabled: String(env.ADMIN_ENABLED ?? '1').toLowerCase() !== '0' && String(env.ADMIN_ENABLED ?? '1').toLowerCase() !== 'false',
@@ -250,7 +258,7 @@ export function loadConfig() {
       .map(Number)
       .filter((n) => Number.isFinite(n) && n > 0),
     idCheckReminder: String(
-      env.ID_CHECK_REMINDER ?? '以上群友记得改名哦～房间号写在名字前面就行，比如 604方铁、1009，中间不用加空格～'
+      env.ID_CHECK_REMINDER ?? localProfile.idCheckReminder ?? '请按本群要求修改群名片，例如「编号 昵称」。'
     ).trim(),
     // 谁能触发 /id_check（QQ 号，逗号分隔）；留空 = 谁都能触发
     idCheckOperators: String(env.ID_CHECK_OPERATORS ?? '')

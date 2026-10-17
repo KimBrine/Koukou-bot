@@ -90,16 +90,11 @@ export function withImageContent(content, desc) {
 }
 
 /** 兜底回应：万一模型连着两次都回成分析报告，宁可发一句短的群聊口吻，也不把报告发出去 */
-export const IMAGE_FALLBACK_REPLIES = [
-  '诶嘿，这张图信息量有点大哦，人家研究研究',
-  '呜哇，图人家看到啦，就是一下子没想好怎么接',
-  '哈哈哈哈这个我看懂了，你太会了',
-  '好家伙，这图有点东西捏',
-  '人家默默保存了这张图哦',
-]
+export const IMAGE_FALLBACK_REPLIES = ['图看到了，一时还没想好怎么接。', '这张图挺有意思。', '这个表情很传神。']
 
 /** 按随机源挑一条兜底回应 */
-export function pickImageFallback(rand = Math.random) {
-  const i = Math.min(IMAGE_FALLBACK_REPLIES.length - 1, Math.floor(rand() * IMAGE_FALLBACK_REPLIES.length))
-  return IMAGE_FALLBACK_REPLIES[Math.max(0, i)]
+export function pickImageFallback(rand = Math.random, replies = IMAGE_FALLBACK_REPLIES) {
+  if (!Array.isArray(replies) || !replies.length) replies = IMAGE_FALLBACK_REPLIES
+  const i = Math.min(replies.length - 1, Math.floor(rand() * replies.length))
+  return replies[Math.max(0, i)]
 }

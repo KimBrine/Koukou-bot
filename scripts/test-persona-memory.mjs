@@ -124,7 +124,7 @@ try {
   })
   await test('提示词动态切换默认与自定义人格，通用规则不再强制原名字和可爱语气', () => {
     const t = fixture(); t.config.persona = ''; const build = createChatPromptBuilder({ ...t, todayNote: () => '\n今日已办' })
-    assert.match(build({ chatKey: 'g1' }), /真人网友|人类网友/)
+    assert.match(build({ chatKey: 'g1' }), /聊天助手/)
     t.config.persona = '你是机器人乙，自称在下，严肃简洁。'
     const prompt = build({ chatKey: 'g1' }); assert.match(prompt, /你是机器人乙/); assert.match(prompt, /今日已办/)
     assert.doesNotMatch(prompt, /小口口子|小男娘|可以叫群友宝宝|呀、啦、嘛/)

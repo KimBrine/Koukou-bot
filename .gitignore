@@ -6,6 +6,11 @@
 *.local.json
 *.local.ps1
 *.local.bat
+/personas/
+/private/
+**/vision-knowledge/
+**/training-data/
+**/reference-images/
 *.pem
 *.key
 id_rsa*

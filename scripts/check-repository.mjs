@@ -2,6 +2,7 @@
 import { execFileSync } from 'node:child_process'
 import { readFileSync, existsSync } from 'node:fs'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 
 const git = args => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }).trimEnd()
 const root = git(['rev-parse', '--show-toplevel'])
@@ -29,14 +30,22 @@ const inspectJson = value => {
 for (const file of configPaths('koukou.privateJsonFile')) {
   try { inspectJson(JSON.parse(readFileSync(file, 'utf8'))) } catch {}
 }
-const denied = /(?:^|\/)(?:data|logs|cache|node_modules|_removed|backups|work)\/|(?:^|\/)\.env(?:$|\.(?!example$|napcat\.example$))|\.(?:log|jsonl|db|pem|key|lnk|bak)(?:$|[.-])|\.local\.(?:json|ps1|bat)$|\.old-account\./i
+const privateFiles = configPaths('koukou.privateContentFile').filter(file => existsSync(file))
+const privateTexts = privateFiles.filter(file => /\.(txt|json|md)$/i.test(file)).map(file => readFileSync(file, 'utf8').trim()).filter(s => s.length >= 40)
+const privateHashes = new Set(privateFiles.map(file => createHash('sha256').update(readFileSync(file)).digest('hex')))
+const denied = /(?:^|\/)(?:data|logs|cache|node_modules|_removed|backups|work|private|vision-knowledge|training-data|reference-images)\/|^personas\/|(?:^|\/)\.env(?:$|\.(?!example$|napcat\.example$))|\.(?:log|jsonl|db|pem|key|lnk|bak)(?:$|[.-])|\.local\.(?:json|ps1|bat)$|\.old-account\./i
 const keyPatterns = [/\bsk-[A-Za-z0-9_-]{16,}\b/g, /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g, /-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----/g]
 for (const file of new Set(paths)) {
   if (denied.test(file)) { issues.push({ file, reason: 'Private/runtime/backup file is not allowed in Git' }); continue }
+  const binary = staged || head ? execFileSync('git', ['show', `${head ? 'HEAD' : ''}:${file}`], { maxBuffer: 32 * 1024 * 1024 }) : readFileSync(path.join(root, file))
+  if (privateHashes.has(createHash('sha256').update(binary).digest('hex'))) {
+    issues.push({ file, reason: 'Matches a registered private profile or reference asset' }); continue
+  }
   if (/\.ico$/i.test(file)) continue
   let text
   try { text = staged || head ? git(['show', `${head ? 'HEAD' : ''}:${file}`]) : readFileSync(path.join(root, file), 'utf8') }
   catch { issues.push({ file, reason: 'Unable to inspect tracked content' }); continue }
+  if (privateTexts.some(s => text.includes(s))) issues.push({ file, reason: 'Contains registered private profile content' })
   for (const secret of secrets) if (text.includes(secret)) { issues.push({ file, reason: 'Contains a credential from local private configuration' }); break }
   for (const re of keyPatterns) {
     re.lastIndex = 0

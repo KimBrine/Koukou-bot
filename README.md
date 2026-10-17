@@ -1,6 +1,6 @@
 # Koukou · QQ 机器人与 Koukou Studio
 
-基于 Node.js 和 OneBot 11 的 QQ 聊天机器人，包含网页控制台、Windows 桌面入口和 NapCat 启动中心。使用 Node.js 内置模块，无需安装 npm 运行依赖。
+基于 Node.js 和 OneBot 11 的 QQ 聊天机器人，包含网页控制台、Windows 桌面入口和 NapCat 启动中心。使用 Node.js 内置模块，无需安装 npm 运行依赖。新安装使用通用助手人格，不附带个人角色、专属语料或识图标注。
 
 ## 功能
 
@@ -23,8 +23,8 @@
 需要 Node.js 22 以上、Git，以及已安装并登录的 NapCat。NapCat 使用 OneBot 11 正向 WebSocket 服务端。
 
 ```powershell
-git clone https://github.com/KimBrine/Koukou.git
-cd Koukou
+git clone https://github.com/KimBrine/Koukou-bot.git
+cd Koukou-bot
 Copy-Item .env.example .env
 notepad .env
 npm start
@@ -66,7 +66,9 @@ NapCat 的 OneBot 地址、端口和 Access Token 必须与 `.env` 一致。自�
 
 控制台的「沿用全局」表示使用「回复行为」中的默认值。取消继承后可为该会话设置独立参数。标注「需重启」的配置在重启机器人后生效。
 
-「人格编辑」中的人格库保存所有已新建或导入的人格。点击「导入文件」选择 `.txt` 或 `.md`（最多 256 KB），预览正文和名称后保存；同名人格不会被覆盖，默认仅保存，勾选「导入后立即使用」才会切换。可在列表中选择任意人格并点击「切换使用」，下一条消息开始生效。
+「人格编辑」中的人格库保存在**当前实例数据目录的 `personas/`**，不同实例互不共享。点击「导入文件」选择 `.txt` 或 `.md`（最多 256 KB），预览正文和名称后保存；同名人格不会被覆盖，默认仅保存，勾选「导入后立即使用」才会切换。可在列表中选择任意人格并点击「切换使用」，下一条消息开始生效。仓库中的参考文件不会自动导入或激活。
+
+自定义人格、拍一拍语料、装饰偏好、聊天补充规则和识图资料均属于私有实例数据，代码更新与 Git 推送不携带这些资料。默认人格与拍一拍语料均为通用示例。部署目录、文件格式及 **1.x 升级前的人格备份/迁移步骤**见 [私有资料与公开默认值](docs/PRIVATE-PROFILES.md)。
 
 「导出当前使用」下载运行中实际采用的人格；「导出编辑内容」下载编辑框文字，包括尚未保存的改动。导出为 UTF-8 `.txt`，仅包含人格正文，不附带密钥、记忆或聊天上下文。导入支持 UTF-8、UTF-16 和常见中文文本编码。
 
