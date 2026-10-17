@@ -6,6 +6,7 @@ import { createAutoPlusOne } from './autoPlusOne.js'
 import { replyStillCurrent, messageTime, currentMessageHint, LIVE_MESSAGE_MAX_AGE_MS } from './messageFreshness.js'
 import { modelHistory } from './memory.js'
 import { CONVERSATION_RULES } from './conversationRules.js'
+import { stripInternalReplyMetadata, REPLY_REPAIR_HINT } from './replySanitizer.js'
 import { parseMessage } from './cq.js'
 import { expandForwardRecords } from './forwardRecords.js'
 import { createQuotedMessageResolver } from './quotedMessage.js'
@@ -328,12 +329,14 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         await typingDelay({ min: config.lineGapMinMs, max: config.lineGapMaxMs })
       }
       if (!replyStillCurrent(onebot, evt, { latestOnly: evt.message_type !== 'private' && !directReply })) break
-      const outgoing = renderFacesToCq(lines[i])
+      const cleanLine = stripInternalReplyMetadata(lines[i])
+      if (!cleanLine) continue
+      const outgoing = renderFacesToCq(cleanLine)
       for (const piece of splitLongMessage(outgoing)) {
         const receipt = evt.message_type === 'private' ? await onebot.sendPrivate(evt.user_id, piece) : await onebot.sendGroup(evt.group_id, piece)
         quotedMessages.rememberSent(evt, receipt, piece)
       }
-      sent.push(lines[i])
+      sent.push(cleanLine)
       rateLimiter?.record(key)
     }
     return sent
@@ -876,6 +879,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       try {
         let reply
         let imageDescription = ''
+        let replyPrompt = systemPrompt, replyContent = content
         if (hasImages && imageParts.length > 0) {
           // 第一步：视觉模型**只读图**。以前让它直接写回复，它对着聊天记录截图写了一整篇分析报告
           //（「以下是对这段聊天记录及最后图片的详细解读：### 1. 核心事件…」）——分工细节见 src/visionNote.js
@@ -914,6 +918,8 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
           // 顺着历史话题接着聊、完全不理图（2026-09-23 实测好几次）。
           // 但**记忆里仍旧只存 [图片]**，免得以后翻旧账时看到早已过期的画面描述。
           const imageUserContent = withImageContent(content, desc)
+          replyPrompt = imgSystem
+          replyContent = imageUserContent
           reply = await llm.chat(imgSystem, [...baseHistory, { role: 'user', content: imageUserContent }])
           // 兜底：万一还是回成了分析报告，重生成一次；再不成，就发一句短的群聊口吻，绝不把报告发进群
           if (looksLikeReport(reply)) {
@@ -930,6 +936,13 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         } else {
           // 纯文本 / 图片没取到内容（此时 imageNote 已明确告知模型该怎么措辞）
           reply = await llm.chat(systemPrompt, [...baseHistory, { role: 'user', content }])
+        }
+        reply = stripInternalReplyMetadata(reply)
+        if (!reply) {
+          if (!canContinue()) return
+          logger.warn('[回复清理] 模型只输出内部标记或残片，重新生成一次')
+          reply = stripInternalReplyMetadata(await llm.chat(replyPrompt + REPLY_REPAIR_HINT, [...baseHistory, { role: 'user', content: replyContent }]))
+          if (!reply) { logger.warn('[回复清理] 重生成仍无有效正文，取消发送'); return }
         }
         if (hasImages && visionLLM?.guardReply) reply = visionLLM.guardReply(reply, imageDescription)
         // Markdown/分析文体残留清理（`**加粗**`、`### 标题`、`1. 编号`）——所有回复都过，

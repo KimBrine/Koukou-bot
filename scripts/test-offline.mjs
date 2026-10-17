@@ -13,6 +13,7 @@ const scripts = [
   'test-summary-reference-selection.mjs',
   'test-summary-capture.mjs',
   'test-vision-knowledge.mjs',
+  'test-reply-metadata.mjs',
 ]
 for (const file of scripts) {
   const result = spawnSync(process.execPath, [path.join(root, 'scripts', file)], { cwd: root, stdio: 'inherit', windowsHide: true })

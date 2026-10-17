@@ -3,6 +3,7 @@ import { measureText, planReply, shapeReply, shapeHint, decorationHint, ensureDe
 import { replyStillCurrent, currentMessageHint } from './messageFreshness.js'
 import { modelHistory } from './memory.js'
 import { CONVERSATION_RULES } from './conversationRules.js'
+import { stripInternalReplyMetadata, REPLY_REPAIR_HINT } from './replySanitizer.js'
 
 /**
  * 盯人回复：每 N 秒检查一次目标群里指定用户是否发过言，
@@ -106,10 +107,15 @@ export function createTargetWatch({ config, logger, onebot, llm, memory, buildSy
       const allowDecoration = Math.random() < config.emojiKeepRate
       const decoKind = allowDecoration ? pickDecorationKind() : ''
       const extra = `\n\n（现在的情况：群友（QQ ${userId}）刚才说了 ${count} 句话：「${said}」。请你自然回应他，像平时群聊那样随口接话，不用面面俱到，也不要罗列。）`
-      const reply = await llm.chat(
-        base + extra + currentMessageHint(latest.evt) + CONVERSATION_RULES + shapeHint(plan) + decorationHint(allowDecoration, decoKind),
-        modelHistory(memory.get(memoryKey).slice(-20)),
-      )
+      const prompt = base + extra + currentMessageHint(latest.evt) + CONVERSATION_RULES + shapeHint(plan) + decorationHint(allowDecoration, decoKind)
+      const history = modelHistory(memory.get(memoryKey).slice(-20))
+      let reply = stripInternalReplyMetadata(await llm.chat(prompt, history))
+      if (!reply && canContinue()) reply = stripInternalReplyMetadata(await llm.chat(prompt + REPLY_REPAIR_HINT, history))
+      if (!reply) {
+        for (const item of batch) { const index = pending.indexOf(item); if (index >= 0) pending.splice(index, 1) }
+        logger.warn('[盯人回复] 清理内部标记后无正文，取消本次发送')
+        return
+      }
       if (!canContinue()) {
         for (const item of batch) { const index = pending.indexOf(item); if (index >= 0) pending.splice(index, 1) }
         return
@@ -117,7 +123,7 @@ export function createTargetWatch({ config, logger, onebot, llm, memory, buildSy
       let lines = shapeReply(reply, plan)
       if (lines.length === 0) lines = ['嗯嗯']
       if (allowDecoration) lines = ensureDecoration(lines, reply, { kind: decoKind })
-      const finalLines = limitDecorationLines(lines, allowDecoration ? 1 : 0)
+      const finalLines = limitDecorationLines(lines, allowDecoration ? 1 : 0).map(stripInternalReplyMetadata).filter(Boolean)
       const sentLines = []
       await typingDelay({ min: config.humanDelayMinMs, max: config.humanDelayMaxMs })
       for (let i = 0; i < finalLines.length; i++) {

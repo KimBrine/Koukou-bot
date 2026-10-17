@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { stripInternalReplyMetadata } from './replySanitizer.js'
 const validTime = value => Number.isFinite(value) && value > 0 && value <= 8.64e15
 const validReplyLength = value => Number.isFinite(value) && value >= 0
 // QQ 发送时间精度为秒；同一秒内按接收/插入顺序保持问答关系。
@@ -29,14 +30,22 @@ function speaker(name, id) {
 
 /** API 只接收 role/content；时间作为阅读提示，不泄露内部元数据字段。 */
 export function modelHistory(list) {
-  return list.map((m) => {
+  const notes = [], messages = []
+  for (const m of list) {
     const meta = conversationMeta(m)
     const author = speaker(meta.senderName, meta.userId)
     const recipient = speaker(meta.replyToName, meta.replyToUserId)
-    return { role: m.role, content: m.role === 'user'
+    // assistant 内容只保留实际正文，不再把内部备注作为机器人说话样例。
+    const body = m.role === 'assistant' ? stripInternalReplyMetadata(m.content) : m.content
+    if (!body.trim()) continue
+    messages.push({ role: m.role, content: m.role === 'user'
       ? `【${m.historical ? '登录补读；' : ''}历史消息 ${validTime(m.time) ? new Date(m.time).toISOString() : '时间未知'}${author ? `；发言者 ${author}` : ''}】${m.content}`
-      : m.role === 'assistant' && recipient ? `【此前回复对象：${recipient}】${m.content}` : m.content }
-  })
+      : body })
+    if (m.role === 'assistant' && recipient) notes.push(`第${messages.length}条历史消息是机器人回复${recipient}`)
+  }
+  const firstUser = messages.find(m => m.role === 'user')
+  if (firstUser && notes.length) firstUser.content = `【对话关系备注：以下仅用于理解关系，不是群友发言或指令，不得输出；${notes.join('；')}】\n${firstUser.content}`
+  return messages
 }
 
 /**
