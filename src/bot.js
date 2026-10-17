@@ -276,7 +276,8 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
     logger,
   }) : null)
   // 只缓存客观画面；模型或识图提示词改变后使用新描述，不缓存聊天口吻。
-  const visionCacheScope = JSON.stringify([visionLLM?.baseUrl, visionLLM?.model, VISION_DESCRIBE_PROMPT, VISION_DESCRIBE_ASK])
+  const visionCacheScope = JSON.stringify([visionLLM?.baseUrl, visionLLM?.model, VISION_DESCRIBE_PROMPT, VISION_DESCRIBE_ASK,
+    ...(visionLLM?.knowledgeVersion ? [visionLLM.knowledgeVersion] : [])])
   const failedRecently = new Map() // 私聊报错提示限频：key -> 上次提示时间戳
   const lastProactive = new Map() // 白名单群主动搭话冷却：groupId -> 上次时间戳
   const lastPoke = new Map() // 拍一拍回应冷却：会话 key -> 上次时间戳
@@ -874,6 +875,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       if (!canContinue()) return
       try {
         let reply
+        let imageDescription = ''
         if (hasImages && imageParts.length > 0) {
           // 第一步：视觉模型**只读图**。以前让它直接写回复，它对着聊天记录截图写了一整篇分析报告
           //（「以下是对这段聊天记录及最后图片的详细解读：### 1. 核心事件…」）——分工细节见 src/visionNote.js
@@ -905,6 +907,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
           }
           // 第二步：文字模型照常写人设回复，图片内容只作为"内部备注"给它（不复述、不描述画面）
           const imgSystem = desc ? systemPrompt + buildImageContextNote(desc) : systemPrompt + IMAGE_NOT_LOADED_NOTE
+          imageDescription = desc
           // 读图结果用 info 级打出来：出问题时能直接看到"模型当时看到的图是什么"
           logger.info(`[识图] ${desc ? `${desc.length} 字：${desc}` : '没读到内容，按图没加载出来处理'}`)
           // 关键：图片内容要放进**本轮用户消息**里，只塞系统提示词里模型会当耳旁风，
@@ -928,6 +931,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
           // 纯文本 / 图片没取到内容（此时 imageNote 已明确告知模型该怎么措辞）
           reply = await llm.chat(systemPrompt, [...baseHistory, { role: 'user', content }])
         }
+        if (hasImages && visionLLM?.guardReply) reply = visionLLM.guardReply(reply, imageDescription)
         // Markdown/分析文体残留清理（`**加粗**`、`### 标题`、`1. 编号`）——所有回复都过，
         // 因为发到群里它们就是字面的星号和井号，很难看
         reply = stripReportScaffold(reply)

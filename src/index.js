@@ -10,6 +10,7 @@ import { OneBotClient } from './onebot.js'
 import { buildSystemPrompt } from './persona.js'
 import { createBot, imageToDataUrl } from './bot.js'
 import { createImageCache } from './imageCache.js'
+import { loadVisionKnowledge, createGroundedVisionClient } from './visionKnowledge.js'
 import { createSummaryVisionClient } from './summaryReferences.js'
 import { createDailySummary, buildSummaryPrompt } from './dailySummary.js'
 import { createWebSearch } from './search.js'
@@ -129,6 +130,7 @@ const llm = new DeepSeekClient({
 //   dashscope → qwen3.7-flash   平均 40.4s，描述同样准确但每张图写 2000+ token
 //   差的 21 倍几乎全在输出长度上 —— 提示词里写了"120 字以内"，qwen 并不照做。
 // 注意：deepseek-v4-pro **不能读图**（会回"无法查看图片"），别拿它当视觉模型。
+const visionKnowledge = loadVisionKnowledge(config.dataDir, logger)
 let visionLLM = null
 if (config.visionProvider === 'deepseek' ? config.deepseekApiKey : config.dashscopeApiKey) {
   const isDeepseek = config.visionProvider === 'deepseek'
@@ -149,6 +151,8 @@ if (config.visionProvider === 'deepseek' ? config.deepseekApiKey : config.dashsc
 }
 
 // 每日总结模型：独立客户端（token 预算大）；可切换提供方（DeepSeek / 通义千问）
+visionLLM = createGroundedVisionClient(visionLLM, visionKnowledge, logger)
+if (visionKnowledge) logger.info(`[角色辨认] 已加载本地对照资料：${visionKnowledge.characters.length} 个角色、${visionKnowledge.references.length} 张参考图；缓存版本 ${visionKnowledge.version.slice(0, 12)}`)
 const useQwenForSummary = Boolean(config.summaryModel) && config.summaryProvider === 'dashscope'
 const summaryLLM = new DeepSeekClient({
   apiKey: useQwenForSummary ? config.dashscopeApiKey : llm.apiKey,
@@ -174,7 +178,7 @@ const sharedImageCache = config.dataDir && config.visionCacheEnabled !== false ?
   maxEntries: config.visionCacheMaxEntries, maxImageBytes: config.visionMaxImageBytes,
   ttlMs: config.visionCacheTtlMs, logger,
 }) : null
-const summaryVisionLLM = createSummaryVisionClient({ config, logger })
+const summaryVisionLLM = createGroundedVisionClient(createSummaryVisionClient({ config, logger }), visionKnowledge, logger)
 
 // 长期记忆：把被近期窗口挤出去的旧消息压缩成持续累积的摘要（用便宜的总结模型）
 // 共享型号与设置，但不共享并发队列；记忆整理不能占住定时群总结的等待位置。

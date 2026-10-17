@@ -54,7 +54,8 @@ export async function prepareSummaryReferences({ records, onebot, visionLLM, ima
     parts.push(clipped); used += clipped.length
     return true
   }
-  const scope = JSON.stringify([visionLLM?.baseUrl, visionLLM?.model, SUMMARY_IMAGE_PROMPT, IMAGE_ASK])
+  const scope = JSON.stringify([visionLLM?.baseUrl, visionLLM?.model, SUMMARY_IMAGE_PROMPT, IMAGE_ASK,
+    ...(visionLLM?.knowledgeVersion ? [visionLLM.knowledgeVersion] : [])])
   try {
     for (const record of selected) {
       signal?.throwIfAborted(); taskSignal.throwIfAborted()
