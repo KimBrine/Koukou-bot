@@ -7,7 +7,6 @@ import { createLogger } from './logger.js'
 import { MemoryStore } from './memory.js'
 import { DeepSeekClient, isQwenHybridModel } from './deepseek.js'
 import { OneBotClient } from './onebot.js'
-import { buildSystemPrompt } from './persona.js'
 import { createBot, imageToDataUrl } from './bot.js'
 import { createImageCache } from './imageCache.js'
 import { loadVisionKnowledge, createGroundedVisionClient } from './visionKnowledge.js'
@@ -21,7 +20,7 @@ import { createChatSettings } from './chatSettings.js'
 import { createDailyPing } from './dailyPing.js'
 import { createAdminServer } from './admin/server.js'
 import { createRateLimiter } from './humanize.js'
-import { buildChatAppendix } from './chatAppendix.js'
+import { createChatPromptBuilder } from './chatPrompt.js'
 
 const config = loadConfig()
 const logger = createLogger(config.logLevel, config.logFile)
@@ -215,18 +214,7 @@ const dailySummary = createDailySummary({ config, logger, onebot, llm: { chat: s
   visionLLM: summaryVisionLLM, imageCache: sharedImageCache,
   loadImage: (image, signal) => imageToDataUrl(image, onebot, config, logger, {signal}), buildSummaryPromptFn: summaryPromptFn })
 
-const systemPrompt = config.persona
-  ? (opts) => {
-      const time = new Date().toLocaleString('zh-CN', { hour12: false })
-      const longMem = config.longMemoryEnabled && opts?.chatKey ? longMemory.get(opts.chatKey) : ''
-      const memPart = longMem ? `\n\n【你对这里更早之前的长期记忆】\n${longMem}\n（以上是压缩过的旧记忆，近期原话见下面的对话历史。）` : ''
-      // "今日已办"：抽猪猪这类当天做过的事，群聊刷几屏就滚出记忆窗口了，
-      // 单独记一份注入提示词，机器人当天就不会再说"我还没抽过"。
-      // （dailyPing 在本文件稍后创建；这里是闭包，真正调用时它已经初始化好了）
-      const doneToday = dailyPing?.todayNote?.(opts?.chatKey) ?? ''
-      return `${config.persona}${memPart}${doneToday}${buildChatAppendix({ time })}`
-    }
-  : (opts) => buildSystemPrompt({ botName: config.botName, now: opts?.now ?? new Date() })
+const systemPrompt = createChatPromptBuilder({ config, longMemory, todayNote: key => dailyPing?.todayNote?.(key) ?? '' })
 
 // 拍一拍回复语（poke-replies.txt，可自行增删）
 const pokeReplier = createPokeReplier(loadPokeReplies(config.rootDir, logger))

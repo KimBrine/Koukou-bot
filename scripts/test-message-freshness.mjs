@@ -99,7 +99,7 @@ try {
     memory.push('g1', 'user', '当前乙', { time: 3000 })
     memory.push('g1', 'user', '历史', { time: 1000, historical: true })
     assert.deepEqual(memory.get('g1').map(m => m.content), ['当前甲', '当前乙'])
-    assert.deepEqual(evicted, [{ content: '历史', time: 1000 }])
+    assert.deepEqual(evicted, [{ role: 'user', content: '历史', time: 1000, historical: true }])
   })
   await test('旧格式记忆仍可载入，未知时间标为背景', () => {
     const memory = store(); writeFileSync(memory.file, JSON.stringify({ g1: [{ role: 'user', content: '旧记忆' }] }))

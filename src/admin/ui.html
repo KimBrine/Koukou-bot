@@ -457,7 +457,7 @@ function previewPersonaImport(file, content){
         catch(e){ activationError = '；切换未成功，可稍后选择“切换使用”：' + e.message }
       }
       pending = false; close(); await load()
-      toast('已保存「' + imported.name + '」' + (activate && !activationError ? '并立即使用' : '，可从人格库切换') + activationError, !!activationError)
+      toast('已保存「' + imported.name + '」' + (activate && !activationError ? '并全局使用（旧会话记忆已备份并重置）' : '，可从人格库切换') + activationError, !!activationError)
     } catch(e){ error.textContent = e.message; pending = false; button.disabled = false }
   }
   root.querySelector('#personaImportName').focus()
@@ -465,8 +465,8 @@ function previewPersonaImport(file, content){
 function pagePersona(){
   const cur = personas.find(p=>p.name === selectedPersona) || personas.find(p=>p.active) || personas[0]
   return `
-  <h1>人格编辑</h1><div class="sub">当前生效：<b>${esc(activePersona || '（默认 persona.txt）')}</b> · 切换后下一条消息立刻使用新人格</div>
-  <h2>人格库 <span class="pill">${personas.length} 个</span></h2><div class="note">导入或新建的人格会保存在列表中。选择后可编辑、导出或切换使用。</div>
+  <h1>人格编辑</h1><div class="sub">当前生效：<b>${esc(activePersona || '（默认 persona.txt）')}</b> · 全局切换，所有群聊与私聊同步生效</div>
+  <h2>人格库 <span class="pill">${personas.length} 个</span></h2><div class="note">导入或新建的人格会保存在列表中。选择后可编辑、导出或切换使用。实际切换会先备份，再清空所有会话的近期与长期记忆，并取消旧人格待发回复；群总结原始记录与人格文件保留。重复启用未修改的人格不会清空。</div>
   <div class="flexbar">
     <select id="personaSel" aria-label="选择人格">${personas.map(p=>`<option value="${esc(p.name)}" ${cur?.name === p.name?'selected':''}>${esc(p.name)}${p.active?'（使用中）':''}</option>`).join('')}</select>
     <button class="btn primary" id="activate">切换使用</button>
@@ -477,7 +477,7 @@ function pagePersona(){
     <button class="btn danger" id="delPersona">删除当前选中</button>
   </div>
   <div class="card">
-    <h3>人格 prompt（直接编辑，保存后立即生效）</h3>
+    <h3>人格 prompt（保存到人格库，点击“切换使用”后生效）</h3>
     <textarea id="personaText" style="min-height:340px;font-size:13.5px">${esc(cur ? (personaCache[cur.name] ?? '') : '')}</textarea>
     <div class="flexbar">
       <button class="btn primary" id="savePersona">保存</button>
@@ -598,7 +598,7 @@ function pageLogs(){
   <div class="logbox mono" id="logBot" style="max-height:420px"></div>`
 }
 function pageData(){
-  return `<h1>数据与记忆</h1><div class="sub">查看会话记忆、长期记忆摘要和原始日报文件。</div>
+  return `<h1>数据与记忆</h1><div class="sub">查看会话记忆、长期记忆摘要和原始日报文件。旧消息归档后保留原文，回复时按当前话题检索相关片段；摘要优先保留约定、偏好、未完事项和更正。人格切换会开启独立记忆分区。</div>
   <h2>会话记忆</h2>
   <div class="card"><div class="row">
     <select id="memKey">${chats.map(c=>`<option value="${c.key}">${esc(c.name)}（${c.key}）</option>`).join('')}</select>
@@ -607,7 +607,8 @@ function pageData(){
   <h2>长期记忆摘要</h2>
   <div class="card"><div class="row">
     <select id="lmKey">${chats.map(c=>`<option value="${c.key}">${esc(c.name)}（${c.key}）</option>`).join('')}</select>
-    <button class="btn" id="loadLm">查看</button>
+    <input id="lmQuery" placeholder="可选：输入话题，找回相关旧原话" aria-label="长期记忆检索话题">
+    <button class="btn" id="loadLm">查看 / 检索</button>
   </div><div class="mono" id="lmBox" style="max-height:240px;overflow:auto;margin-top:10px">—</div></div>
   <h2>日报原始文件</h2>
   <div class="card" id="dailyFiles"></div>`
@@ -771,14 +772,16 @@ async function bind(){
   const sp = document.getElementById('savePersona')
   if (sp) sp.onclick = async () => {
     const name = document.getElementById('personaSel').value
-    try { await api('/api/action/save-persona', { name, content: document.getElementById('personaText').value }); personaCache[name] = document.getElementById('personaText').value; toast('人格已保存' + (personas.find(p=>p.active&&p.name===name) ? '，正在使用中，立刻生效' : '')) }
+    try { await api('/api/action/save-persona', { name, content: document.getElementById('personaText').value }); personaCache[name] = document.getElementById('personaText').value; toast('人格已保存；点击“切换使用”应用此版本') }
     catch(e){ toast(e.message, true) }
   }
   const act = document.getElementById('activate')
   if (act) act.onclick = async () => {
     const name = document.getElementById('personaSel').value
-    try { await api('/api/action/activate-persona', { name }); toast('已切换到「' + name + '」，立刻生效'); await load() }
+    act.disabled = true
+    try { const r = await api('/api/action/activate-persona', { name }); toast(r.changed ? '已全局切换到「' + name + '」，旧会话记忆已备份并重置' : '当前已经使用此人格，记忆未清空'); await load() }
     catch(e){ toast(e.message, true) }
+    finally { act.disabled = false }
   }
   const cr = document.getElementById('createPersona')
   if (cr) cr.onclick = async () => {
@@ -883,7 +886,7 @@ async function bind(){
   const llm = document.getElementById('loadLm')
   if (llm) llm.onclick = async () => {
     const key = document.getElementById('lmKey').value
-    const r = await api('/api/longmemory?key=' + encodeURIComponent(key))
+    const r = await api('/api/longmemory?key=' + encodeURIComponent(key) + '&q=' + encodeURIComponent(document.getElementById('lmQuery').value))
     document.getElementById('lmBox').textContent = r.text || '（这个会话还没有长期记忆摘要）'
   }
   const ds = document.getElementById('doSummary')

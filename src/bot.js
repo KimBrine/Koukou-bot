@@ -317,7 +317,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
    * - 第 1 行之前已经等过"打字延迟"；第 2、3 行之间只等一个较短的补句间隔；
    * - 每一行都计入每小时发言额度；后段行若触发限流则不再发（不会截断成半句话）。
    */
-  async function sendReplyLines(evt, lines, key, { directReply = false, perHourLimit = null } = {}) {
+  async function sendReplyLines(evt, lines, key, { directReply = false, perHourLimit = null, canSend = () => true } = {}) {
     const sent = []
     for (let i = 0; i < lines.length; i++) {
       if (i > 0) {
@@ -328,11 +328,12 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         }
         await typingDelay({ min: config.lineGapMinMs, max: config.lineGapMaxMs })
       }
-      if (!replyStillCurrent(onebot, evt, { latestOnly: evt.message_type !== 'private' && !directReply })) break
+      if (!canSend() || !replyStillCurrent(onebot, evt, { latestOnly: evt.message_type !== 'private' && !directReply })) break
       const cleanLine = stripInternalReplyMetadata(lines[i])
       if (!cleanLine) continue
       const outgoing = renderFacesToCq(cleanLine)
       for (const piece of splitLongMessage(outgoing)) {
+        if (!canSend()) return sent
         const receipt = evt.message_type === 'private' ? await onebot.sendPrivate(evt.user_id, piece) : await onebot.sendGroup(evt.group_id, piece)
         quotedMessages.rememberSent(evt, receipt, piece)
       }
@@ -605,6 +606,8 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
     flush() { autoPlusOne.flush() },
 
     async handleMessage(evt) {
+      const personaRevision = config.personaRevision || 0
+      const samePersona = () => personaRevision === (config.personaRevision || 0)
       quotedMessages.remember(evt)
       const isOwn = evt.post_type === 'message_sent' || evt.message_sent_type === 'self' ||
         (onebot.selfId && String(evt.user_id) === String(onebot.selfId))
@@ -672,6 +675,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       targetWatch?.note(evt, parsed)
       // 定时指令的链式判断：等目标账号"成功回应"后补发第二条指令
       if (dailyPing) await dailyPing.noteMessage(evt, parsed).catch(() => {})
+      if (!samePersona()) return
       if (repetition.suppress || autoPlusOne.wasTriggered(repetition)) {
         // 跟读与后续同内容消息直接结束，图片也不进入下载 / 识图 / 聊天模型。
         const key = `g${groupId}`
@@ -686,6 +690,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       // 引用目标要在回复策略前确认；引用他人的消息不提升为对机器人的直接提问。
       const quotedRaw = parsed.replyId ? await quotedMessages.resolve(evt, parsed.replyId) : null
       const replyToBot = quotedMessages.isFromBot(quotedRaw)
+      if (!samePersona()) return
       const directReply = isPrivate || parsed.atBot || replyToBot
       const incomingLen = measureText(parsed.text.replace(/\[合并聊天记录\]/g, '')) || (parsed.images.length > 0 ? 6 : 0)
       if (!parsed.text && !replyToBot) return
@@ -794,6 +799,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       const content = (isPrivate ? `${quotedTag}${parsed.text}` : `【${senderName}】${quotedTag}${parsed.text}`) + (forwardText ? `\n\n${forwardText}` : '')
       const userMeta = { time: messageTime(evt) ?? Date.now(), messageId: evt.message_id,
         replyLength: incomingLen, userId: evt.user_id, senderName }
+      if (!samePersona()) return
 
       // 上下文记忆：白名单群/总结群/私聊里的每条消息都记下来（即使机器人这次不回复），
       // 这样它像真人一样"在场"，而不是只记得自己参与过的那几句。
@@ -813,7 +819,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       logger.info(`[回复]（${decision.reason}）${isPrivate ? '私聊' : `群${groupId}`} ${senderName}：${parsed.text.slice(0, 50)}${quotedTag ? '（含引用）' : ''}${hasImages ? `（含 ${allImages.length} 张图，走视觉模型）` : ''}${enableTools ? '（可联网搜索）' : ''}`)
 
       // history 已包含刚记下的本条消息；各路径会自行追加本条，故这里先排除掉它
-      const history = memory.get(key)
+      const history = memory.get(key).slice(-(config.historyLimit || 99))
       const pushed = remember && config.contextRememberAll
       const hasCurrentId = evt.message_id != null && history.some(m => m.role === 'user' && m.messageId === String(evt.message_id))
       const rawHistory = pushed ? (hasCurrentId ? history.filter(m => m.role !== 'user' || m.messageId !== String(evt.message_id)) : history.slice(0, -1)) : history.slice()
@@ -866,7 +872,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       // 会话专属要求（控制台里设的），跟在人设后面、机械规则前面
       const customPart = eff?.customPrompt ? `\n\n【本会话的特别要求（管理员设置，优先遵守）】${eff.customPrompt}` : ''
       const systemPrompt =
-        buildSystemPrompt({ botName: config.botName, now: new Date(), chatKey: key }) +
+        buildSystemPrompt({ botName: config.botName, now: new Date(), chatKey: key, query: parsed.text }) +
         customPart +
         currentMessageHint(evt) +
         CONVERSATION_RULES +
@@ -874,7 +880,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         imageNote +
         shapeHint(plan) +
         decorationHint(allowDecoration, decoKind)
-      const canContinue = () => replyStillCurrent(onebot, evt, { latestOnly: !directReply }) && !autoPlusOne.wasTriggered(repetition)
+      const canContinue = () => samePersona() && replyStillCurrent(onebot, evt, { latestOnly: !directReply }) && !autoPlusOne.wasTriggered(repetition)
       if (!canContinue()) return
       try {
         let reply
@@ -968,8 +974,8 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         if (!canContinue()) return
         // 本条用户消息若未记入（未被追踪的群），这里补记，保证答案不悬空
         // 多行时逐行分条发送（像人说完一句再补一句）
-        finalLines = await sendReplyLines(evt, finalLines, key, { directReply, perHourLimit: hourCap })
-        if (!finalLines.length) return
+        finalLines = await sendReplyLines(evt, finalLines, key, { directReply, perHourLimit: hourCap, canSend: canContinue })
+        if (!finalLines.length || !samePersona()) return
         record = finalLines.join('\n')
         if (!pushed) memory.push(key, 'user', content, userMeta)
         memory.push(key, 'assistant', record, { replyToUserId: evt.user_id,
@@ -982,6 +988,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         const decoTag = /🍥/u.test(record) ? (hasDecoration(record.replace(/🍥/gu, '')) ? '（🍥+颜文字）' : '（🍥）') : hasDecoration(record) ? '（颜文字）' : '（纯文字）'
         logger.info(`[已回复]${finalLines.length > 1 ? `（${finalLines.length} 行分条）` : ''}${decoTag} ${senderName}：${record.replace(/\n/g, ' ⏎ ').slice(0, 60)}`)
       } catch (err) {
+        if (!samePersona()) return
         logger.error(`回复生成失败：${err.message}`)
         if (isPrivate) {
           const last = failedRecently.get(key) || 0

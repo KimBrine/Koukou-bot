@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import path from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
 import { stripInternalReplyMetadata } from './replySanitizer.js'
+import { writeJsonAtomic } from './stateFile.js'
 const validTime = value => Number.isFinite(value) && value > 0 && value <= 8.64e15
 const validReplyLength = value => Number.isFinite(value) && value >= 0
 // QQ 发送时间精度为秒；同一秒内按接收/插入顺序保持问答关系。
@@ -60,18 +60,19 @@ export class MemoryStore {
     this.chats = new Map()
     this.dirty = false
     this.timer = null
+    this.resetAt = 0
   }
 
   load() {
     try {
+      if (existsSync(`${this.file}.reset.json`)) this.resetAt = Number(JSON.parse(readFileSync(`${this.file}.reset.json`, 'utf8')).resetAt) || 0
       if (!existsSync(this.file)) return
       const data = JSON.parse(readFileSync(this.file, 'utf8'))
       if (data && typeof data === 'object') {
         for (const [key, list] of Object.entries(data)) {
           if (Array.isArray(list)) {
             const items = list
-              .filter((m) => m && typeof m.role === 'string' && typeof m.content === 'string')
-              .slice(-this.limit)
+              .filter((m) => m && typeof m.role === 'string' && typeof m.content === 'string' && (!this.resetAt || (validTime(m.time) && m.time >= this.resetAt)))
               .map((m) => ({ role: m.role, content: m.content,
                 time: validTime(m.time) ? m.time : null,
                 ...(m.historical ? { historical: true } : {}),
@@ -98,31 +99,40 @@ export class MemoryStore {
   }
 
   push(key, role, content, meta = {}) {
+    const time = meta.time === null ? null : validTime(meta.time) ? meta.time : Date.now()
+    if (this.resetAt && (!validTime(time) || time < this.resetAt)) return false
     const list = this.get(key)
     const messageId = meta.messageId == null ? '' : String(meta.messageId)
     if (messageId && list.some(m => m.role === role && m.messageId === messageId)) return false
-    const time = meta.time === null ? null : validTime(meta.time) ? meta.time : Date.now()
     list.push({ role, content, time, ...(meta.historical ? { historical: true } : {}),
       ...(validReplyLength(meta.replyLength) ? { replyLength: meta.replyLength } : {}), ...(messageId ? { messageId } : {}),
       ...conversationMeta(meta) })
     list.sort(chronological)
-    const evicted = []
-    while (list.length > this.limit) {
-      const old = list.shift()
-      if (old && old.role === 'user') evicted.push({ content: old.content, time: old.time })
+    const count = Math.max(0, list.length - this.limit)
+    const evicted = list.slice(0, count)
+    let archived = true
+    if (evicted.length && typeof this.onEvict === 'function') {
+      try { this.onEvict(key, evicted) }
+      catch (err) { archived = false; this.logger?.warn?.(`旧消息归档失败，暂留近期记忆：${err.message}`) }
     }
+    if (archived && count) list.splice(0, count)
     this.dirty = true
     this.#scheduleSave()
-    // 被挤出去的旧消息交给长期记忆（压缩成摘要），而不是直接丢掉
-    if (evicted.length > 0 && typeof this.onEvict === 'function') {
-      try {
-        this.onEvict(key, evicted)
-      } catch {
-        /* 长期记忆失败不影响主流程 */
-      }
-    }
     return true
   }
+
+  snapshot() { return structuredClone({ chats: Object.fromEntries(this.chats), resetAt: this.resetAt }) }
+
+  restore(value) {
+    writeJsonAtomic(`${this.file}.reset.json`, { resetAt: value.resetAt })
+    writeJsonAtomic(this.file, value.chats)
+    if (this.timer) clearTimeout(this.timer)
+    this.timer = null; this.dirty = false
+    this.resetAt = value.resetAt; this.chats = new Map(Object.entries(structuredClone(value.chats)))
+  }
+
+  // QQ 时间精度只有秒；保留切换后同一秒到达的新消息，旧请求另由人格版本隔离。
+  clear() { this.restore({ chats: {}, resetAt: Math.floor(Date.now() / 1000) * 1000 }) }
 
   #scheduleSave() {
     if (this.timer) clearTimeout(this.timer)
@@ -135,12 +145,11 @@ export class MemoryStore {
 
   flush() {
     if (!this.dirty) return
-    this.dirty = false
     try {
-      mkdirSync(path.dirname(this.file), { recursive: true })
       const obj = {}
       for (const [key, list] of this.chats) obj[key] = list
-      writeFileSync(this.file, JSON.stringify(obj, null, 2))
+      writeJsonAtomic(this.file, obj)
+      this.dirty = false
     } catch (err) {
       this.logger.warn(`保存记忆失败：${err.message}`)
     }

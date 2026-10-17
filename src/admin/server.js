@@ -5,6 +5,8 @@ import net from 'node:net'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { keyToGroupId, keyToUserId } from '../chatSettings.js'
+import { activatePersona } from '../personaSwitch.js'
+import { writeTextAtomic } from '../stateFile.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const UI_FILE = path.join(__dirname, 'ui.html')
@@ -107,14 +109,15 @@ function readEnvFile(file) {
 }
 
 /** 只改指定 key 的值，保留 .env 里的注释与顺序；没有的追加到末尾 */
-function writeEnvFile(file, patch) {
+function writeEnvFile(file, patch, { atomic = false } = {}) {
   let text = existsSync(file) ? readFileSync(file, 'utf8') : ''
   for (const [key, value] of Object.entries(patch)) {
     const re = new RegExp(`^(\\s*(?:export\\s+)?${key}\\s*=).*$`, 'm')
     if (re.test(text)) text = text.replace(re, (_, prefix) => prefix + value)
     else text += `${text.endsWith('\n') || text === '' ? '' : '\n'}${key}=${value}\n`
   }
-  writeFileSync(file, text)
+  if (atomic) writeTextAtomic(file, text)
+  else writeFileSync(file, text)
 }
 
 function tailFile(file, lineCount, filter = '') {
@@ -412,7 +415,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     },
     'GET /api/longmemory': async (query) => ({
       key: query.key || null,
-      text: longMemory?.get?.(String(query.key || '')) ?? '',
+      text: longMemory?.get?.(String(query.key || ''), { query: String(query.q || '').slice(0, 500) }) ?? '',
     }),
     'GET /api/daily': async () => {
       const out = []
@@ -704,12 +707,10 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       if (!name) throw new Error('缺少人格名')
       const file = personaPath(name)
       if (!existsSync(file)) throw new Error('人格文件不存在')
-      writeEnvFile(envFile, { ACTIVE_PERSONA: name })
-      // 立刻把新人格读进 config（下一条消息就用新的，无需重启）
-      config.activePersona = name
-      config.persona = readFileSync(file, 'utf8').trim()
+      const result = activatePersona({ name, content: readFileSync(file, 'utf8').trim(), config, memory, longMemory, targetWatch,
+        persist: () => writeEnvFile(envFile, { ACTIVE_PERSONA: name }, { atomic: true }) })
       logger?.info?.(`[控制台] 切换人格为「${name}」`)
-      return { ok: true, persona: config.persona }
+      return result
     },
     async 'restart-bot'() {
       logger?.info?.('[控制台] 收到重启机器人指令')

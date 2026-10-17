@@ -84,18 +84,20 @@ export function createTargetWatch({ config, logger, onebot, llm, memory, buildSy
     }
 
     busy = true
+    const personaRevision = config.personaRevision || 0
+    const samePersona = () => personaRevision === (config.personaRevision || 0)
     try {
       const memoryKey = `g${groupId}`
       const batch = pending.slice()
       const latest = batch.at(-1)
-      const canContinue = () => replyStillCurrent(onebot, latest.evt, { latestOnly: true }) && !repliedIds.has(latest.id)
+      const canContinue = () => samePersona() && replyStillCurrent(onebot, latest.evt, { latestOnly: true }) && !repliedIds.has(latest.id)
       if (!canContinue()) {
         for (const item of batch) { const index = pending.indexOf(item); if (index >= 0) pending.splice(index, 1) }
         return
       }
       const count = batch.length
       const said = batch.map((p) => p.text).join(' ／ ')
-      const base = buildSystemPrompt({ chatKey: memoryKey, now: new Date() })
+      const base = buildSystemPrompt({ chatKey: memoryKey, now: new Date(), query: said })
       // 回复长度同样跟着对方走；盯人场景最多 2 行（@ 完顺手补一句就够，不宜刷屏）
       const plan = planReply({
         incomingLen: measureText(said),
@@ -146,7 +148,7 @@ export function createTargetWatch({ config, logger, onebot, llm, memory, buildSy
         rateLimiter?.record(chatKey)
       }
       for (const item of batch) { const index = pending.indexOf(item); if (index >= 0) pending.splice(index, 1) }
-      if (!sentLines.length) return
+      if (!sentLines.length || !samePersona()) return
       const record = sentLines.join('\n')
       // 写入记忆时不加任何前缀标记，否则模型会模仿这种格式带进正式回复
       memory.push(memoryKey, 'assistant', record, { replyToUserId: userId,
@@ -173,5 +175,6 @@ export function createTargetWatch({ config, logger, onebot, llm, memory, buildSy
     timer = null
   }
 
-  return { note, markReplied, tick, start, stop, pendingCount: () => pending.length, enabled, groupId, userId }
+  function resetPending() { pending.length = 0; repliedIds.clear() }
+  return { note, markReplied, tick, start, stop, resetPending, pendingCount: () => pending.length, enabled, groupId, userId }
 }
