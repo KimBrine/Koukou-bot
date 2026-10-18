@@ -290,7 +290,16 @@ function pageOverview(){
     const chat = chats.find(x => String(x.id) === String(g.groupId))
     return '<tr><td>' + esc(chat?.name || ('群 ' + g.groupId)) + '</td><td class="mut">' + g.groupId + '</td><td>' + g.count + '</td></tr>'
   }).join('')
-  return `
+  const admins = (state?.config?.adminUsers || [])
+  const adminCard = [
+    '<section class="card" style="margin-bottom:18px"><h2>管理员（最高权限）</h2>',
+    '<div class="note">能用 /群总结、/状态、/清除记忆、/help 等特权指令的 QQ 号。逗号分隔，保存后立刻生效，不用改文件也不用重启。</div>',
+    '<div class="flexbar"><input type="text" id="adminUsersInput" style="flex:1" placeholder="例如：1395168850,2647687729" value="' + esc(admins.join(',')) + '">',
+    '<button class="btn primary" id="adminUsersSave">保存管理员</button></div>',
+    '<div class="mut" style="margin-top:8px">当前管理员：' + (admins.length ? admins.map(esc).join('、') : '未配置（任何人都能触发特权指令，建议至少配一个）') + '</div>',
+    '</section>'
+  ].join('')
+    return adminCard + `
   <div class="hero"><span class="hero-status">${dot(b.online === true)} ${accountStatusText(b)}</span>
     <h1>机器人工作台</h1><div class="sub"><span id="updatedAt">${new Date().toLocaleTimeString('zh-CN',{hour12:false})}</span> 更新 · 集中管理运行状态与操作</div></div>
   <div class="grid g3">${cards.map(([k,v,s]) => `<div class="card"><h3>${k}</h3><div class="kpi">${v}</div><div class="note">${s||''}</div></div>`).join('')}</div>
@@ -767,6 +776,19 @@ async function bind(){
     try { await api('/api/action/set-chat', { key, patch }); toast('已保存并即时生效'); await load() }
     catch(e){ toast('保存失败：' + e.message, true) }
   })
+  // 工作台：管理员编辑（写入 ADMIN_USERS，立刻生效）
+  const adminSaveBtn = document.getElementById('adminUsersSave')
+  if (adminSaveBtn) adminSaveBtn.onclick = async () => {
+    const input = document.getElementById('adminUsersInput')
+    const value = input.value.split(',').map(s => s.trim()).filter(Boolean).join(',')
+    adminSaveBtn.disabled = true
+    try {
+      await api('/api/action/set-config', { key: 'ADMIN_USERS', value })
+      await load()
+      toast('管理员已保存，立刻生效')
+    } catch (e) { toast('保存失败：' + e.message, true) }
+    adminSaveBtn.disabled = false
+  }
   // 自定义指令：编辑 / 删除 / 保存
   document.querySelectorAll('[data-edit]').forEach(el => el.onclick = () => {
     editingCmd = customCommands.find(c => c.id === el.dataset.edit) || {}
