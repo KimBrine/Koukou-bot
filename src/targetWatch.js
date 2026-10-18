@@ -4,6 +4,7 @@ import { replyStillCurrent, currentMessageHint } from './messageFreshness.js'
 import { modelHistory } from './memory.js'
 import { conversationRules } from './conversationRules.js'
 import { stripInternalReplyMetadata, REPLY_REPAIR_HINT } from './replySanitizer.js'
+import { prepareSessionPersona, sameSessionPersona } from './conversationSessions.js'
 
 /**
  * 盯人回复：每 N 秒检查一次目标群里指定用户是否发过言，
@@ -11,7 +12,7 @@ import { stripInternalReplyMetadata, REPLY_REPAIR_HINT } from './replySanitizer.
  * - 被 @ 的消息交给主流程回复，这里不重复处理；
  * - 主流程若刚回复过同一个人，这里也会跳过，避免出现两条回复。
  */
-export function createTargetWatch({ config, logger, onebot, llm, memory, buildSystemPrompt, replyLog, rateLimiter }) {
+export function createTargetWatch({ config, logger, onebot, llm, memory, longMemory, chatSettings, buildSystemPrompt, replyLog, rateLimiter }) {
   // 这些值改成**运行时读取**：控制台里改了盯人目标立刻生效，不用重启
   const G = () => String(config.targetWatchGroup || '')
   const U = () => String(config.targetWatchUser || '')
@@ -20,6 +21,7 @@ export function createTargetWatch({ config, logger, onebot, llm, memory, buildSy
   const repliedIds = new Set() // 主流程已经回复过的消息 id（精确剔除，避免误吞新消息）
   let timer = null
   let busy = false
+  let targetRevision = 0
 
   /** 主流程回复了某条消息时调用，避免盯人逻辑重复回复 */
   function markReplied(messageId) {
@@ -85,20 +87,27 @@ export function createTargetWatch({ config, logger, onebot, llm, memory, buildSy
     }
 
     busy = true
+    const targetToken = targetRevision
+    const groupId = G(), userId = U()
+    const memoryKey = `g${groupId}`
+    const memoryToken = memory.version?.(memoryKey)
     const personaRevision = config.personaRevision || 0
-    const samePersona = () => personaRevision === (config.personaRevision || 0)
+    const samePersona = () => personaRevision === (config.personaRevision || 0) && memoryToken === memory.version?.(memoryKey)
     try {
-      const memoryKey = `g${G()}`
+      const personaText = prepareSessionPersona({ config, memory, longMemory, chatSettings, targetWatch: { resetPending }, key: memoryKey })
+      if (!samePersona() || targetToken !== targetRevision || !isEnabled() || !pending.length) return
       const batch = pending.slice()
       const latest = batch.at(-1)
-      const canContinue = () => samePersona() && replyStillCurrent(onebot, latest.evt, { latestOnly: true }) && !repliedIds.has(latest.id)
+      const canContinue = () => targetToken === targetRevision && isEnabled() && groupId === G() && userId === U() &&
+        samePersona() && sameSessionPersona(config, chatSettings, memoryKey, personaText) &&
+        replyStillCurrent(onebot, latest.evt, { latestOnly: true }) && !repliedIds.has(latest.id)
       if (!canContinue()) {
         for (const item of batch) { const index = pending.indexOf(item); if (index >= 0) pending.splice(index, 1) }
         return
       }
       const count = batch.length
       const said = batch.map((p) => p.text).join(' ／ ')
-      const base = buildSystemPrompt({ chatKey: memoryKey, now: new Date(), query: said })
+      const base = buildSystemPrompt({ chatKey: memoryKey, now: new Date(), query: said, personaText })
       // 回复长度同样跟着对方走；盯人场景最多 2 行（@ 完顺手补一句就够，不宜刷屏）
       const plan = planReply({
         incomingLen: measureText(said),
@@ -110,7 +119,7 @@ export function createTargetWatch({ config, logger, onebot, llm, memory, buildSy
       const allowDecoration = Math.random() < config.emojiKeepRate
       const decorationPreset = config.localProfile?.decoration
       const decoKind = allowDecoration ? pickDecorationKind(Math.random, decorationPreset) : ''
-      const extra = `\n\n（现在的情况：群友（QQ ${U()}）刚才说了 ${count} 句话：「${said}」。请你自然回应他，像平时群聊那样随口接话，不用面面俱到，也不要罗列。）`
+      const extra = `\n\n（现在的情况：群友（QQ ${userId}）刚才说了 ${count} 句话：「${said}」。请你自然回应他，像平时群聊那样随口接话，不用面面俱到，也不要罗列。）`
       const prompt = base + extra + currentMessageHint(latest.evt) + conversationRules(config) + shapeHint(plan) + decorationHint(allowDecoration, decoKind, decorationPreset)
       const history = modelHistory(memory.get(memoryKey).slice(-20))
       let reply = stripInternalReplyMetadata(await llm.chat(prompt, history))
@@ -142,21 +151,21 @@ export function createTargetWatch({ config, logger, onebot, llm, memory, buildSy
         }
         // @ 只带在第一行上，补发的行就是普通消息，像真人 @ 完接着补一句
         const segments = i === 0
-          ? [{ type: 'at', data: { qq: U() } }, { type: 'text', data: { text: ` ${finalLines[i]}` } }]
+          ? [{ type: 'at', data: { qq: userId } }, { type: 'text', data: { text: ` ${finalLines[i]}` } }]
           : [{ type: 'text', data: { text: finalLines[i] } }]
         if (!canContinue()) break
-        await onebot.sendGroup(G(), segments)
+        await onebot.sendGroup(groupId, segments)
         sentLines.push(finalLines[i])
         rateLimiter?.record(chatKey)
       }
       for (const item of batch) { const index = pending.indexOf(item); if (index >= 0) pending.splice(index, 1) }
-      if (!sentLines.length || !samePersona()) return
+      if (!sentLines.length || !canContinue()) return
       const record = sentLines.join('\n')
       // 写入记忆时不加任何前缀标记，否则模型会模仿这种格式带进正式回复
-      memory.push(memoryKey, 'assistant', record, { replyToUserId: U(),
+      memory.push(memoryKey, 'assistant', record, { replyToUserId: userId,
         replyToName: latest.evt.sender?.card || latest.evt.sender?.nickname,
         replyToMessageId: latest.evt.message_id })
-      logger.info(`[盯人回复]${finalLines.length > 1 ? `（${finalLines.length} 行分条）` : ''} @${U()}：${record.replace(/\n/g, ' ⏎ ')}`)
+      logger.info(`[盯人回复]${finalLines.length > 1 ? `（${finalLines.length} 行分条）` : ''} @${userId}：${record.replace(/\n/g, ' ⏎ ')}`)
     } catch (err) {
       logger.warn(`[盯人回复] 失败：${err.message}`)
     } finally {
@@ -180,6 +189,7 @@ export function createTargetWatch({ config, logger, onebot, llm, memory, buildSy
   function resetPending() { pending.length = 0; repliedIds.clear() }
   /** 运行时设置盯人目标（控制台调用）：改配置 → 清空队列 → 按新目标重启定时器 */
   function configure({ enabled: en, groupId: g, userId: u } = {}) {
+    targetRevision++
     if (en !== undefined) config.targetWatchEnabled = Boolean(en)
     if (g !== undefined) config.targetWatchGroup = String(g || '')
     if (u !== undefined) config.targetWatchUser = String(u || '')

@@ -36,10 +36,10 @@ try {
 
   // ---- 会话级人设字段 ----
   const cs = createChatSettings({ file: path.join(root, 'chat-settings.json'), logger })
-  cs.set('g111', { persona: '夜璃' })
-  assert.equal(cs.get('g111').persona, '夜璃')
+  cs.set('g111', { persona: '测试角色' })
+  assert.equal(cs.get('g111').persona, '测试角色')
   assert.equal(cs.get('g222').persona, '', '未设置时跟随全局')
-  assert.equal(cs.resolve('g111', { proactiveRate: 0.2 }).persona, '夜璃')
+  assert.equal(cs.resolve('g111', { proactiveRate: 0.2 }).persona, '测试角色')
   cs.set('g111', { persona: '' })
   assert.equal(cs.get('g111').persona, '')
 

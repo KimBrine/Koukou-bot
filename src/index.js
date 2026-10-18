@@ -15,7 +15,8 @@ import { createDailySummary, buildSummaryPrompt } from './dailySummary.js'
 import { createWebSearch } from './search.js'
 import { loadPokeReplies, createPokeReplier } from './pokeReplies.js'
 import { createLongMemory } from './longMemory.js'
-import { createCustomCommands, renderReply } from './customCommands.js'
+import { createCustomCommands } from './customCommands.js'
+import { createCustomCommandSchedule } from './customCommandSchedule.js'
 import { createTargetWatch } from './targetWatch.js'
 import { createChatSettings } from './chatSettings.js'
 import { createDailyPing } from './dailyPing.js'
@@ -227,7 +228,8 @@ const pokeReplier = createPokeReplier(loadPokeReplies(config.rootDir, logger, co
 const replyLog = new Map() // `${groupId}:${userId}` -> 上次回复时间戳
 // 反检测限流：所有发送路径共用（每个会话每小时上限 + 最小间隔）
 const rateLimiter = createRateLimiter({ perHour: config.rateLimitPerHour, minGapMs: config.rateLimitMinGapMs })
-const targetWatch = createTargetWatch({ config, logger, onebot, llm, memory, buildSystemPrompt: systemPrompt, replyLog, rateLimiter })
+const chatSettings = createChatSettings({ file: path.join(config.dataDir, 'chat-settings.json'), logger })
+const targetWatch = createTargetWatch({ config, logger, onebot, llm, memory, buildSystemPrompt: systemPrompt, replyLog, rateLimiter, longMemory, chatSettings })
 
 // 定时指令：按配置时点到指定群 @ 目标账号，发送固定内容。
 const dailyPing = createDailyPing({
@@ -240,7 +242,6 @@ const dailyPing = createDailyPing({
 })
 
 // 每个会话（群/私聊）的独立设置：控制台里改，存 data/chat-settings.json，改完立刻生效
-const chatSettings = createChatSettings({ file: path.join(config.dataDir, 'chat-settings.json'), logger })
 
 // 运行期计数：控制台总览用（不落盘，重启归零）
 const runtimeStats = {
@@ -310,24 +311,12 @@ if (config.adminEnabled) {
   adminServer.start(config.adminPort)
 }
 
-// 自定义指令的定时推送：每分钟检查一次，到点按模板发到目标群（不调用模型）
-const customTimer = setInterval(async () => {
-  try {
-    for (const item of customCommands.due(Date.now())) {
-      const text = renderReply(item.command.reply, { now: Date.now() })
-      try {
-        await onebot.sendGroup(item.groupId, [{ type: 'text', data: { text } }])
-        memory.push(`g${item.groupId}`, 'assistant', text, { time: Date.now() })
-        logger.info(`[定时指令] 「${item.command.name}」已发到群 ${item.groupId}`)
-      } catch (err) {
-        logger.warn(`[定时指令] 群 ${item.groupId} 发送失败：${err.message}`)
-      }
-    }
-  } catch (err) {
-    logger.warn(`[定时指令] 检查失败：${err.message}`)
-  }
-}, 30000)
-if (customTimer.unref) customTimer.unref()
+// 独立持久化发送状态，重启后先核对已发送/待核验记录。
+const customSchedule = createCustomCommandSchedule({
+  file: path.join(config.dataDir, 'custom-command-delivery.json'), commands: customCommands,
+  onebot, memory, rateLimiter, logger,
+})
+customSchedule.start()
 
 onebot.on('message', (evt) => {
   bot.handleMessage(evt).catch((err) => logger.error(`处理消息异常：${err?.stack || err}`))
@@ -346,6 +335,7 @@ function shutdown() {
   logger.info('正在关闭，保存记忆…')
   memory.flush()
   bot.flush()
+  customSchedule.stop()
   dailySummary.stop()
   onebot.stop()
   setTimeout(() => process.exit(0), 300).unref()
@@ -413,7 +403,7 @@ if (config.idCheckEnabled) {
     config.idCheckOperators.length > 0 ? `仅限 QQ ${config.idCheckOperators.join('、')}` : '⚠ 任何人都能触发（ID_CHECK_OPERATORS 为空）'
   logger.info(`群名片核对已启用：群 ${where}｜${who}`)
 }
-logger.info(`管理员（ADMIN_USERS）：${config.adminUsers.length ? config.adminUsers.join('、') : '未配置（任何人都能触发特权指令，建议配置）'}`)
+logger.info(`管理员（ADMIN_USERS）：${config.adminUsers.length ? config.adminUsers.join('、') : '未配置（群总结等沿用公开范围；QQ 清除记忆指令不可用）'}`)
 {
   const cmds = typeof customCommands?.all === 'function' ? customCommands.all() : []
   const sched = cmds.filter((c) => c.scheduleEnabled && (c.scheduleTimes || []).length).length

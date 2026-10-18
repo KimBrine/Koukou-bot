@@ -61,18 +61,25 @@ export class MemoryStore {
     this.dirty = false
     this.timer = null
     this.resetAt = 0
+    this.keyResetAt = {}
+    this.generation = 0
+    this.keyVersions = new Map()
   }
 
   load() {
     try {
-      if (existsSync(`${this.file}.reset.json`)) this.resetAt = Number(JSON.parse(readFileSync(`${this.file}.reset.json`, 'utf8')).resetAt) || 0
+      if (existsSync(`${this.file}.reset.json`)) {
+        const saved = JSON.parse(readFileSync(`${this.file}.reset.json`, 'utf8'))
+        this.resetAt = Number(saved.resetAt) || 0
+        this.keyResetAt = saved.keyResetAt || {}
+      }
       if (!existsSync(this.file)) return
       const data = JSON.parse(readFileSync(this.file, 'utf8'))
       if (data && typeof data === 'object') {
         for (const [key, list] of Object.entries(data)) {
           if (Array.isArray(list)) {
             const items = list
-              .filter((m) => m && typeof m.role === 'string' && typeof m.content === 'string' && (!this.resetAt || (validTime(m.time) && m.time >= this.resetAt)))
+              .filter((m) => m && typeof m.role === 'string' && typeof m.content === 'string' && (!this.cutoff(key) || (validTime(m.time) && m.time >= this.cutoff(key))))
               .map((m) => ({ role: m.role, content: m.content,
                 time: validTime(m.time) ? m.time : null,
                 ...(m.historical ? { historical: true } : {}),
@@ -100,7 +107,7 @@ export class MemoryStore {
 
   push(key, role, content, meta = {}) {
     const time = meta.time === null ? null : validTime(meta.time) ? meta.time : Date.now()
-    if (this.resetAt && (!validTime(time) || time < this.resetAt)) return false
+    if (this.cutoff(key) && (!validTime(time) || time < this.cutoff(key))) return false
     const list = this.get(key)
     const messageId = meta.messageId == null ? '' : String(meta.messageId)
     if (messageId && list.some(m => m.role === role && m.messageId === messageId)) return false
@@ -121,25 +128,33 @@ export class MemoryStore {
     return true
   }
 
-  snapshot() { return structuredClone({ chats: Object.fromEntries(this.chats), resetAt: this.resetAt }) }
+  cutoff(key) { return Math.max(this.resetAt, Number(this.keyResetAt[key]) || 0) }
+  version(key) { return `${this.generation}:${this.keyVersions.get(key) || 0}` }
+  snapshot() { return structuredClone({ chats: Object.fromEntries(this.chats), resetAt: this.resetAt, keyResetAt: this.keyResetAt }) }
 
   restore(value) {
-    writeJsonAtomic(`${this.file}.reset.json`, { resetAt: value.resetAt })
+    writeJsonAtomic(`${this.file}.reset.json`, { resetAt: value.resetAt, keyResetAt: value.keyResetAt || {} })
     writeJsonAtomic(this.file, value.chats)
     if (this.timer) clearTimeout(this.timer)
     this.timer = null; this.dirty = false
-    this.resetAt = value.resetAt; this.chats = new Map(Object.entries(structuredClone(value.chats)))
+    this.resetAt = value.resetAt; this.keyResetAt = { ...(value.keyResetAt || {}) }
+    this.chats = new Map(Object.entries(structuredClone(value.chats)))
+    this.generation++; this.keyVersions.clear()
   }
 
   // QQ 时间精度只有秒；保留切换后同一秒到达的新消息，旧请求另由人格版本隔离。
   clear() { this.restore({ chats: {}, resetAt: Math.floor(Date.now() / 1000) * 1000 }) }
-  /** 只清一个会话的近期记忆（不动切换边界），返回清掉的条数 */
+  /** 单会话也建立持久补读边界与运行中请求版本。 */
   clearKey(key) {
     const list = this.chats.get(key)
     const removed = Array.isArray(list) ? list.length : 0
-    this.chats.delete(key)
-    this.dirty = true
-    this.flush()
+    const keyResetAt = { ...this.keyResetAt, [key]: Math.floor(Date.now() / 1000) * 1000 }
+    const chats = Object.fromEntries(this.chats); delete chats[key]
+    writeJsonAtomic(`${this.file}.reset.json`, { resetAt: this.resetAt, keyResetAt })
+    writeJsonAtomic(this.file, chats)
+    this.keyResetAt = keyResetAt; this.chats.delete(key)
+    this.keyVersions.set(key, (this.keyVersions.get(key) || 0) + 1)
+    this.dirty = false
     return removed
   }
   /** 当前有记忆的会话键 */

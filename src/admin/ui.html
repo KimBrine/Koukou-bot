@@ -293,10 +293,10 @@ function pageOverview(){
   const admins = (state?.config?.adminUsers || [])
   const adminCard = [
     '<section class="card" style="margin-bottom:18px"><h2>管理员（最高权限）</h2>',
-    '<div class="note">能用 /群总结、/状态、/清除记忆、/help 等特权指令的 QQ 号。逗号分隔，保存后立刻生效，不用改文件也不用重启。</div>',
-    '<div class="flexbar"><input type="text" id="adminUsersInput" style="flex:1" placeholder="例如：1395168850,2647687729" value="' + esc(admins.join(',')) + '">',
+    '<div class="note">配置群总结与清除记忆等指令的管理员 QQ 号，逗号分隔，保存后立即生效。/help 人人可用；清除记忆要求显式管理员授权。id_check 还需符合对应群与操作员规则。</div>',
+    '<div class="flexbar"><input type="text" id="adminUsersInput" style="flex:1" placeholder="例如：200000011,200000012" value="' + esc(admins.join(',')) + '">',
     '<button class="btn primary" id="adminUsersSave">保存管理员</button></div>',
-    '<div class="mut" style="margin-top:8px">当前管理员：' + (admins.length ? admins.map(esc).join('、') : '未配置（任何人都能触发特权指令，建议至少配一个）') + '</div>',
+    '<div class="mut" style="margin-top:8px">当前管理员：' + (admins.length ? admins.map(esc).join('、') : '未配置（群总结等沿用公开范围；清除记忆须显式配置管理员）') + '</div>',
     '</section>'
   ].join('')
     return adminCard + `
@@ -368,7 +368,7 @@ function chatRow(c){
         <input type="text" data-f="quietHours" value="${esc(quietVal)}" placeholder="如 01:00-07:00，留空=不设" style="width:200px">
         <label class="mut" style="font-size:12px"><input type="checkbox" data-global="quietHours" ${r.quietHours===null||r.quietHours===undefined?'checked':''}> 沿用全局(${esc((state?.config?.quietHours)||'未设')})</label>
       </div></div>
-      <div class="frow"><label>本会话人格</label><div><select data-f="persona">${personaOptions(r.persona)}</select><div class="mut" style="font-size:12px;margin-top:4px">选了别人格时，这个会话用该人格回复（记忆仍按会话独立保存）</div></div></div>
+      <div class="frow"><label>本会话人格</label><div><select data-f="persona">${personaOptions(r.persona)}</select><div class="mut" style="font-size:12px;margin-top:4px">选了别人格时，这个会话用该人格回复（切换时仅重置本会话记忆，清理前自动备份）</div></div></div>
       <div class="frow"><label>备注名</label><div><input type="text" data-f="note" value="${esc(r.note||'')}" placeholder="只影响这里的显示"></div></div>
       <div class="frow"><label>客制化 prompt</label><div>
         <textarea data-f="customPrompt" placeholder="这个会话专属的人设/要求，会附加到系统提示词后面。例如：这个群是我的同事群，说话正式一点，不要提游戏。">${esc(r.customPrompt||'')}</textarea>
@@ -672,7 +672,7 @@ function pageCommands(){
     '</select></div></div>',
     '<div class="frow"><label>群号</label><div><input type="text" id="cmdGroups" value="' + esc((e.groups||[]).join(',')) + '" placeholder="留空=所有群；多个逗号分隔"><div class="mut" style="font-size:12px;margin-top:4px">可用群：' + (joinedGroups||[]).map(function(g){return esc(g.name)+'（'+g.id+'）'}).join('、') + '</div></div></div>',
     '<div class="frow"><label>冷却(秒)</label><div><input type="number" id="cmdCooldown" min="0" max="86400" value="' + (e.cooldownSec||0) + '"><div class="mut" style="font-size:12px;margin-top:4px">同一会话最短间隔，0=不限制</div></div></div>',
-    '<div class="frow"><label>定时推送</label><div><label class="chk"><input type="checkbox" id="cmdSchedEnabled"' + (e.scheduleEnabled?' checked':'') + '> 每天在指定时间自动发到群里</label></div></div>',
+    '<div class="frow"><label>定时推送</label><div><label class="chk"><input type="checkbox" id="cmdSchedEnabled"' + (e.scheduleEnabled?' checked':'') + '> 每天到点发送；五分钟内在线核验与有限重试，超过窗口不追补</label></div></div>',
     '<div class="frow"><label>定时时间</label><div><input type="text" id="cmdSchedTimes" value="' + esc((e.scheduleTimes||[]).join(',')) + '" placeholder="如 09:00,21:30（24 小时制）"></div></div>',
     '<div class="frow"><label>定时群号</label><div><input type="text" id="cmdSchedGroups" value="' + esc((e.scheduleGroups||[]).join(',')) + '" placeholder="要发到哪些群，逗号分隔"></div></div>',
     '<div class="frow"><label>回复内容</label><div><textarea id="cmdReply" rows="4" placeholder="命中后原样发出，可多行">' + esc(e.reply||'') + '</textarea><div class="note">可用变量：<b>{name}</b> 昵称、<b>{qq}</b> QQ、<b>{time}</b> 时间、<b>{date}</b> 日期；未知变量原样保留。</div></div></div>',
@@ -688,7 +688,7 @@ function pageMemory(){
       '<td><button class="btn" data-memview="' + esc(m.key) + '">查看</button> <button class="btn" data-memclear="' + esc(m.key) + '">清除</button></td></tr>'
   }).join('')
   return [
-    '<h1>记忆浏览</h1><div class="sub">当前人格 <b>' + esc(state?.config?.activePersona || '默认') + '</b> 的记忆。清除会同时删掉该会话的近期对话与长期摘要，不可恢复。</div>',
+    '<h1>记忆浏览</h1><div class="sub">当前人格 <b>' + esc(state?.config?.activePersona || '默认') + '</b> 的记忆。清理会重置近期对话、长期摘要与原文检索分区；清理前自动备份，原始日报保留。</div>',
     '<section class="card"><h2>会话列表 <span class="pill">' + memoryOverview.length + ' 个</span></h2>',
     memoryOverview.length ? ('<table class="tbl"><thead><tr><th>会话</th><th>近期记忆</th><th>长期记忆</th><th>待整理</th><th>操作</th></tr></thead><tbody>' + rows + '</tbody></table>') : '<div class="mut">当前人格还没有任何记忆。</div>',
     '</section>',
@@ -778,7 +778,7 @@ async function bind(){
       customPrompt: q('customPrompt').value,
       persona: (q('persona') && q('persona').value) || '',
     }
-    try { await api('/api/action/set-chat', { key, patch }); toast('已保存并即时生效'); await load() }
+    try { const r = await api('/api/action/set-chat', { key, patch }); toast('已保存并即时生效' + (r.memoryReset ? '，本会话旧记忆已备份并重置' : '')); await load() }
     catch(e){ toast('保存失败：' + e.message, true) }
   })
   // 盯人目标：设置 / 取消
@@ -864,7 +864,7 @@ async function bind(){
   })
   document.querySelectorAll('[data-memclear]').forEach(el => el.onclick = async () => {
     const key = el.dataset.memclear
-    if (!await ask('清除「' + key + '」的记忆？', '这个会话的近期对话和长期摘要都会被删掉，不可恢复。', '清除')) return
+    if (!await ask('清除「' + key + '」的记忆？', '将重置本会话的近期、长期与原文检索记忆，取消待发旧回复。清理前自动备份，其他会话不受影响。', '清除')) return
     try {
       const r = await api('/api/action/clear-memory', { key })
       memoryViewKey = ''; memoryText = ''

@@ -1,8 +1,8 @@
 /**
  * 管理员（最高权限）判定。
  *
- * ADMIN_USERS 留空 = 不限制（沿用旧行为，任何人触发特权指令都放行），
- *                 启动日志里会明确警告，避免"以为设了其实没设"。
+ * ADMIN_USERS 留空时，群总结等沿用旧的公开范围；
+ * 清理记忆等破坏性操作需调用方另行要求 hasAdmins()，不可仅依赖 isBotAdmin()。
  * ADMIN_USERS 有值 = 只有名单里的 QQ 能用特权指令，其他人收到一句礼貌拒绝。
  */
 
@@ -30,6 +30,6 @@ export function isBotAdmin(userId, adminUsers) {
  */
 export function adminHint(adminUsers) {
   const list = normalizeAdmins(adminUsers)
-  if (list.length === 0) return '当前未配置管理员，任何人都能触发特权指令'
+  if (list.length === 0) return '当前未配置管理员，群总结等沿用公开范围；QQ 清除记忆指令不可用'
   return `当前管理员 ${list.length} 人：${list.join('、')}`
 }

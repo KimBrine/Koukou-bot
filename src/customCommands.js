@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import path from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
+import { writeJsonAtomic } from './stateFile.js'
 
 /**
  * 自定义指令：在控制台里配「触发词 → 固定回复」，不调用模型、不花钱。
@@ -46,13 +46,8 @@ export function createCustomCommands({ file, logger }) {
     }
   }
 
-  function save() {
-    try {
-      mkdirSync(path.dirname(file), { recursive: true })
-      writeFileSync(file, JSON.stringify(list, null, 2))
-    } catch (err) {
-      logger?.warn?.(`自定义指令保存失败：${err.message}`)
-    }
+  function save(next = list) {
+    writeJsonAtomic(file, next)
   }
 
   function clean(input = {}) {
@@ -64,7 +59,7 @@ export function createCustomCommands({ file, logger }) {
     // 定时推送：每天在指定时刻把这些群发一遍（不调用模型）
     const times = (Array.isArray(input.scheduleTimes) ? input.scheduleTimes : String(input.scheduleTimes ?? '').split(','))
       .map((s) => String(s).trim())
-      .filter((s) => /^\d{1,2}:\d{2}$/.test(s))
+      .filter((s) => /^([01]?\d|2[0-3]):[0-5]\d$/.test(s))
       .map((s) => {
         const [h, m] = s.split(':')
         return String(Math.min(23, Math.max(0, Number(h)))).padStart(2, '0') + ':' + String(Math.min(59, Math.max(0, Number(m)))).padStart(2, '0')
@@ -96,59 +91,49 @@ export function createCustomCommands({ file, logger }) {
     if (!cmd.trigger) throw new Error('触发词不能为空')
     if (!cmd.reply.trim()) throw new Error('回复内容不能为空')
     const i = list.findIndex((c) => c.id === cmd.id)
-    if (i >= 0) list[i] = cmd
+    const next = [...list]
+    if (i >= 0) next[i] = cmd
     else {
       if (list.length >= MAX) throw new Error(`最多 ${MAX} 条自定义指令`)
-      list.push(cmd)
+      next.push(cmd)
     }
-    save()
+    save(next)
+    list = next
     return cmd
   }
 
   function remove(id) {
     const before = list.length
-    list = list.filter((c) => c.id !== String(id))
-    if (list.length !== before) save()
-    return list.length !== before
+    const next = list.filter((c) => c.id !== String(id))
+    if (next.length !== before) { save(next); list = next }
+    return next.length !== before
   }
 
   function all() {
     return list.map((c) => ({ ...c, groups: [...(c.groups || [])] }))
   }
 
-  const sentSlots = new Map() // 'id:群号:HH:MM:日期' -> true，同一个时间点只发一次
-
-  /**
-   * 当前这一分钟该发哪些定时推送。
-   * 返回 [{ command, groupId }]；同一分钟的重复调用不会重复返回。
-   */
-  function due(now = Date.now()) {
-    const d = new Date(now)
-    const hh = String(d.getHours()).padStart(2, '0')
-    const mm = String(d.getMinutes()).padStart(2, '0')
-    const slot = hh + ':' + mm
-    const day = d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate()
-    const out = []
-    for (const c of list) {
-      if (!c.enabled || !c.scheduleEnabled) continue
-      if (!Array.isArray(c.scheduleTimes) || !c.scheduleTimes.includes(slot)) continue
-      for (const gid of c.scheduleGroups || []) {
-        const key = c.id + ':' + gid + ':' + slot + ':' + day
-        if (sentSlots.has(key)) continue
-        sentSlots.set(key, true)
-        out.push({ command: c, groupId: gid })
+  /** 只列候选时点；是否送达由持久化调度器核对，不能在发送前占掉名额。 */
+  function due(now = Date.now(), { windowMs = 5 * 60000 } = {}) {
+    const out = [], seen = new Set(), today = new Date(now)
+    for (const dayOffset of [-1, 0]) {
+      for (const c of list) {
+        if (!c.enabled || !c.scheduleEnabled) continue
+        for (const time of c.scheduleTimes || []) {
+          const [h, m] = time.split(':').map(Number)
+          const date = new Date(today.getFullYear(), today.getMonth(), today.getDate()+dayOffset, h, m, 0, 0)
+          const at = date.getTime()
+          if (at > now || now-at >= windowMs) continue
+          const day = [date.getFullYear(), String(date.getMonth()+1).padStart(2,'0'), String(date.getDate()).padStart(2,'0')].join('-')
+          for (const groupId of c.scheduleGroups || []) {
+            const slotKey = JSON.stringify([c.id, groupId, day, time])
+            if (seen.has(slotKey)) continue
+            seen.add(slotKey); out.push({ command: c, groupId, targetAt: at, slotKey })
+          }
+        }
       }
     }
-    // 只保留最近一天的记录，避免无限增长
-    if (sentSlots.size > 2000) {
-      const keep = new Set()
-      for (const k of sentSlots.keys()) {
-        if (k.endsWith(day)) keep.add(k)
-      }
-      sentSlots.clear()
-      for (const k of keep) sentSlots.set(k, true)
-    }
-    return out
+    return out.sort((a,b)=>a.targetAt-b.targetAt)
   }
 
   /** 命中第一条启用的指令；ctx = { isPrivate, groupId, userId } */

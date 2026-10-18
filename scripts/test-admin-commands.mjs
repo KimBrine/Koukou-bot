@@ -36,8 +36,8 @@ try {
   assert.equal(cc.match('我要/签到', {}), null)
 
   // 范围
-  cc.upsert({ name: '群专用', trigger: '开黑', match: 'exact', reply: '来', scope: 'group', groups: [831838803] })
-  assert.equal(cc.match('开黑', { isPrivate: false, groupId: 831838803 }).name, '群专用')
+  cc.upsert({ name: '群专用', trigger: '开黑', match: 'exact', reply: '来', scope: 'group', groups: [200000002] })
+  assert.equal(cc.match('开黑', { isPrivate: false, groupId: 200000002 }).name, '群专用')
   assert.equal(cc.match('开黑', { isPrivate: false, groupId: 999 }), null)
   assert.equal(cc.match('开黑', { isPrivate: true, userId: 1 }), null)
 
@@ -62,7 +62,7 @@ try {
     scheduleTimes: hh + ':' + mm, scheduleGroups: [111, 222] })
   const due1 = cc.due(nowD.getTime())
   assert.equal(due1.length, 2, '两个群各一次')
-  assert.equal(cc.due(nowD.getTime()).length, 0, '同分钟不重复')
+  assert.equal(cc.due(nowD.getTime()).length, 2, '候选列举不提前标记送达，去重交给持久化调度器')
   const other = new Date(nowD.getTime()); other.setHours((nowD.getHours() + 1) % 24)
   assert.equal(cc.due(other.getTime()).length, 0)
 

@@ -6,6 +6,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { keyToGroupId, keyToUserId } from '../chatSettings.js'
 import { activatePersona } from '../personaSwitch.js'
+import { applyConversationSettings, resetConversationMemory } from '../conversationSessions.js'
 import { writeTextAtomic } from '../stateFile.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -29,7 +30,7 @@ const EDITABLE = [
     type: 'text',
     wide: true,
   },
-  { key: 'ADMIN_USERS', label: '管理员 QQ', hint: '能触发 /群总结、/帮助、/id_check 等特权指令的 QQ 号，逗号分隔；留空 = 不限制（建议一定配上）', live: true, type: 'text', wide: true },
+  { key: 'ADMIN_USERS', label: '管理员 QQ', hint: '管理员 QQ 号，逗号分隔。留空时群总结等沿用公开范围；QQ 清除记忆指令必须显式配置管理员。id_check 同时遵守对应群与操作员规则。', live: true, type: 'text', wide: true },
   { key: 'PROACTIVE_RATE', label: '全局主动搭话概率', hint: '未单独配置的群使用这个百分比', live: true, type: 'rate' },
   { key: 'PROACTIVE_RATE_PER_GROUP', label: '按群独立概率', hint: '给指定群设置默认概率；移除后沿用全局。会话单独设置优先。', live: true, type: 'text', wide: true },
   { key: 'PROACTIVE_COOLDOWN_MS', label: '主动搭话冷却(ms)', hint: '同一个群两条主动消息的最小间隔', live: true, type: 'number' },
@@ -670,12 +671,15 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     async 'set-chat'(payload) {
       const { key, patch } = payload
       if (!key) throw new Error('缺少会话 key')
-      const saved = chatSettings.set(key, patch ?? {})
+      const change = applyConversationSettings({ config, memory, longMemory, targetWatch, chatSettings, key, patch: patch ?? {} })
+      const saved = change.settings
       logger?.info?.(`[控制台] 更新会话设置 ${key}`)
-      return { ok: true, settings: saved }
+      return { ok: true, settings: saved, memoryReset: change.reset }
     },
     async 'reset-chat'(payload) {
-      chatSettings.remove(payload.key)
+      const key = String(payload.key || '')
+      if (chatSettings.get(key).persona) resetConversationMemory({ config, memory, longMemory, targetWatch, key, reason: '恢复全局人格', persist: () => chatSettings.remove(key) })
+      else chatSettings.remove(key)
       return { ok: true }
     },
     async 'get-persona'(payload) {
@@ -751,22 +755,10 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     async 'clear-memory'(payload) {
       const key = String(payload?.key ?? '').trim()
       const all = payload?.all === true
-      const wipe = (k) => ({
-        recent: typeof memory?.clearKey === 'function' ? memory.clearKey(k) : 0,
-        longTerm: typeof longMemory?.clearKey === 'function' ? (longMemory.clearKey(k) ? 1 : 0) : 0,
-      })
-      if (all) {
-        const keys = typeof memory?.keys === 'function' ? memory.keys() : []
-        let recent = 0
-        let longTerm = 0
-        for (const k of keys) { const r = wipe(k); recent += r.recent; longTerm += r.longTerm }
-        logger?.info?.(`[控制台] 清空全部会话记忆：${keys.length} 个会话，近期 ${recent} 条`)
-        return { ok: true, all: true, sessions: keys.length, recent, longTerm }
-      }
-      if (!key) throw new Error('缺少会话 key（群 g<群号>，私聊 p<QQ号>）')
-      const r = wipe(key)
-      logger?.info?.(`[控制台] 清除会话 ${key} 的记忆：近期 ${r.recent} 条`)
-      return { ok: true, key, ...r }
+      if (!all && !key) throw new Error('请选择需要清理的会话')
+      const result = resetConversationMemory({ config, memory, longMemory, targetWatch, key: all ? null : key, reason: '控制台清除记忆' })
+      logger?.info?.(`[控制台] 已重置${all ? '全部' : key}会话记忆并备份`)
+      return { ok: true, key, all, ...result }
     },
     async 'watch-target'(payload) {
       // 设置/取消盯人目标：改配置 → 立即重启盯人定时器 → 写回 .env，下次启动仍然生效
@@ -774,14 +766,14 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       const gid = keyToGroupId(key)
       if (gid === null) throw new Error('盯人目标只能是群会话')
       if (payload?.enabled === false) {
+        writeEnvFile(envFile, { TARGET_WATCH_ENABLED: '0', TARGET_WATCH_GROUP: '', TARGET_WATCH_USER: '' }, { atomic: true })
         targetWatch.configure({ enabled: false, groupId: '', userId: '' })
-        writeEnvFile(envFile, { TARGET_WATCH_ENABLED: '0', TARGET_WATCH_GROUP: '', TARGET_WATCH_USER: '' })
         return { ok: true, enabled: false, groupId: '', userId: '' }
       }
       const uid = String(payload?.userId ?? '').trim()
       if (!/^\d{4,12}$/.test(uid)) throw new Error('请填写要盯的 QQ 号（4～12 位数字）')
+      writeEnvFile(envFile, { TARGET_WATCH_ENABLED: '1', TARGET_WATCH_GROUP: String(gid), TARGET_WATCH_USER: uid }, { atomic: true })
       const st = targetWatch.configure({ enabled: true, groupId: String(gid), userId: uid })
-      writeEnvFile(envFile, { TARGET_WATCH_ENABLED: '1', TARGET_WATCH_GROUP: String(gid), TARGET_WATCH_USER: uid })
       return { ok: true, ...st }
     },
     async 'restart-bot'() {

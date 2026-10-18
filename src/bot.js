@@ -10,6 +10,7 @@ import { stripInternalReplyMetadata, REPLY_REPAIR_HINT } from './replySanitizer.
 import { parseMessage } from './cq.js'
 import { isBotAdmin, hasAdmins, adminHint } from './permissions.js'
 import { renderReply } from './customCommands.js'
+import { resetConversationMemory, prepareSessionPersona, sessionPersona, sameSessionPersona } from './conversationSessions.js'
 import { expandForwardRecords } from './forwardRecords.js'
 import { createQuotedMessageResolver } from './quotedMessage.js'
 import { renderFacesToCq } from './qqFace.js'
@@ -117,23 +118,10 @@ export const ADMIN_HELP_CMD_RE = /^[\/／]\s*(?:help|帮助|指令|命令)\s*[�
 
 /**
  * 读取"按群指定的人格"正文；文件缺失或读不到时返回空串（退回全局人格）。
- * 用 mtime 做缓存键，改完人格文件不用重启。
+ * 兼容读取入口；正式会话流程另行校验人格版本并隔离旧记忆。
  */
-const sessionPersonaCache = new Map()
 export function loadSessionPersona(config, name) {
-  const safe = String(name || '').replace(/[\\/:*?"<>|]/g, '_').trim().slice(0, 60)
-  if (!safe) return ''
-  const dir = config.personaDir || path.join(config.dataDir, 'personas')
-  const file = path.join(dir, safe + '.txt')
-  try {
-    const key = file + ':' + statSync(file).mtimeMs
-    if (sessionPersonaCache.has(key)) return sessionPersonaCache.get(key)
-    const text = readFileSync(file, 'utf8').trim()
-    sessionPersonaCache.set(key, text)
-    return text
-  } catch {
-    return ''
-  }
+  try { return sessionPersona(config, name).text } catch { return '' }
 }
 
 export const SUMMARY_CMD_RE = /^\s*[\/／]?\s*(今日总结|每日总结|群总结|群聊总结)\s*(?:d\s*)?(\d{1,2})?\s*[。！!~～]?\s*$/i
@@ -636,7 +624,9 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
 
     async handleMessage(evt) {
       const personaRevision = config.personaRevision || 0
-      const samePersona = () => personaRevision === (config.personaRevision || 0)
+      const conversationKey = evt.message_type === 'private' ? `p${evt.user_id}` : `g${evt.group_id}`
+      let memoryRevision = memory.version?.(conversationKey)
+      const samePersona = () => personaRevision === (config.personaRevision || 0) && memoryRevision === memory.version?.(conversationKey)
       quotedMessages.remember(evt)
       const isOwn = evt.post_type === 'message_sent' || evt.message_sent_type === 'self' ||
         (onebot.selfId && String(evt.user_id) === String(onebot.selfId))
@@ -797,29 +787,16 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       // 管理员专用：/清除记忆 [全部] —— 清掉本会话（或全部会话）的近期 + 长期记忆
       const clearMatch = parsed.text.trim().match(ADMIN_CLEAR_MEMORY_CMD_RE)
       if (clearMatch && directReply) {
-        if (!isBotAdmin(evt.user_id, config.adminUsers)) {
+        if (!hasAdmins(config.adminUsers) || !isBotAdmin(evt.user_id, config.adminUsers)) {
           logger.info(`[清除记忆] 拒绝 QQ ${evt.user_id}（不在 ADMIN_USERS 里）`)
-          await sendTo(evt, '这个是管理员指令哦～')
+          await sendTo(evt, '清除记忆需要显式管理员授权，请先在控制台配置管理员。')
           return
         }
-        const wipe = (k) => ({
-          recent: typeof memory.clearKey === 'function' ? memory.clearKey(k) : 0,
-          longTerm: typeof longMemory?.clearKey === 'function' ? (longMemory.clearKey(k) ? 1 : 0) : 0,
-        })
-        if (/^(?:全部|all)$/i.test(clearMatch[1] || '')) {
-          const keys = typeof memory.keys === 'function' ? memory.keys() : []
-          let recent = 0
-          let longTerm = 0
-          for (const k of keys) { const r = wipe(k); recent += r.recent; longTerm += r.longTerm }
-          logger.info(`[清除记忆] 管理员 ${evt.user_id} 清空全部：${keys.length} 个会话，近期 ${recent} 条`)
-          await sendTo(evt, `已经清空全部 ${keys.length} 个会话的记忆（近期 ${recent} 条${longTerm ? `、长期记忆 ${longTerm} 份` : ''}）`)
-          return
-        }
+        const all = /^(?:全部|all)$/i.test(clearMatch[1] || '')
         const memKey = isPrivate ? `p${evt.user_id}` : `g${groupId}`
-        const { recent, longTerm } = wipe(memKey)
-        logger.info(`[清除记忆] 管理员 ${evt.user_id} 清除 ${memKey}：近期 ${recent} 条`)
-        if (recent === 0 && !longTerm) await sendTo(evt, '这个会话本来就没有记忆哦～')
-        else await sendTo(evt, `这个会话的记忆已经清掉了（近期 ${recent} 条${longTerm ? '、长期记忆 1 份' : ''}）`)
+        const r = resetConversationMemory({ config, memory, longMemory, targetWatch, key: all ? null : memKey, reason: '管理员清除记忆' })
+        logger.info(`[清除记忆] 已重置${all ? '全部' : memKey}会话；近期 ${r.recent} 条`)
+        await sendTo(evt, `已${all ? '重置全部会话' : '重置本会话'}记忆（近期 ${r.recent} 条、长期 ${r.longTerm} 份）。清理前已备份，旧原文不再用于检索。`)
         return
       }
 
@@ -831,9 +808,12 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
           lines.push('')
           lines.push('【管理员专属】')
           lines.push('/群总结 [天数]     总结群聊（默认今天，最多 30 天）')
+          if (hasAdmins(config.adminUsers)) lines.push('/清除记忆 [全部]  重置记忆并备份（需显式管理员）')
           if (config.idCheckEnabled) lines.push('/id_check          群名片核对（需 @我）')
         }
-        const custom = typeof customCommands?.all === 'function' ? customCommands.all().filter((c) => c.enabled) : []
+        const custom = typeof customCommands?.all === 'function' ? customCommands.all().filter((c) => c.enabled
+          && (c.scope !== 'group' || (!isPrivate && (c.groups || []).map(Number).includes(Number(groupId))))
+          && (c.scope !== 'private' || isPrivate)) : []
         if (custom.length > 0) {
           lines.push('')
           lines.push('【自定义指令】')
@@ -869,8 +849,9 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       // 本会话生效值：会话设置优先，其次全局（在控制台改了立刻生效，无需重启）
       const eff = chatSettings ? chatSettings.resolve(key, config) : null
       // 按群指定的人格：只影响提示词，记忆仍按会话隔离
-      const sessionPersonaName = String(eff?.persona || '').trim()
-      const sessionPersonaText = sessionPersonaName ? loadSessionPersona(config, sessionPersonaName) : ''
+      if (!samePersona()) return
+      const sessionPersonaText = prepareSessionPersona({ config, memory, longMemory, chatSettings, targetWatch, key })
+      memoryRevision = memory.version?.(key)
       runtimeStats?.noteMessage?.(key, Number(evt.time) * 1000 || Date.now())
 
       // 反检测限流：这里只查"每小时发言额度"（间隔不够的问题放到发送前用等待解决，
@@ -990,7 +971,8 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         imageNote +
         shapeHint(plan) +
         decorationHint(allowDecoration, decoKind, decorationPreset)
-      const canContinue = () => samePersona() && replyStillCurrent(onebot, evt, { latestOnly: !directReply }) && !autoPlusOne.wasTriggered(repetition)
+      const canContinue = () => samePersona() && sameSessionPersona(config, chatSettings, key, sessionPersonaText) &&
+        replyStillCurrent(onebot, evt, { latestOnly: !directReply }) && !autoPlusOne.wasTriggered(repetition)
       if (!canContinue()) return
       try {
         let reply
