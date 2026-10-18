@@ -767,6 +767,22 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       logger?.info?.(`[控制台] 清除会话 ${key} 的记忆：近期 ${r.recent} 条`)
       return { ok: true, key, ...r }
     },
+    async 'watch-target'(payload) {
+      // 设置/取消盯人目标：改配置 → 立即重启盯人定时器 → 写回 .env，下次启动仍然生效
+      const key = String(payload?.key || '')
+      const gid = keyToGroupId(key)
+      if (gid === null) throw new Error('盯人目标只能是群会话')
+      if (payload?.enabled === false) {
+        targetWatch.configure({ enabled: false, groupId: '', userId: '' })
+        writeEnvFile(envFile, { TARGET_WATCH_ENABLED: '0', TARGET_WATCH_GROUP: '', TARGET_WATCH_USER: '' })
+        return { ok: true, enabled: false, groupId: '', userId: '' }
+      }
+      const uid = String(payload?.userId ?? '').trim()
+      if (!/^\d{4,12}$/.test(uid)) throw new Error('请填写要盯的 QQ 号（4～12 位数字）')
+      const st = targetWatch.configure({ enabled: true, groupId: String(gid), userId: uid })
+      writeEnvFile(envFile, { TARGET_WATCH_ENABLED: '1', TARGET_WATCH_GROUP: String(gid), TARGET_WATCH_USER: uid })
+      return { ok: true, ...st }
+    },
     async 'restart-bot'() {
       logger?.info?.('[控制台] 收到重启机器人指令')
       setTimeout(() => restartBot?.(), 300)
@@ -864,7 +880,9 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       return { ok: true, dryRun: false, groupId, userId, kicked: status.list.length, list: status.list }
     },
     async 'poke-target'() {
-      if (!targetWatch?.enabled) throw new Error('盯人回复未启用')
+      if (!targetWatch?.enabled) {
+        return { ok: false, enabled: false, note: '盯人回复未启用：先在群会话卡片里点「设为盯人」' }
+      }
       const n = targetWatch.pendingCount?.() ?? 0
       await targetWatch.tick()
       return { ok: true, pendingBefore: n }

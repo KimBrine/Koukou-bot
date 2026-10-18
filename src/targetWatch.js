@@ -12,9 +12,10 @@ import { stripInternalReplyMetadata, REPLY_REPAIR_HINT } from './replySanitizer.
  * - 主流程若刚回复过同一个人，这里也会跳过，避免出现两条回复。
  */
 export function createTargetWatch({ config, logger, onebot, llm, memory, buildSystemPrompt, replyLog, rateLimiter }) {
-  const groupId = String(config.targetWatchGroup || '')
-  const userId = String(config.targetWatchUser || '')
-  const enabled = Boolean(config.targetWatchEnabled && groupId && userId && onebot && llm)
+  // 这些值改成**运行时读取**：控制台里改了盯人目标立刻生效，不用重启
+  const G = () => String(config.targetWatchGroup || '')
+  const U = () => String(config.targetWatchUser || '')
+  const isEnabled = () => Boolean(config.targetWatchEnabled && G() && U() && onebot && llm)
   const pending = [] // { id, time, text }
   const repliedIds = new Set() // 主流程已经回复过的消息 id（精确剔除，避免误吞新消息）
   let timer = null
@@ -32,11 +33,11 @@ export function createTargetWatch({ config, logger, onebot, llm, memory, buildSy
   }
 
   function note(evt, parsed) {
-    if (!enabled) return
+    if (!isEnabled()) return
     if (!replyStillCurrent(onebot, evt)) return
     if (evt.message_type !== 'group') return
-    if (String(evt.group_id) !== groupId) return
-    if (String(evt.user_id) !== userId) return
+    if (String(evt.group_id) !== G()) return
+    if (String(evt.user_id) !== U()) return
     if (parsed.atBot) return // 被 @ 的消息由主流程处理
     if (!parsed.text) return
     const id = String(evt.message_id ?? '')
@@ -51,7 +52,7 @@ export function createTargetWatch({ config, logger, onebot, llm, memory, buildSy
   }
 
   async function tick() {
-    if (!enabled || busy || pending.length === 0) return
+    if (!isEnabled() || busy || pending.length === 0) return
     // 安静时段、限流或断线期间排队的消息不在恢复后追答。
     for (let i = pending.length - 1; i >= 0; i--) {
       if (!replyStillCurrent(onebot, pending[i].evt)) pending.splice(i, 1)
@@ -70,7 +71,7 @@ export function createTargetWatch({ config, logger, onebot, llm, memory, buildSy
     if (pending.length === 0) return
 
     // 反检测限流 + 安静时段：盯人回复是活动量最大的路径，必须一起纳入管控
-    const chatKey = `g${groupId}`
+    const chatKey = `g${G()}`
     if (isQuietHour(config.quietHours)) {
       logger.debug(`[盯人] 安静时段，暂不主动回复（保留 ${pending.length} 条待下个时段）`)
       return
@@ -87,7 +88,7 @@ export function createTargetWatch({ config, logger, onebot, llm, memory, buildSy
     const personaRevision = config.personaRevision || 0
     const samePersona = () => personaRevision === (config.personaRevision || 0)
     try {
-      const memoryKey = `g${groupId}`
+      const memoryKey = `g${G()}`
       const batch = pending.slice()
       const latest = batch.at(-1)
       const canContinue = () => samePersona() && replyStillCurrent(onebot, latest.evt, { latestOnly: true }) && !repliedIds.has(latest.id)
@@ -109,7 +110,7 @@ export function createTargetWatch({ config, logger, onebot, llm, memory, buildSy
       const allowDecoration = Math.random() < config.emojiKeepRate
       const decorationPreset = config.localProfile?.decoration
       const decoKind = allowDecoration ? pickDecorationKind(Math.random, decorationPreset) : ''
-      const extra = `\n\n（现在的情况：群友（QQ ${userId}）刚才说了 ${count} 句话：「${said}」。请你自然回应他，像平时群聊那样随口接话，不用面面俱到，也不要罗列。）`
+      const extra = `\n\n（现在的情况：群友（QQ ${U()}）刚才说了 ${count} 句话：「${said}」。请你自然回应他，像平时群聊那样随口接话，不用面面俱到，也不要罗列。）`
       const prompt = base + extra + currentMessageHint(latest.evt) + conversationRules(config) + shapeHint(plan) + decorationHint(allowDecoration, decoKind, decorationPreset)
       const history = modelHistory(memory.get(memoryKey).slice(-20))
       let reply = stripInternalReplyMetadata(await llm.chat(prompt, history))
@@ -141,10 +142,10 @@ export function createTargetWatch({ config, logger, onebot, llm, memory, buildSy
         }
         // @ 只带在第一行上，补发的行就是普通消息，像真人 @ 完接着补一句
         const segments = i === 0
-          ? [{ type: 'at', data: { qq: userId } }, { type: 'text', data: { text: ` ${finalLines[i]}` } }]
+          ? [{ type: 'at', data: { qq: U() } }, { type: 'text', data: { text: ` ${finalLines[i]}` } }]
           : [{ type: 'text', data: { text: finalLines[i] } }]
         if (!canContinue()) break
-        await onebot.sendGroup(groupId, segments)
+        await onebot.sendGroup(G(), segments)
         sentLines.push(finalLines[i])
         rateLimiter?.record(chatKey)
       }
@@ -152,10 +153,10 @@ export function createTargetWatch({ config, logger, onebot, llm, memory, buildSy
       if (!sentLines.length || !samePersona()) return
       const record = sentLines.join('\n')
       // 写入记忆时不加任何前缀标记，否则模型会模仿这种格式带进正式回复
-      memory.push(memoryKey, 'assistant', record, { replyToUserId: userId,
+      memory.push(memoryKey, 'assistant', record, { replyToUserId: U(),
         replyToName: latest.evt.sender?.card || latest.evt.sender?.nickname,
         replyToMessageId: latest.evt.message_id })
-      logger.info(`[盯人回复]${finalLines.length > 1 ? `（${finalLines.length} 行分条）` : ''} @${userId}：${record.replace(/\n/g, ' ⏎ ')}`)
+      logger.info(`[盯人回复]${finalLines.length > 1 ? `（${finalLines.length} 行分条）` : ''} @${U()}：${record.replace(/\n/g, ' ⏎ ')}`)
     } catch (err) {
       logger.warn(`[盯人回复] 失败：${err.message}`)
     } finally {
@@ -164,7 +165,7 @@ export function createTargetWatch({ config, logger, onebot, llm, memory, buildSy
   }
 
   function start() {
-    if (!enabled || timer) return
+    if (!isEnabled() || timer) return
     timer = setInterval(() => {
       tick().catch((err) => logger.warn(`[盯人回复] 异常：${err.message}`))
     }, config.targetWatchIntervalMs)
@@ -177,5 +178,31 @@ export function createTargetWatch({ config, logger, onebot, llm, memory, buildSy
   }
 
   function resetPending() { pending.length = 0; repliedIds.clear() }
-  return { note, markReplied, tick, start, stop, resetPending, pendingCount: () => pending.length, enabled, groupId, userId }
+  /** 运行时设置盯人目标（控制台调用）：改配置 → 清空队列 → 按新目标重启定时器 */
+  function configure({ enabled: en, groupId: g, userId: u } = {}) {
+    if (en !== undefined) config.targetWatchEnabled = Boolean(en)
+    if (g !== undefined) config.targetWatchGroup = String(g || '')
+    if (u !== undefined) config.targetWatchUser = String(u || '')
+    stop()
+    pending.length = 0
+    repliedIds.clear()
+    if (isEnabled()) start()
+    logger.info(
+      isEnabled()
+        ? `[盯人] 目标已更新：群 ${G()} 里的 ${U()}，每 ${Math.round(config.targetWatchIntervalMs / 1000)}s 检查一次`
+        : '[盯人] 已关闭盯人回复',
+    )
+    return { enabled: isEnabled(), groupId: G(), userId: U() }
+  }
+
+  const api = {
+    note, markReplied, tick, start, stop, configure, resetPending,
+    pendingCount: () => pending.length,
+    state: () => ({ enabled: isEnabled(), groupId: G(), userId: U() }),
+  }
+  // 兼容旧调用方（启动日志 / 控制台状态里用 targetWatch.enabled 这类属性）
+  Object.defineProperty(api, 'enabled', { get: isEnabled })
+  Object.defineProperty(api, 'groupId', { get: G })
+  Object.defineProperty(api, 'userId', { get: U })
+  return api
 }

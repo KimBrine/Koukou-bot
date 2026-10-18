@@ -379,9 +379,14 @@ function chatRow(c){
         <button class="btn" data-reset="${c.key}">恢复默认</button>
         <button class="btn" data-mem="${c.key}">查看记忆</button>
         <button class="btn" data-say="${c.key}">发一条消息…</button>
+        ${c.type === 'group' ? ('<button class="btn" data-watch="' + c.key + '">' + (isWatching(c.id) ? '取消盯人' : '设为盯人') + '</button>') : ''}
       </div>
     </div>
   </div>`
+}
+function isWatching(groupId){
+  const t = state?.config?.targetWatch
+  return Boolean(t && String(t.group) === String(groupId))
 }
 function personaOptions(cur){
   const head = '<option value="">跟随全局（' + esc(state?.config?.activePersona || '默认') + '）</option>'
@@ -775,6 +780,25 @@ async function bind(){
     }
     try { await api('/api/action/set-chat', { key, patch }); toast('已保存并即时生效'); await load() }
     catch(e){ toast('保存失败：' + e.message, true) }
+  })
+  // 盯人目标：设置 / 取消
+  document.querySelectorAll('[data-watch]').forEach(el => el.onclick = async () => {
+    const key = el.dataset.watch
+    const gid = key.slice(1)
+    const on = isWatching(gid)
+    try {
+      if (on) {
+        if (!await ask('取消盯人目标？', '取消后机器人不再主动接这个群指定群友的话。', '取消盯人')) return
+        await api('/api/action/watch-target', { key, enabled: false })
+        toast('已取消盯人')
+      } else {
+        const uid = await ask('设置盯人目标', '填要盯的 QQ 号：他在这个群说话时，机器人会主动接一句。', '保存', true)
+        if (!uid) return
+        await api('/api/action/watch-target', { key, userId: uid.trim() })
+        toast('已设置盯人目标')
+      }
+      await load()
+    } catch (e) { toast('操作失败：' + e.message, true) }
   })
   // 工作台：管理员编辑（写入 ADMIN_USERS，立刻生效）
   const adminSaveBtn = document.getElementById('adminUsersSave')
