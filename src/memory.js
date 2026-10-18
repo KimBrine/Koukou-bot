@@ -133,6 +133,19 @@ export class MemoryStore {
 
   // QQ 时间精度只有秒；保留切换后同一秒到达的新消息，旧请求另由人格版本隔离。
   clear() { this.restore({ chats: {}, resetAt: Math.floor(Date.now() / 1000) * 1000 }) }
+  /** 只清一个会话的近期记忆（不动切换边界），返回清掉的条数 */
+  clearKey(key) {
+    const list = this.chats.get(key)
+    const removed = Array.isArray(list) ? list.length : 0
+    this.chats.delete(key)
+    this.dirty = true
+    this.flush()
+    return removed
+  }
+  /** 当前有记忆的会话键 */
+  keys() { return [...this.chats.keys()] }
+  /** 某会话的近期记忆条数 */
+  count(key) { return this.chats.get(key)?.length ?? 0 }
 
   #scheduleSave() {
     if (this.timer) clearTimeout(this.timer)

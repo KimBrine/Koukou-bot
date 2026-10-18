@@ -270,6 +270,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         replies: runtimeStats?.replies?.get?.(key) ?? 0,
         received: runtimeStats?.received?.get?.(key) ?? 0,
         raw: raw ?? {},
+        persona: raw?.persona || '',
         effective: eff,
       })
     }
@@ -392,6 +393,23 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     'GET /api/groups': async () => ({ items: await getGroupList() }),
     'GET /api/custom-commands': async () => ({ items: typeof customCommands?.all === 'function' ? customCommands.all() : [] }),
     'GET /api/personas': async () => ({ items: listPersonas(), active: config.activePersona || '', dir: personaDir }),
+    'GET /api/memory-overview': async () => {
+      const map = new Map()
+      const recentKeys = typeof memory?.keys === 'function' ? memory.keys() : []
+      for (const k of recentKeys) {
+        map.set(k, { key: k, recent: typeof memory?.count === 'function' ? memory.count(k) : 0, longTermChars: 0, pending: 0 })
+      }
+      const longs = typeof longMemory?.stats === 'function' ? longMemory.stats() : []
+      for (const item of longs) {
+        const cur = map.get(item.key) || { key: item.key, recent: 0, longTermChars: 0, pending: 0 }
+        cur.longTermChars = item.summaryChars || 0
+        cur.pending = item.pending || 0
+        map.set(item.key, cur)
+      }
+      for (const k of chatSettings.keys()) if (!map.has(k)) map.set(k, { key: k, recent: 0, longTermChars: 0, pending: 0 })
+      const items = [...map.values()].sort((a, b) => b.recent + b.longTermChars - (a.recent + a.longTermChars))
+      return { persona: config.activePersona || '', items }
+    },
     'GET /api/config': async () => {
       const env = readEnvFile(envFile)
       return {
@@ -728,6 +746,26 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     async 'delete-custom-command'(payload) {
       const ok = customCommands.remove(payload?.id)
       return { ok, removed: ok }
+    },
+    async 'clear-memory'(payload) {
+      const key = String(payload?.key ?? '').trim()
+      const all = payload?.all === true
+      const wipe = (k) => ({
+        recent: typeof memory?.clearKey === 'function' ? memory.clearKey(k) : 0,
+        longTerm: typeof longMemory?.clearKey === 'function' ? (longMemory.clearKey(k) ? 1 : 0) : 0,
+      })
+      if (all) {
+        const keys = typeof memory?.keys === 'function' ? memory.keys() : []
+        let recent = 0
+        let longTerm = 0
+        for (const k of keys) { const r = wipe(k); recent += r.recent; longTerm += r.longTerm }
+        logger?.info?.(`[控制台] 清空全部会话记忆：${keys.length} 个会话，近期 ${recent} 条`)
+        return { ok: true, all: true, sessions: keys.length, recent, longTerm }
+      }
+      if (!key) throw new Error('缺少会话 key（群 g<群号>，私聊 p<QQ号>）')
+      const r = wipe(key)
+      logger?.info?.(`[控制台] 清除会话 ${key} 的记忆：近期 ${r.recent} 条`)
+      return { ok: true, key, ...r }
     },
     async 'restart-bot'() {
       logger?.info?.('[控制台] 收到重启机器人指令')

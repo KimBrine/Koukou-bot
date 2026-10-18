@@ -108,6 +108,13 @@ export function createLongMemory({ file, logger, llm, maxChars = 1500, intervalM
     timer.unref?.()
   }
   function stop() { if (timer) clearInterval(timer); timer = null }
+  /** 只清一个会话的长期记忆（摘要 + 待整理队列） */
+  function clearKey(key) {
+    if (!store.has(key)) return false
+    store.delete(key)
+    save()
+    return true
+  }
   function stats() { return [...store].map(([key, v]) => ({ key, summaryChars: v.summary.length, pending: v.pending.length })) }
-  return { get, addEvicted, summarize, feed, start, stop, save, stats, snapshot, clear, restore }
+  return { get, addEvicted, summarize, feed, start, stop, save, stats, snapshot, clear, restore, clearKey }
 }

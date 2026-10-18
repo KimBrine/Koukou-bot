@@ -172,6 +172,7 @@ const PAGES = [
   ['humanize','◉  回复行为'],
   ['api','⌘  模型与接口'],
   ['report','▤  群聊报告'],
+  ['memory','▤  记忆浏览'],
   ['logs','≡  运行日志'],
   ['data','▦  数据与记忆'],
 ]
@@ -187,6 +188,9 @@ let openChats = new Set()
 let logAuto = true
 let logFilter = ''
 let joinedGroups = []
+let memoryOverview = []
+let memoryViewKey = ''
+let memoryText = ''
 let customCommands = []
 let editingCmd = {}
 
@@ -355,6 +359,7 @@ function chatRow(c){
         <input type="text" data-f="quietHours" value="${esc(quietVal)}" placeholder="如 01:00-07:00，留空=不设" style="width:200px">
         <label class="mut" style="font-size:12px"><input type="checkbox" data-global="quietHours" ${r.quietHours===null||r.quietHours===undefined?'checked':''}> 沿用全局(${esc((state?.config?.quietHours)||'未设')})</label>
       </div></div>
+      <div class="frow"><label>本会话人格</label><div><select data-f="persona">${personaOptions(r.persona)}</select><div class="mut" style="font-size:12px;margin-top:4px">选了别人格时，这个会话用该人格回复（记忆仍按会话独立保存）</div></div></div>
       <div class="frow"><label>备注名</label><div><input type="text" data-f="note" value="${esc(r.note||'')}" placeholder="只影响这里的显示"></div></div>
       <div class="frow"><label>客制化 prompt</label><div>
         <textarea data-f="customPrompt" placeholder="这个会话专属的人设/要求，会附加到系统提示词后面。例如：这个群是我的同事群，说话正式一点，不要提游戏。">${esc(r.customPrompt||'')}</textarea>
@@ -368,6 +373,12 @@ function chatRow(c){
       </div>
     </div>
   </div>`
+}
+function personaOptions(cur){
+  const head = '<option value="">跟随全局（' + esc(state?.config?.activePersona || '默认') + '）</option>'
+  return head + personas.map(function(p){
+    return '<option value="' + esc(p.name) + '"' + (cur === p.name ? ' selected' : '') + '>' + esc(p.name) + '</option>'
+  }).join('')
 }
 function pageChats(){
   const groups = chats.filter(c=>c.type==='group'), priv = chats.filter(c=>c.type==='private')
@@ -657,6 +668,21 @@ function pageCommands(){
   ].join('')
 }
 // ── 渲染 ───────────────────────────────────────────────
+function pageMemory(){
+  const rows = memoryOverview.map(function(m){
+    return '<tr><td class="mono">' + esc(m.key) + '</td><td>' + (m.recent||0) + ' 条</td><td>' + (m.longTermChars||0) + ' 字</td><td>' + (m.pending||0) + '</td>' +
+      '<td><button class="btn" data-memview="' + esc(m.key) + '">查看</button> <button class="btn" data-memclear="' + esc(m.key) + '">清除</button></td></tr>'
+  }).join('')
+  return [
+    '<h1>记忆浏览</h1><div class="sub">当前人格 <b>' + esc(state?.config?.activePersona || '默认') + '</b> 的记忆。清除会同时删掉该会话的近期对话与长期摘要，不可恢复。</div>',
+    '<section class="card"><h2>会话列表 <span class="pill">' + memoryOverview.length + ' 个</span></h2>',
+    memoryOverview.length ? ('<table class="tbl"><thead><tr><th>会话</th><th>近期记忆</th><th>长期记忆</th><th>待整理</th><th>操作</th></tr></thead><tbody>' + rows + '</tbody></table>') : '<div class="mut">当前人格还没有任何记忆。</div>',
+    '</section>',
+    '<section class="card"><h2>内容 <span class="pill">' + esc(memoryViewKey || '未选择') + '</span></h2>',
+    '<div class="mono" id="memoryBox" style="max-height:440px;overflow:auto;white-space:pre-wrap">' + esc(memoryText || '点上面「查看」看某个会话的记忆') + '</div>',
+    '</section>'
+  ].join('')
+}
 function render(){
   const main = document.getElementById('main')
   let html = ''
@@ -667,6 +693,7 @@ function render(){
   else if (page === 'humanize') html = pageHumanize()
   else if (page === 'api') html = pageApi()
   else if (page === 'report') html = pageReport()
+  else if (page === 'memory') html = pageMemory()
   else if (page === 'logs') html = pageLogs()
   else html = pageData()
   main.innerHTML = html
@@ -735,6 +762,7 @@ async function bind(){
       quietHours: isGlobal('quietHours') ? null : q('quietHours').value,
       note: q('note').value,
       customPrompt: q('customPrompt').value,
+      persona: (q('persona') && q('persona').value) || '',
     }
     try { await api('/api/action/set-chat', { key, patch }); toast('已保存并即时生效'); await load() }
     catch(e){ toast('保存失败：' + e.message, true) }
@@ -773,6 +801,31 @@ async function bind(){
     catch (e) { toast('保存失败：' + e.message, true) }
     cmdSaveBtn.disabled = false
   }
+  // 记忆浏览：查看 / 清除
+  document.querySelectorAll('[data-memview]').forEach(el => el.onclick = async () => {
+    const key = el.dataset.memview
+    try {
+      const rec = await api('/api/memory?key=' + encodeURIComponent(key)).catch(() => ({ items: [] }))
+      const lng = await api('/api/longmemory?key=' + encodeURIComponent(key)).catch(() => ({ text: '' }))
+      memoryViewKey = key
+      const lines = []
+      if (lng && lng.text) { lines.push('【长期记忆】'); lines.push(lng.text); lines.push('') }
+      lines.push('【近期对话】')
+      for (const m of (rec.items || [])) lines.push((m.role === 'user' ? '对方：' : '我：') + String(m.content || ''))
+      memoryText = lines.join('\n')
+      render()
+    } catch (e) { toast('读取失败：' + e.message, true) }
+  })
+  document.querySelectorAll('[data-memclear]').forEach(el => el.onclick = async () => {
+    const key = el.dataset.memclear
+    if (!await ask('清除「' + key + '」的记忆？', '这个会话的近期对话和长期摘要都会被删掉，不可恢复。', '清除')) return
+    try {
+      const r = await api('/api/action/clear-memory', { key })
+      memoryViewKey = ''; memoryText = ''
+      await load()
+      toast('已清除：近期 ' + (r.recent || 0) + ' 条' + (r.longTerm ? '、长期 1 份' : ''))
+    } catch (e) { toast('清除失败：' + e.message, true) }
+  })
   document.querySelectorAll('[data-reset]').forEach(b => b.onclick = async () => {
     try { await api('/api/action/reset-chat', { key: b.dataset.reset }); toast('已恢复默认'); await load() }
     catch(e){ toast(e.message, true) }
@@ -1022,6 +1075,7 @@ async function load(){
       const r = await api('/api/action/get-appendix').catch(()=>({ text:'' }))
       appendixText = r.text ?? ''
     }
+    memoryOverview = (await api('/api/memory-overview').catch(()=>({items:[]}))).items || []
     render()
   } catch(e){ updateSideStatus({ statusError:'控制台未响应' }); toast('加载失败：' + e.message + '（机器人可能在重启）', true) }
 }

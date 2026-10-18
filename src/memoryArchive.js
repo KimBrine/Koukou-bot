@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, openSync, readSync, closeSync, statSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, openSync, readSync, closeSync, statSync, rmSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import path from 'node:path'
 
@@ -59,5 +59,10 @@ export function createMemoryArchive(root) {
     }
     return lines.join('\n')
   }
-  return { add, retrieve }
+  /** 删掉某个会话在当前分区的原文档案（/清除记忆 用） */
+  function drop(epochArg, key) {
+    try { rmSync(location(epochArg, key), { force: true }); indexes.delete(`${epochArg}:${key}`); return true } catch { return false }
+  }
+
+return { add, retrieve, drop }
 }

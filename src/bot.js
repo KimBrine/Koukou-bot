@@ -110,7 +110,31 @@ export function decideReply({ isPrivate, atBot, replyToBot = false, groupId, con
  *   例：/群总结、／群总结、群总结、/群总结 7、/群总结 d 7、/群总结d7、/群总结。
  */
 /** 指令列表：任何人都能问，管理员专属的那些只对管理员显示 */
+/** 管理员专用：清除记忆（只清本会话 / 全部会话） */
+export const ADMIN_CLEAR_MEMORY_CMD_RE = /^[\/／]\s*(?:清除记忆|清空记忆|重置记忆)\s*(全部|all)?\s*[。！!~～.…]*$/i
+
 export const ADMIN_HELP_CMD_RE = /^[\/／]\s*(?:help|帮助|指令|命令)\s*[。！!~～.…]*$/i
+
+/**
+ * 读取"按群指定的人格"正文；文件缺失或读不到时返回空串（退回全局人格）。
+ * 用 mtime 做缓存键，改完人格文件不用重启。
+ */
+const sessionPersonaCache = new Map()
+export function loadSessionPersona(config, name) {
+  const safe = String(name || '').replace(/[\\/:*?"<>|]/g, '_').trim().slice(0, 60)
+  if (!safe) return ''
+  const dir = config.personaDir || path.join(config.dataDir, 'personas')
+  const file = path.join(dir, safe + '.txt')
+  try {
+    const key = file + ':' + statSync(file).mtimeMs
+    if (sessionPersonaCache.has(key)) return sessionPersonaCache.get(key)
+    const text = readFileSync(file, 'utf8').trim()
+    sessionPersonaCache.set(key, text)
+    return text
+  } catch {
+    return ''
+  }
+}
 
 export const SUMMARY_CMD_RE = /^\s*[\/／]?\s*(今日总结|每日总结|群总结|群聊总结)\s*(?:d\s*)?(\d{1,2})?\s*[。！!~～]?\s*$/i
 
@@ -272,7 +296,7 @@ const SEARCH_TOOLS = [{
   },
 }]
 
-export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, rand = Math.random }) {
+export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, longMemory, rand = Math.random }) {
   const imageCache = sharedImageCache ?? (config.dataDir && config.visionCacheEnabled !== false ? createImageCache({
     dir: path.join(config.dataDir, 'image-cache'),
     maxBytes: config.visionCacheMaxBytes,
@@ -770,6 +794,35 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         return
       }
 
+      // 管理员专用：/清除记忆 [全部] —— 清掉本会话（或全部会话）的近期 + 长期记忆
+      const clearMatch = parsed.text.trim().match(ADMIN_CLEAR_MEMORY_CMD_RE)
+      if (clearMatch && directReply) {
+        if (!isBotAdmin(evt.user_id, config.adminUsers)) {
+          logger.info(`[清除记忆] 拒绝 QQ ${evt.user_id}（不在 ADMIN_USERS 里）`)
+          await sendTo(evt, '这个是管理员指令哦～')
+          return
+        }
+        const wipe = (k) => ({
+          recent: typeof memory.clearKey === 'function' ? memory.clearKey(k) : 0,
+          longTerm: typeof longMemory?.clearKey === 'function' ? (longMemory.clearKey(k) ? 1 : 0) : 0,
+        })
+        if (/^(?:全部|all)$/i.test(clearMatch[1] || '')) {
+          const keys = typeof memory.keys === 'function' ? memory.keys() : []
+          let recent = 0
+          let longTerm = 0
+          for (const k of keys) { const r = wipe(k); recent += r.recent; longTerm += r.longTerm }
+          logger.info(`[清除记忆] 管理员 ${evt.user_id} 清空全部：${keys.length} 个会话，近期 ${recent} 条`)
+          await sendTo(evt, `已经清空全部 ${keys.length} 个会话的记忆（近期 ${recent} 条${longTerm ? `、长期记忆 ${longTerm} 份` : ''}）`)
+          return
+        }
+        const memKey = isPrivate ? `p${evt.user_id}` : `g${groupId}`
+        const { recent, longTerm } = wipe(memKey)
+        logger.info(`[清除记忆] 管理员 ${evt.user_id} 清除 ${memKey}：近期 ${recent} 条`)
+        if (recent === 0 && !longTerm) await sendTo(evt, '这个会话本来就没有记忆哦～')
+        else await sendTo(evt, `这个会话的记忆已经清掉了（近期 ${recent} 条${longTerm ? '、长期记忆 1 份' : ''}）`)
+        return
+      }
+
       // 指令列表：谁都能问；管理员专属的只对管理员显示
       if (ADMIN_HELP_CMD_RE.test(parsed.text.trim()) && directReply) {
         const isAdmin = isBotAdmin(evt.user_id, config.adminUsers)
@@ -815,6 +868,9 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
 
       // 本会话生效值：会话设置优先，其次全局（在控制台改了立刻生效，无需重启）
       const eff = chatSettings ? chatSettings.resolve(key, config) : null
+      // 按群指定的人格：只影响提示词，记忆仍按会话隔离
+      const sessionPersonaName = String(eff?.persona || '').trim()
+      const sessionPersonaText = sessionPersonaName ? loadSessionPersona(config, sessionPersonaName) : ''
       runtimeStats?.noteMessage?.(key, Number(evt.time) * 1000 || Date.now())
 
       // 反检测限流：这里只查"每小时发言额度"（间隔不够的问题放到发送前用等待解决，
@@ -926,7 +982,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       // 会话专属要求（控制台里设的），跟在人设后面、机械规则前面
       const customPart = eff?.customPrompt ? `\n\n【本会话的特别要求（管理员设置，优先遵守）】${eff.customPrompt}` : ''
       const systemPrompt =
-        buildSystemPrompt({ botName: config.botName, now: new Date(), chatKey: key, query: parsed.text }) +
+        buildSystemPrompt({ botName: config.botName, now: new Date(), chatKey: key, query: parsed.text, personaText: sessionPersonaText }) +
         customPart +
         currentMessageHint(evt) +
         conversationRules(config) +

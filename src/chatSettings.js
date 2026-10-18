@@ -17,6 +17,7 @@ const DEFAULTS = {
   atReplyEnabled: true, // 被 @ 或引用机器人消息时直接回复
   proactiveEnabled: true, // 允许主动搭话（仅在白名单群里才有意义）
   proactiveRate: null, // 覆盖全局主动搭话概率
+  persona: '', // 本会话单独使用的人格名（空=跟随全局；只影响提示词，记忆仍按会话隔离）
   customPrompt: '', // 这个会话的客制化人设/要求，附加到系统提示词
   emojiKeepRate: null, // 覆盖装饰符号频率
   replyMaxLines: null, // 覆盖最多几行
@@ -34,6 +35,7 @@ function normalizePatch(patch = {}) {
     const v = Number(patch.proactiveRate)
     out.proactiveRate = patch.proactiveRate === null || patch.proactiveRate === '' ? null : Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : null
   }
+  if ('persona' in patch) out.persona = String(patch.persona ?? '').trim().slice(0, 60)
   if ('customPrompt' in patch) out.customPrompt = String(patch.customPrompt ?? '').slice(0, 4000)
   if ('emojiKeepRate' in patch) {
     const v = Number(patch.emojiKeepRate)
@@ -126,6 +128,7 @@ export function createChatSettings({ file, logger }) {
       proactiveEnabled: s.proactiveEnabled,
       proactiveRate: s.proactiveRate ?? (config.proactiveRateFor ? config.proactiveRateFor(keyToGroupId(key)) : config.proactiveRate),
       customPrompt: s.customPrompt,
+      persona: s.persona || '',
       emojiKeepRate: s.emojiKeepRate ?? config.emojiKeepRate,
       replyMaxLines: s.replyMaxLines ?? config.replyMaxLines,
       lineMaxChars: s.lineMaxChars ?? config.replyLineMaxChars,
