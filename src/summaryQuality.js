@@ -31,7 +31,7 @@ export function limitSummaryReferenceWeight(text, logger) {
 export function inspectSummaryQuality(text, { records = [], stats = {}, contentProfile = profileSummaryContent(records) } = {}) {
   const names = { '热门话题': 'topics', '群友称号': 'members', '群圣经': 'quotes' }
   const {headings, counts, blocks} = parseSummaryFormat(text)
-  // 消息少或主要是图片时不强行凑数；文字记录充足时遵守原来 3～5 项的要求。
+  // 完整窗口决定动态范围，不能用采样后的条数或统一三项门槛放行大群的过短报告。
   const substantive = contentProfile.ordinaryCount
   const topicPolicy = summaryTopicPolicy(contentProfile)
   const min = {topics: topicPolicy.min, members: Math.min(4, Math.max(1, Number(stats.people) || 1)), quotes: contentProfile.forwardOnly ? 0 : substantive >= 20 ? 3 : 1}
@@ -39,6 +39,7 @@ export function inspectSummaryQuality(text, { records = [], stats = {}, contentP
   for (const [title, key] of Object.entries(names)) if (!headings.includes(key)) issues.push(`缺少「${title}」标题`)
   if (headings.join(',') !== 'topics,members,quotes') issues.push('三个小节必须各出现一次，并按热门话题、群友称号、群圣经的顺序排列')
   if (counts.topics < min.topics) issues.push(`热门话题只有 ${counts.topics} 项，应至少 ${min.topics} 项`)
+  if (!contentProfile.forwardOnly && counts.topics > topicPolicy.max) issues.push(`热门话题有 ${counts.topics} 项，本期最多 ${topicPolicy.max} 项；请合并重复事件并保留重点`)
   if (contentProfile.forwardOnly && counts.topics > 0) issues.push('没有有效群内交流，不能把转发资料单独写成热门话题')
   if (contentProfile.forwardOnly && counts.quotes > 0) issues.push('只有转发资料，内层原话不能当作本群群圣经')
   if (counts.members < min.members) issues.push(`群友称号只有 ${counts.members} 项，应至少 ${min.members} 项`)
@@ -86,7 +87,7 @@ export async function generateCheckedSummary({ llm, prompt, messages, records, s
     reply = await llm.chat(prompt, [
       ...messages,
       {role:'assistant',content:reply},
-      {role:'user',content:`上面的报告没有满足格式要求：${quality.issues.join('；')}。请基于前面同一份真实聊天记录完整重写报告，不能只补一段。保留三个小节的标题，${contentProfile.forwardOnly ? '没有有效群内交流，热门话题和群圣经不列条目，说明暂无足够依据。' : `话题写 ${quality.min.topics}～5 项，优先${quality.topicPolicy.target}项；有效普通文字样本为${quality.topicPolicy.meaningful}条。群圣经写 ${quality.min.quotes}～5 项。`}群友称号写 ${quality.min.members}～5 项。每个条目及不同小节之间空一行，条目内部正常换行。覆盖不同日期及不同讨论，也检查重要信息、通知、决定与安排，不要把其他话题并入一个大话题；两个活跃时段不等于两个话题。转发记录不单独成题，最多用60字且不超过话题正文20%补充本群真实交流，内层人物和原话不得混入本群统计、参与者与群圣经。只写记录确实支持的内容，不能为了凑数编造话题或原话，也不能用少量例行打卡凑主要话题；如果证据不足，请如实说明。`},
+      {role:'user',content:`上面的报告没有满足格式要求：${quality.issues.join('；')}。请基于前面同一份真实聊天记录完整重写报告，不能只补一段。保留三个小节的标题，${contentProfile.forwardOnly ? '没有有效群内交流，热门话题和群圣经不列条目，说明暂无足够依据。' : `话题写 ${quality.min.topics}～${quality.topicPolicy.max} 项，优先${quality.topicPolicy.target}项；有效普通文字样本为${quality.topicPolicy.meaningful}条。群圣经写 ${quality.min.quotes}～5 项。`}群友称号写 ${quality.min.members}～5 项。每个条目及不同小节之间空一行，条目内部正常换行。覆盖不同日期及不同讨论，也检查重要信息、通知、决定与安排，不要把其他话题并入一个大话题；两个活跃时段不等于两个话题。先重新检索整个窗口的独立事件与不同问题，再按重要性选题；高消息量时五项不是上限，也不能为了达到数量拆碎同一事件。转发记录不单独成题，最多用60字且不超过话题正文20%补充本群真实交流，内层人物和原话不得混入本群统计、参与者与群圣经。只写记录确实支持的内容，不能为了凑数编造话题或原话，也不能用少量例行打卡凑主要话题；如果证据不足，请如实说明。`},
     ], {rejectTruncated:true, signal})
     signal?.throwIfAborted()
     reply = limitSummaryReferenceWeight(reply, logger)

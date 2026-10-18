@@ -59,10 +59,14 @@ export function summaryTopicPolicy(profile) {
   const meaningful = Math.max(0, Number(profile.ordinaryCount) || 0)
   const sparse = meaningful <= 40
   if (profile.forwardOnly) return { meaningful, sparse: true, min: 0, target: 0, max: 0 }
+  // 数量与完整窗口的有效文字挂钩；高消息量不能继续用统一的“三项及格、五项封顶”。
+  if (meaningful >= 2000) return { meaningful, sparse, min: 6, target: 8, max: 10 }
+  if (meaningful >= 800) return { meaningful, sparse, min: 4, target: 6, max: 8 }
+  if (meaningful >= 200) return { meaningful, sparse, min: 3, target: 4, max: 6 }
   return {
     meaningful, sparse,
     min: sparse ? 1 : 3,
-    target: meaningful <= 10 ? 1 : sparse ? 2 : meaningful >= 800 ? 5 : meaningful >= 200 ? 4 : 3,
+    target: meaningful <= 10 ? 1 : sparse ? 2 : 3,
     max: 5,
   }
 }
@@ -79,7 +83,7 @@ export function formatSummaryContentGuide(profile) {
       ? '本期只有转发参考资料或非文本内容，没有有效群内交流；热门话题不凑数，保留标题并说明暂无足够依据。内层原话不能做本群群圣经。'
       : topicPolicy.sparse
       ? `本期有效普通文字样本只有 ${ordinaryCount} 条（不超过40条），允许按证据写1～2项话题，优先${topicPolicy.target}项；原始图片和固定模板条数不代表可总结的讨论量。`
-      : `话题数量要求：完整窗口有效普通文字 ${ordinaryCount} 条，热门话题至少${topicPolicy.min}项，优先${topicPolicy.target}项，最多${topicPolicy.max}项；不能只写两项就结束。先检索整个窗口中的独立讨论、重要信息、通知、决定与安排，再按实际证据组织条目，不能为了数量编造或把同一件事机械拆分。`,
+      : `话题数量要求：完整窗口有效普通文字 ${ordinaryCount} 条，热门话题至少${topicPolicy.min}项，优先${topicPolicy.target}项，最多${topicPolicy.max}项；不能只写两项就结束。${topicPolicy.target > 5 ? '本期讨论量较大，五项不是上限；不能把不相关的讨论合并为少数宽泛的大标题。' : ''}先通读整个窗口，在心里列出有证据的独立讨论、重要信息、通知、决定与安排，再归并同一事件并按重要性选取。不同问题有各自的交流、结论或后续时分别成题；同一件事跨时段出现则合并。不能为了数量编造或把同一件事机械拆分。`,
     '时间分布用于帮助通读上下文，不规定话题个数；同一时段可以有多个独立主题，同一主题也可能跨越多个时段，不能将两个活跃时段等同于两个话题。',
     profile.forwardCount ? `合并记录外层 ${profile.forwardCount} 条；只按外层消息计数。内层内容只作低权重参考，不能单列转发热门话题，也不能扩大有效文字样本或参与人数。` : '',
     profile.minorPigRoutine ? '本期猪猪主要是少量例行交互：不要排在热门话题首位；若保留独立条目，放在主要讨论之后，用一两句简述（正文最多90字），不要与主要讨论占用同样篇幅。' : '',

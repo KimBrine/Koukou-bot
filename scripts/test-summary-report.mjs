@@ -212,7 +212,7 @@ console.log('\n=== 10. 历史翻页与报告分卡的端到端行为（本地模
   }
   const logger = { info() {}, warn() {}, error() {} }
   const llm = { async chat() {
-    return '💬 热门话题\n' + Array.from({ length: 12 }, (_, i) => `${i + 1}. 第${i + 1}件事\n   参与者: 测试群友\n   简短描述`).join('\n\n') + '\n\n🏆 群友称号\n• 测试群友 - 测试称号\n  依据真实发言数据。\n\n💬 群圣经\n1. "测试消息" —— 测试群友\n  测试点评。'
+    return '💬 热门话题\n' + Array.from({ length: 5 }, (_, i) => `${i + 1}. 第${i + 1}件事\n   参与者: 测试群友\n   简短描述`).join('\n\n') + '\n\n🏆 群友称号\n• 测试群友 - 测试称号\n  依据真实发言数据。\n\n💬 群圣经\n1. "测试消息" —— 测试群友\n  测试点评。'
   } }
   const service = createDailySummary({ config, logger, onebot, llm })
   const preview = await service.previewStats(200000002)
@@ -222,7 +222,7 @@ console.log('\n=== 10. 历史翻页与报告分卡的端到端行为（本地模
   ok('跨页去重且仅统计今天消息', preview.stats.total === 5, `→ ${preview.stats.total}`)
   await service.runSummary(200000002)
   ok('超长报告分成多张卡片', cards.length > 1 && cards.every((c) => c.nodes.length <= 5), `→ ${cards.map((c) => c.nodes.length)}`)
-  ok('每个顶层条目保持独立节点', cards.flatMap((c) => c.nodes).filter((n) => /(?:^|\n)\d+\. 第\d+件事/.test(n.text)).length === 12)
+  ok('每个顶层条目保持独立节点', cards.flatMap((c) => c.nodes).filter((n) => /(?:^|\n)\d+\. 第\d+件事/.test(n.text)).length === 5)
   } finally { globalThis.Date = RealDate }
 }
 
