@@ -49,3 +49,7 @@ Thumbs.db
 # Personal operating guides belong outside the public project.
 /docs/GIT-GITHUB.md
 /休眠说明-如何恢复.md
+
+# ===== 本 fork 新增：一键启动相关（本地专属，不入库）=====
+llbot_path.txt
+/luckylillia/

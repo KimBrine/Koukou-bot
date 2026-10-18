@@ -2,6 +2,59 @@
 
 基于 Node.js 和 OneBot 11 的 QQ 聊天机器人，包含网页控制台、Windows 桌面入口和 NapCat 启动中心。使用 Node.js 内置模块，无需安装 npm 运行依赖。新安装使用通用助手人格，不附带个人角色、专属语料或识图标注。
 
+> **本仓库是一个 fork**：在原作者 [KimBrine/Koukou-bot](https://github.com/KimBrine/Koukou-bot) 的基础上，增加了一套 Windows 一键启动脚本与图标，代码本身未改动。
+
+## 一键启动（Windows）
+
+### 需要准备
+
+| 必需 | 说明 |
+| --- | --- |
+| Windows 10/11 | 启动脚本是 .bat |
+| Node.js ≥ 22 | 项目无 npm 依赖 |
+| [LLBot](https://github.com/LLOneBot/LuckyLilliaBot/releases) | QQ 协议端，解压到本仓库**旁边**的 `luckylillia` 文件夹 |
+| DeepSeek API Key | <https://platform.deepseek.com> 申请（需充值） |
+| 一个 QQ 小号 | 机器人登录用，**建议不要用主号** |
+
+### 步骤
+
+1. 下载 LLBot，解压到与本仓库同级的位置：
+
+   ```
+   某个目录\
+   ├─ Koukou-bot\        ← 本仓库
+   └─ luckylillia\       ← LLBot（里面有 LuckyLillia.exe）
+   ```
+
+   放别处也行，把路径写进 `llbot_path.txt`（参考 `llbot_path.txt.example`）。
+
+2. 复制 `.env.example` 为 `.env`，至少填：
+   ```ini
+   DEEPSEEK_API_KEY=sk-...
+   ONEBOT_WS_URL=ws://127.0.0.1:3001
+   ```
+
+3. 双击 `start-bot.bat`
+   - 自动启动 LLBot（headless，不需要开 QQ 客户端）
+   - 等 OneBot 端口 3001 就绪
+   - 打开机器人控制台 <http://127.0.0.1:8787>
+
+4. 首次需要扫码：打开 <http://127.0.0.1:3080>，用手机 QQ 扫。登录态会保存，之后免扫码。
+
+### 脚本说明
+
+| 文件 | 作用 |
+| --- | --- |
+| `start-bot.bat` | 一键启动（全部使用相对路径，放哪都能跑） |
+| `stop-old-bot.ps1` | 清理上一次的机器人进程，避免重复实例 |
+| `app.ico` | 快捷方式图标 |
+| `llbot_path.txt.example` | LLBot 路径配置模板 |
+
+> 非官方 QQ 接入，**存在账号风险，请自行评估**。仅供个人学习使用。
+
+---
+
+
 ## 功能
 
 - **对话与人格**：私聊、群内 @ 或引用机器人发言时回复、白名单群按概率主动搭话；人格编辑、会话专属提示词、上下文与长期记忆。
