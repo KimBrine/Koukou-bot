@@ -1144,6 +1144,13 @@ async function refreshStateUI() {
     state = await api('/api/state')
     updateSideStatus(state.bot)
     if (page === 'overview') {
+      // 正在输入时不要重绘：每 3 秒一次的全页重绘会把还没保存的输入清掉
+      const mainEl = document.getElementById('main')
+      const focused = document.activeElement
+      const typing = focused && mainEl?.contains(focused) && /^(INPUT|TEXTAREA|SELECT)$/.test(focused.tagName)
+      const adminBox = document.getElementById('adminUsersInput')
+      const dirtyAdmin = adminBox && adminBox.value.trim() !== (state?.config?.adminUsers || []).join(',')
+      if (typing || dirtyAdmin) return
       const oldY = window.scrollY
       const detailsOpen = document.querySelector('.advanced-box')?.open
       render()

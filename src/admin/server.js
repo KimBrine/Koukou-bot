@@ -379,6 +379,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         replyMaxLines: config.replyMaxLines,
         lineMaxChars: config.replyLineMaxChars,
         activePersona: config.activePersona || '',
+        adminUsers: [...(config.adminUsers || [])],
         summaryTimes: config.summaryTimes,
         summaryFallbackEnabled: config.summaryFallbackEnabled,
         summaryGroups: config.summaryGroups,
