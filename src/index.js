@@ -15,6 +15,7 @@ import { createDailySummary, buildSummaryPrompt } from './dailySummary.js'
 import { createWebSearch } from './search.js'
 import { loadPokeReplies, createPokeReplier } from './pokeReplies.js'
 import { createLongMemory } from './longMemory.js'
+import { createCustomCommands, renderReply } from './customCommands.js'
 import { createTargetWatch } from './targetWatch.js'
 import { createChatSettings } from './chatSettings.js'
 import { createDailyPing } from './dailyPing.js'
@@ -196,6 +197,9 @@ const longMemory = createLongMemory({
 })
 memory.onEvict = (key, entries) => longMemory.addEvicted(key, entries)
 
+// 自定义指令：关键词命中回固定内容（含变量替换）与定时推送，不调用模型
+const customCommands = createCustomCommands({ file: path.join(config.dataDir, 'custom-commands.json'), logger })
+
 // 联网搜索（百度千帆）：仅私聊与被@时可用，模型自行判断是否需要
 const webSearch = createWebSearch({ apiKey: config.baiduApiKey, timeoutMs: 20000, logger })
 
@@ -261,7 +265,7 @@ const runtimeStats = {
   },
 }
 
-const bot = createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt: systemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats })
+const bot = createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt: systemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands })
 
 // 本地控制台：机器人自己托管界面，用 Edge/Chrome 的 app 模式窗口打开就像一个桌面应用
 let adminServer = null
@@ -278,6 +282,7 @@ if (config.adminEnabled) {
     runtimeStats,
     dailyPing,
     bot,
+    customCommands,
     restartBot: () => {
       // 让一个独立进程在 1.2 秒后杀掉当前实例并用计划任务重新拉起（避免自己杀自己杀不干净）
       //
@@ -304,6 +309,25 @@ if (config.adminEnabled) {
   })
   adminServer.start(config.adminPort)
 }
+
+// 自定义指令的定时推送：每分钟检查一次，到点按模板发到目标群（不调用模型）
+const customTimer = setInterval(async () => {
+  try {
+    for (const item of customCommands.due(Date.now())) {
+      const text = renderReply(item.command.reply, { now: Date.now() })
+      try {
+        await onebot.sendGroup(item.groupId, [{ type: 'text', data: { text } }])
+        memory.push(`g${item.groupId}`, 'assistant', text, { time: Date.now() })
+        logger.info(`[定时指令] 「${item.command.name}」已发到群 ${item.groupId}`)
+      } catch (err) {
+        logger.warn(`[定时指令] 群 ${item.groupId} 发送失败：${err.message}`)
+      }
+    }
+  } catch (err) {
+    logger.warn(`[定时指令] 检查失败：${err.message}`)
+  }
+}, 30000)
+if (customTimer.unref) customTimer.unref()
 
 onebot.on('message', (evt) => {
   bot.handleMessage(evt).catch((err) => logger.error(`处理消息异常：${err?.stack || err}`))

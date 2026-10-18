@@ -29,6 +29,7 @@ const EDITABLE = [
     type: 'text',
     wide: true,
   },
+  { key: 'ADMIN_USERS', label: '管理员 QQ', hint: '能触发 /群总结、/帮助、/id_check 等特权指令的 QQ 号，逗号分隔；留空 = 不限制（建议一定配上）', live: true, type: 'text', wide: true },
   { key: 'PROACTIVE_RATE', label: '全局主动搭话概率', hint: '未单独配置的群使用这个百分比', live: true, type: 'rate' },
   { key: 'PROACTIVE_RATE_PER_GROUP', label: '按群独立概率', hint: '给指定群设置默认概率；移除后沿用全局。会话单独设置优先。', live: true, type: 'text', wide: true },
   { key: 'PROACTIVE_COOLDOWN_MS', label: '主动搭话冷却(ms)', hint: '同一个群两条主动消息的最小间隔', live: true, type: 'number' },
@@ -178,7 +179,7 @@ function validateGroupConfig(key, value) {
   }
 }
 
-export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, bot, restartBot }) {
+export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, bot, customCommands, restartBot }) {
   // 本实例自己的 .env（并行跑两个实例时，写死 rootDir\.env 会改到另一个实例的配置上）
   const envFile = config.envFile || path.join(config.rootDir, '.env')
   const logFile = path.join(config.logDir || path.join(config.rootDir, 'logs'), 'bot.log')
@@ -389,6 +390,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     'GET /api/state': async () => buildState(),
     'GET /api/chats': async () => ({ items: await buildChatList() }),
     'GET /api/groups': async () => ({ items: await getGroupList() }),
+    'GET /api/custom-commands': async () => ({ items: typeof customCommands?.all === 'function' ? customCommands.all() : [] }),
     'GET /api/personas': async () => ({ items: listPersonas(), active: config.activePersona || '', dir: personaDir }),
     'GET /api/config': async () => {
       const env = readEnvFile(envFile)
@@ -502,6 +504,12 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
             .map((s) => Number(s.trim()))
             .filter((n) => Number.isFinite(n) && n > 0),
         )
+        break
+      case 'ADMIN_USERS':
+        config.adminUsers = String(value)
+          .split(',')
+          .map((x) => x.trim())
+          .filter(Boolean)
         break
       case 'PROACTIVE_RATE':
         config.proactiveRate = Math.min(1, Math.max(0, num(value, config.proactiveRate)))
@@ -711,6 +719,15 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         persist: () => writeEnvFile(envFile, { ACTIVE_PERSONA: name }, { atomic: true }) })
       logger?.info?.(`[控制台] 切换人格为「${name}」`)
       return result
+    },
+    async 'save-custom-command'(payload) {
+      const saved = customCommands.upsert(payload || {})
+      logger?.info?.(`[控制台] 保存自定义指令「${saved.name}」`)
+      return { ok: true, item: saved }
+    },
+    async 'delete-custom-command'(payload) {
+      const ok = customCommands.remove(payload?.id)
+      return { ok, removed: ok }
     },
     async 'restart-bot'() {
       logger?.info?.('[控制台] 收到重启机器人指令')

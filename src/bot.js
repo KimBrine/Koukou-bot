@@ -8,6 +8,8 @@ import { modelHistory } from './memory.js'
 import { conversationRules } from './conversationRules.js'
 import { stripInternalReplyMetadata, REPLY_REPAIR_HINT } from './replySanitizer.js'
 import { parseMessage } from './cq.js'
+import { isBotAdmin, hasAdmins, adminHint } from './permissions.js'
+import { renderReply } from './customCommands.js'
 import { expandForwardRecords } from './forwardRecords.js'
 import { createQuotedMessageResolver } from './quotedMessage.js'
 import { renderFacesToCq } from './qqFace.js'
@@ -107,6 +109,9 @@ export function decideReply({ isPrivate, atBot, replyToBot = false, groupId, con
  * 兼容：全角斜杠 ／、前后空格、结尾标点；「d」是可选的固定格式标记，数字为天数。
  *   例：/群总结、／群总结、群总结、/群总结 7、/群总结 d 7、/群总结d7、/群总结。
  */
+/** 指令列表：任何人都能问，管理员专属的那些只对管理员显示 */
+export const ADMIN_HELP_CMD_RE = /^[\/／]\s*(?:help|帮助|指令|命令)\s*[。！!~～.…]*$/i
+
 export const SUMMARY_CMD_RE = /^\s*[\/／]?\s*(今日总结|每日总结|群总结|群聊总结)\s*(?:d\s*)?(\d{1,2})?\s*[。！!~～]?\s*$/i
 
 /** 长回复按段落/句子边界切成多条（QQ 单条消息有长度限制） */
@@ -267,7 +272,7 @@ const SEARCH_TOOLS = [{
   },
 }]
 
-export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, rand = Math.random }) {
+export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, rand = Math.random }) {
   const imageCache = sharedImageCache ?? (config.dataDir && config.visionCacheEnabled !== false ? createImageCache({
     dir: path.join(config.dataDir, 'image-cache'),
     maxBytes: config.visionCacheMaxBytes,
@@ -711,7 +716,11 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
           return
         }
         // 授权校验：防群员乱发指令
-        if (!canRunIdCheck(evt.user_id, config.idCheckOperators)) {
+        // 管理员拥有最高权限：即使不在 ID_CHECK_OPERATORS 里也放行
+        const idCheckAllowed =
+          canRunIdCheck(evt.user_id, config.idCheckOperators) ||
+          (hasAdmins(config.adminUsers) && isBotAdmin(evt.user_id, config.adminUsers))
+        if (!idCheckAllowed) {
           logger.info(`[名单核对] 拒绝 QQ ${evt.user_id}（不在 ID_CHECK_OPERATORS 里）`)
           await sendTo(evt, '这个指令只有管理员能用哦～别乱按啦')
           return
@@ -728,6 +737,12 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       // 支持 「/群总结」「/群总结 3」「/群总结 d 3」（d 为固定格式标记，数字为天数，1~30）
       const cmdMatch = parsed.text.trim().match(summaryCmdRe)
       if (cmdMatch && directReply) {
+        // 最高权限：ADMIN_USERS 配了名单时，只有管理员能触发群总结
+        if (!isBotAdmin(evt.user_id, config.adminUsers)) {
+          logger.info(`[群总结] 拒绝 QQ ${evt.user_id}（不在 ADMIN_USERS 里）`)
+          await sendTo(evt, '群总结只有管理员能触发哦～找管理员要权限吧')
+          return
+        }
         const days = Math.max(1, Math.min(30, Number(cmdMatch[2]) || 1))
         const targets = isPrivate ? [...dailySummary.summaryGroups()] : [groupId]
         if (targets.length === 0) {
@@ -753,6 +768,44 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         await sendTo(evt, `收到！正在翻${scope}的聊天记录写分析报告（${eta}），写完就发出来～`)
         dailySummary.trigger(targets, { days })
         return
+      }
+
+      // 指令列表：谁都能问；管理员专属的只对管理员显示
+      if (ADMIN_HELP_CMD_RE.test(parsed.text.trim()) && directReply) {
+        const isAdmin = isBotAdmin(evt.user_id, config.adminUsers)
+        const lines = ['📋 我能用的指令：', '', '【大家都能用】', '/help  打开这份指令列表']
+        if (isAdmin) {
+          lines.push('')
+          lines.push('【管理员专属】')
+          lines.push('/群总结 [天数]     总结群聊（默认今天，最多 30 天）')
+          if (config.idCheckEnabled) lines.push('/id_check          群名片核对（需 @我）')
+        }
+        const custom = typeof customCommands?.all === 'function' ? customCommands.all().filter((c) => c.enabled) : []
+        if (custom.length > 0) {
+          lines.push('')
+          lines.push('【自定义指令】')
+          for (const c of custom.slice(0, 20)) lines.push(String(c.trigger || c.name) + (c.match === 'prefix' ? '…' : '') + '  ' + (c.name || ''))
+        }
+        await sendTo(evt, lines.join('\n'))
+        return
+      }
+
+      // 自定义指令：命中就回固定内容，不调用模型
+      if (typeof customCommands?.match === 'function') {
+        const custom = customCommands.match(parsed.text, { isPrivate, groupId, userId: evt.user_id })
+        if (custom) {
+          const replyText = renderReply(custom.reply, {
+            name: evt.sender?.card || evt.sender?.nickname,
+            userId: evt.user_id,
+            now: Date.now(),
+          })
+          const customKey = isPrivate ? `p${evt.user_id}` : `g${groupId}`
+          logger.info(`[自定义指令] 「${custom.name}」（${custom.trigger}）命中 ${customKey}`)
+          await sendTo(evt, replyText)
+          memory.push(customKey, 'assistant', replyText, { time: Date.now() })
+          replyLog?.set(`${groupId}:${evt.user_id}`, Date.now())
+          return
+        }
       }
 
       const senderName = evt.sender?.card || evt.sender?.nickname || String(evt.user_id)

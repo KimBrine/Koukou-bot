@@ -261,6 +261,12 @@ export function loadConfig() {
       env.ID_CHECK_REMINDER ?? localProfile.idCheckReminder ?? '请按本群要求修改群名片，例如「编号 昵称」。'
     ).trim(),
     // 谁能触发 /id_check（QQ 号，逗号分隔）；留空 = 谁都能触发
+    // 管理员（最高权限）：能用 /群总结、/帮助、/id_check 等特权指令的 QQ 号，逗号分隔。
+    // 留空 = 不限制（沿旧行为，仅建议单人自用时这样；启动日志会提示）。
+    adminUsers: String(env.ADMIN_USERS ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean),
     idCheckOperators: String(env.ID_CHECK_OPERATORS ?? '')
       .split(',')
       .map((s) => s.trim())

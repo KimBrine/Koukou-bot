@@ -167,6 +167,7 @@ details.advanced-box summary{cursor:pointer;font-weight:650}
 const PAGES = [
   ['overview','◈  工作台'],
   ['chats','◎  会话管理'],
+  ['commands','⌘  自定义指令'],
   ['persona','✧  人格编辑'],
   ['humanize','◉  回复行为'],
   ['api','⌘  模型与接口'],
@@ -186,6 +187,8 @@ let openChats = new Set()
 let logAuto = true
 let logFilter = ''
 let joinedGroups = []
+let customCommands = []
+let editingCmd = {}
 
 const $ = (h) => { const d = document.createElement('div'); d.innerHTML = h.trim(); return d.firstElementChild }
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
@@ -614,12 +617,52 @@ function pageData(){
   <div class="card" id="dailyFiles"></div>`
 }
 
+function pageCommands(){
+  const e = editingCmd || {}
+  const rows = customCommands.map(function(c){
+    const how = ({exact:'完全匹配',prefix:'开头是',contains:'包含'})[c.match] || c.match
+    const scope = c.scope === 'group' ? ('指定群 ' + (c.groups||[]).join(',')) : c.scope === 'private' ? '仅私聊' : '所有会话'
+    const sched = c.scheduleEnabled && (c.scheduleTimes||[]).length ? ((c.scheduleTimes||[]).join('/') + ' → ' + (c.scheduleGroups||[]).join(',')) : '—'
+    return '<tr><td>' + esc(c.name) + '</td><td class="mono">' + esc(c.trigger) + '</td><td>' + how + '</td><td>' + scope + '</td><td>' + sched + '</td><td>' + (c.enabled ? '开启' : '停用') + '</td>' +
+      '<td><button class="btn" data-edit="' + c.id + '">编辑</button> <button class="btn" data-del="' + c.id + '">删除</button></td></tr>'
+  }).join('')
+  return [
+    '<h1>自定义指令</h1><div class="sub">聊天里命中触发词就回固定内容，不调用模型、不花钱。也能在 /help 里看到。</div>',
+    '<section class="card"><h2>已有指令 <span class="pill">' + customCommands.length + ' 条</span></h2>',
+    '<div class="note">按列表顺序匹配，先命中先回复。保存后立刻生效，不用重启。</div>',
+    customCommands.length ? ('<table class="tbl"><thead><tr><th>名称</th><th>触发词</th><th>匹配</th><th>范围</th><th>定时推送</th><th>状态</th><th>操作</th></tr></thead><tbody>' + rows + '</tbody></table>') : '<div class="mut">还没有自定义指令，下面新建一条试试。</div>',
+    '</section>',
+    '<section class="card"><h2>' + (e.id ? '编辑指令' : '新建指令') + '</h2>',
+    '<div class="frow"><label>名称</label><div><input type="text" id="cmdName" value="' + esc(e.name||'') + '" placeholder="给人看的名字，比如 打招呼"></div></div>',
+    '<div class="frow"><label>触发词</label><div><input type="text" id="cmdTrigger" value="' + esc(e.trigger||'') + '" placeholder="比如 早安 或 /签到"></div></div>',
+    '<div class="frow"><label>匹配方式</label><div><select id="cmdMatch">',
+      '<option value="exact"' + (e.match==='exact'||!e.match?' selected':'') + '>完全等于（整句只有触发词）</option>',
+      '<option value="prefix"' + (e.match==='prefix'?' selected':'') + '>开头是（后面可带内容）</option>',
+      '<option value="contains"' + (e.match==='contains'?' selected':'') + '>包含即可（容易误触）</option>',
+    '</select></div></div>',
+    '<div class="frow"><label>生效范围</label><div><select id="cmdScope">',
+      '<option value="all"' + (e.scope==='all'||!e.scope?' selected':'') + '>所有会话</option>',
+      '<option value="group"' + (e.scope==='group'?' selected':'') + '>仅指定群</option>',
+      '<option value="private"' + (e.scope==='private'?' selected':'') + '>仅私聊</option>',
+    '</select></div></div>',
+    '<div class="frow"><label>群号</label><div><input type="text" id="cmdGroups" value="' + esc((e.groups||[]).join(',')) + '" placeholder="留空=所有群；多个逗号分隔"><div class="mut" style="font-size:12px;margin-top:4px">可用群：' + (joinedGroups||[]).map(function(g){return esc(g.name)+'（'+g.id+'）'}).join('、') + '</div></div></div>',
+    '<div class="frow"><label>冷却(秒)</label><div><input type="number" id="cmdCooldown" min="0" max="86400" value="' + (e.cooldownSec||0) + '"><div class="mut" style="font-size:12px;margin-top:4px">同一会话最短间隔，0=不限制</div></div></div>',
+    '<div class="frow"><label>定时推送</label><div><label class="chk"><input type="checkbox" id="cmdSchedEnabled"' + (e.scheduleEnabled?' checked':'') + '> 每天在指定时间自动发到群里</label></div></div>',
+    '<div class="frow"><label>定时时间</label><div><input type="text" id="cmdSchedTimes" value="' + esc((e.scheduleTimes||[]).join(',')) + '" placeholder="如 09:00,21:30（24 小时制）"></div></div>',
+    '<div class="frow"><label>定时群号</label><div><input type="text" id="cmdSchedGroups" value="' + esc((e.scheduleGroups||[]).join(',')) + '" placeholder="要发到哪些群，逗号分隔"></div></div>',
+    '<div class="frow"><label>回复内容</label><div><textarea id="cmdReply" rows="4" placeholder="命中后原样发出，可多行">' + esc(e.reply||'') + '</textarea><div class="note">可用变量：<b>{name}</b> 昵称、<b>{qq}</b> QQ、<b>{time}</b> 时间、<b>{date}</b> 日期；未知变量原样保留。</div></div></div>',
+    '<div class="frow"><label>启用</label><div><label class="chk"><input type="checkbox" id="cmdEnabled"' + (e.enabled===false?'':' checked') + '> 参与匹配</label></div></div>',
+    '<div class="flexbar"><button class="btn primary" id="cmdSave">保存</button><button class="btn" id="cmdNew">新建一条</button></div>',
+    '</section>'
+  ].join('')
+}
 // ── 渲染 ───────────────────────────────────────────────
 function render(){
   const main = document.getElementById('main')
   let html = ''
   if (page === 'overview') html = pageOverview()
   else if (page === 'chats') html = pageChats()
+  else if (page === 'commands') html = pageCommands()
   else if (page === 'persona') html = pagePersona()
   else if (page === 'humanize') html = pageHumanize()
   else if (page === 'api') html = pageApi()
@@ -696,6 +739,40 @@ async function bind(){
     try { await api('/api/action/set-chat', { key, patch }); toast('已保存并即时生效'); await load() }
     catch(e){ toast('保存失败：' + e.message, true) }
   })
+  // 自定义指令：编辑 / 删除 / 保存
+  document.querySelectorAll('[data-edit]').forEach(el => el.onclick = () => {
+    editingCmd = customCommands.find(c => c.id === el.dataset.edit) || {}
+    render()
+  })
+  document.querySelectorAll('[data-del]').forEach(el => el.onclick = async () => {
+    if (!await ask('删除这条自定义指令？', '删除后无法恢复。', '删除')) return
+    try { await api('/api/action/delete-custom-command', { id: el.dataset.del }); await load(); toast('已删除') }
+    catch (e) { toast('删除失败：' + e.message, true) }
+  })
+  const cmdNewBtn = document.getElementById('cmdNew')
+  if (cmdNewBtn) cmdNewBtn.onclick = () => { editingCmd = {}; render() }
+  const cmdSaveBtn = document.getElementById('cmdSave')
+  if (cmdSaveBtn) cmdSaveBtn.onclick = async () => {
+    const g = (id) => document.getElementById(id)
+    const payload = {
+      id: editingCmd.id || '',
+      name: g('cmdName').value,
+      trigger: g('cmdTrigger').value,
+      match: g('cmdMatch').value,
+      scope: g('cmdScope').value,
+      groups: g('cmdGroups').value,
+      cooldownSec: Number(g('cmdCooldown').value) || 0,
+      scheduleEnabled: g('cmdSchedEnabled').checked,
+      scheduleTimes: g('cmdSchedTimes').value,
+      scheduleGroups: g('cmdSchedGroups').value,
+      reply: g('cmdReply').value,
+      enabled: g('cmdEnabled').checked,
+    }
+    cmdSaveBtn.disabled = true
+    try { await api('/api/action/save-custom-command', payload); editingCmd = {}; await load(); toast('已保存，立刻生效') }
+    catch (e) { toast('保存失败：' + e.message, true) }
+    cmdSaveBtn.disabled = false
+  }
   document.querySelectorAll('[data-reset]').forEach(b => b.onclick = async () => {
     try { await api('/api/action/reset-chat', { key: b.dataset.reset }); toast('已恢复默认'); await load() }
     catch(e){ toast(e.message, true) }
@@ -929,9 +1006,10 @@ let personaCache = {}
 let appendixText = ''
 async function load(){
   try {
-    const [s, c, p, cfg, groups] = await Promise.all([api('/api/state'), api('/api/chats'), api('/api/personas'), api('/api/config'), api('/api/groups').catch(() => ({items:[]}))])
+    const [s, c, p, cfg, groups, cc] = await Promise.all([api('/api/state'), api('/api/chats'), api('/api/personas'), api('/api/config'), api('/api/groups').catch(() => ({items:[]})), api('/api/custom-commands').catch(()=>({items:[]}))])
     state = s; chats = c.items; personas = p.items; activePersona = p.active; configItems = cfg.items
     joinedGroups = groups.items || []
+    customCommands = cc.items || []
     updateSideStatus(s.bot)
     // 预取人格内容与附加说明
     for (const item of personas) {
