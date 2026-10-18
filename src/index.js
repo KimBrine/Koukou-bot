@@ -413,6 +413,12 @@ if (config.idCheckEnabled) {
     config.idCheckOperators.length > 0 ? `仅限 QQ ${config.idCheckOperators.join('、')}` : '⚠ 任何人都能触发（ID_CHECK_OPERATORS 为空）'
   logger.info(`群名片核对已启用：群 ${where}｜${who}`)
 }
+logger.info(`管理员（ADMIN_USERS）：${config.adminUsers.length ? config.adminUsers.join('、') : '未配置（任何人都能触发特权指令，建议配置）'}`)
+{
+  const cmds = typeof customCommands?.all === 'function' ? customCommands.all() : []
+  const sched = cmds.filter((c) => c.scheduleEnabled && (c.scheduleTimes || []).length).length
+  logger.info(`自定义指令：${cmds.length} 条${sched ? `（其中 ${sched} 条带定时推送）` : ''}`)
+}
 
 dailySummary.schedule()
 if (config.longMemoryEnabled) longMemory.start()
