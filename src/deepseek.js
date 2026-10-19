@@ -15,7 +15,7 @@ export const isQwenHybridModel = model => /^qwen(?:3(?:\.\d+)?-(?:flash|plus|vl-
  * - chatRaw() 支持函数调用（tools），返回 content 与 tool_calls。
  */
 export class DeepSeekClient {
-  constructor({ apiKey, baseUrl, model, temperature, maxTokens, timeoutMs, maxRetries, maxConcurrency, logger, label = '模型接口', enableThinking }) {
+  constructor({ apiKey, baseUrl, model, temperature, maxTokens, timeoutMs, maxRetries, maxConcurrency, logger, label = '模型接口', enableThinking, reasoningEffort }) {
     this.apiKey = apiKey
     this.baseUrl = baseUrl
     this.model = model
@@ -26,6 +26,8 @@ export class DeepSeekClient {
     this.logger = logger
     this.label = label
     this.enableThinking = enableThinking
+    if (reasoningEffort !== undefined && !['none','low','high','max'].includes(reasoningEffort)) throw new Error('不支持的 DeepSeek 思考强度')
+    this.reasoningEffort = reasoningEffort
     this.active = 0
     this.queue = []
     this.concurrencyLimit = maxConcurrency
@@ -187,6 +189,10 @@ export class DeepSeekClient {
   /** 带重试的底层请求，返回解析后的 JSON */
   async #post(body, signal) {
     if (typeof this.enableThinking === 'boolean') body = { ...body, enable_thinking: this.enableThinking }
+    // DeepSeek 与千问参数不同；由调用方按服务商显式传入，不能混用。
+    if (this.reasoningEffort !== undefined) body = { ...body,
+      thinking: {type: this.reasoningEffort === 'none' ? 'disabled' : 'enabled'},
+      reasoning_effort: this.reasoningEffort }
     let lastError = null
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       signal?.throwIfAborted()

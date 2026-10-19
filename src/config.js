@@ -150,6 +150,7 @@ export function loadConfig() {
     deepseekApiKey: String(env.DEEPSEEK_API_KEY ?? '').trim(),
     deepseekBaseUrl: String(env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com').replace(/\/+$/, ''),
     deepseekModel: String(env.DEEPSEEK_MODEL ?? 'deepseek-chat'),
+    deepseekReasoningEffort: String(env.DEEPSEEK_REASONING_EFFORT ?? '').trim().toLowerCase() || undefined,
 
     // 视觉模型（通义千问 DashScope，OpenAI 兼容模式），用于读图/表情包
     // 用哪个服务商读图：deepseek（实测快 21 倍）或 dashscope。见 src/index.js 顶部的实测数据。

@@ -98,5 +98,21 @@ try {
     await c.chat('parse',[],{temperature:0});await c.chat('normal',[])
     assert.equal(bodies[0].temperature,0);assert.equal(bodies[1].temperature,1.2);assert.equal(c.temperature,1.2)
   })
+  await test('DeepSeek max显式传给文本、工具、视觉和读图；不混入千问参数',async()=>{
+    const bodies=[];globalThis.fetch=async(_,options)=>{bodies.push(JSON.parse(options.body));return success()}
+    const c=client({model:'deepseek-flash',reasoningEffort:'max'})
+    await c.chat('p',[]);await c.chatRaw([]);await c.chatVision('p',[],'u',[]);await c.describeImages('p','u',[])
+    assert.equal(bodies.length,4)
+    for(const body of bodies){assert.equal(body.model,'deepseek-flash');assert.deepEqual(body.thinking,{type:'enabled'});assert.equal(body.reasoning_effort,'max');assert.equal(Object.hasOwn(body,'enable_thinking'),false)}
+  })
+  await test('默认不传DeepSeek强度、关闭与low/high正确发送，非法选项不发请求',async()=>{
+    const bodies=[];globalThis.fetch=async(_,options)=>{bodies.push(JSON.parse(options.body));return success()}
+    await client().chat('p',[]);assert.equal(Object.hasOwn(bodies[0],'reasoning_effort'),false);assert.equal(Object.hasOwn(bodies[0],'thinking'),false)
+    for(const effort of ['none','low','high'])await client({reasoningEffort:effort}).chat('p',[])
+    assert.deepEqual(bodies[1].thinking,{type:'disabled'});assert.equal(bodies[1].reasoning_effort,'none')
+    for(let i=2;i<4;i++){assert.deepEqual(bodies[i].thinking,{type:'enabled'});assert.equal(bodies[i].reasoning_effort,['low','high'][i-2])}
+    assert.throws(()=>client({reasoningEffort:'invalid'}),/思考强度/)
+    await client({enableThinking:false}).chat('p',[]);assert.equal(bodies[4].enable_thinking,false);assert.equal(Object.hasOwn(bodies[4],'reasoning_effort'),false)
+  })
   console.log(`${passed} cases passed`)
 } finally {globalThis.fetch=originalFetch}

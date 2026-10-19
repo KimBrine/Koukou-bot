@@ -89,6 +89,7 @@ const EDITABLE = [
   { key: 'DAILY_PING_CHAIN_TEXT', label: '链式：补发内容', hint: '例：/我的猪圈', live: true, type: 'text' },
   { key: 'DAILY_PING_CHAIN_WINDOW_MS', label: '链式：等待窗口(ms)', live: true, type: 'number' },
   { key: 'DEEPSEEK_MODEL', label: '对话模型', live: false, type: 'text' },
+  { key: 'DEEPSEEK_REASONING_EFFORT', label: 'DeepSeek 思考强度', hint: '统一用于 DeepSeek 对话、指令理解与识图；DeepSeek 总结也沿用此项。千问独立设置。max 可能增加等待与消耗；不会增加会话记忆长度。留空沿用服务端默认。', live: false, type: 'text' },
   { key: 'DEEPSEEK_API_KEY', label: 'DeepSeek Key', live: false, type: 'secret' },
   { key: 'VISION_PROVIDER', label: '识图服务商', hint: '当前选用哪家服务识别图片', live: false, type: 'text' },
   { key: 'VISION_MODEL', label: 'DeepSeek 识图模型', hint: '识图服务商为 DeepSeek 时使用', live: false, type: 'text' },
@@ -353,6 +354,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         selfId: onebot?.selfId ?? null,
         nickname: onebot?.nickname ?? null,
         model: config.deepseekModel,
+        deepseekReasoningEffort: config.deepseekReasoningEffort ?? null,
         // 必须跟着 VISION_PROVIDER 走：只报 dashscopeModel 的话，
         // 明明已经切到 DeepSeek 读图，控制台还显示 qwen，看起来像没生效。
         visionModel: (() => {
@@ -470,6 +472,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
   }
 
   function fieldEffective(key) {
+    if (key === 'DEEPSEEK_REASONING_EFFORT') return config.deepseekReasoningEffort ?? ''
     const cur = readEnvFile(envFile)[key]
     const map = {
       WHITELIST_GROUPS: () => [...config.whitelistGroups].join(','),
@@ -630,6 +633,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         const value = String(raw ?? '')
         if (/[\r\n]/.test(value)) throw new Error(`${field.label} 不能包含换行`)
         validateGroupConfig(key, value)
+        if (key === 'DEEPSEEK_REASONING_EFFORT' && !['','none','low','high','max'].includes(value)) throw new Error('DeepSeek 思考强度应为默认、关闭、low、high或max')
         if (field.type === 'rate' && (!Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 1)) {
           throw new Error(`${field.label} 应在 0～1 之间`)
         }

@@ -589,6 +589,7 @@ function configForm(keys, hint){
     else if (i.type === 'rate') input = `<input type="range" min="0" max="1" step="0.01" data-cfg="${i.key}" value="${v||0}"> <span class="pill" data-cfgshow="${i.key}">${((Number(v)||0)*100).toFixed(0)}%</span>`
     else if (i.type === 'secret') input = `<div class="row"><input type="password" data-cfg="${i.key}" data-secret="1" value="" placeholder="${i.configured ? '已设置，留空不修改' : '尚未设置'}" autocomplete="new-password" style="flex:1;min-width:180px"><button class="btn sm" type="button" data-reveal="${i.key}">显示输入</button></div>`
     else if (i.key === 'VISION_PROVIDER' || i.key === 'SUMMARY_PROVIDER') input = `<select data-cfg="${i.key}"><option value="deepseek" ${v==='deepseek'?'selected':''}>DeepSeek</option><option value="dashscope" ${v==='dashscope'?'selected':''}>DashScope（通义千问）</option></select>`
+    else if (i.key === 'DEEPSEEK_REASONING_EFFORT') input = `<select data-cfg="${i.key}">${[['','沿用服务端默认'],['none','关闭思考'],['low','Low · 较少思考'],['high','High · 充分思考'],['max','Max · 最大思考投入']].map(([value,label])=>`<option value="${value}" ${v===value?'selected':''}>${label}</option>`).join('')}</select>`
     else if (i.key === 'SUMMARY_SEND_MODE') input = `<select data-cfg="${i.key}"><option value="forward" ${v==='forward'?'selected':''}>合并转发卡片</option><option value="split" ${v==='split'?'selected':''}>按空行逐段发送</option></select>`
     else if (i.key === 'LOG_LEVEL') input = `<select data-cfg="${i.key}"><option value="debug" ${v==='debug'?'selected':''}>详细调试</option><option value="info" ${v==='info'?'selected':''}>正常信息</option><option value="warn" ${v==='warn'?'selected':''}>只看警告与错误</option><option value="error" ${v==='error'?'selected':''}>只看错误</option></select>`
     else input = `<input type="${i.type==='number'?'number':'text'}" data-cfg="${i.key}" value="${esc(v)}">`
@@ -605,7 +606,7 @@ function pageHumanize(){
 function pageApi(){
   return `<h1>模型与接口</h1><div class="sub">配置对话模型、视觉模型与密钥。带“需重启”的改动在重启机器人后生效。</div>
   <div class="card"><strong>当前生效的识图模型：</strong>${esc(state?.bot?.visionModel || '未启用')}<div class="mut" style="margin-top:5px">图片识别与群聊报告分别配置；下方的 DashScope 模型只有切换识图服务商后才会用于读图。</div></div>
-  <div class="card">${configForm(['DEEPSEEK_MODEL','DEEPSEEK_API_KEY','TEMPERATURE','MAX_TOKENS','VISION_PROVIDER','VISION_MODEL','DASHSCOPE_MODEL','DASHSCOPE_API_KEY','BAIDU_QIANFAN_API_KEY','LOG_LEVEL'],'已设置的密钥不会显示；留空保持原值。')}</div>`
+  <div class="card">${configForm(['DEEPSEEK_MODEL','DEEPSEEK_REASONING_EFFORT','DEEPSEEK_API_KEY','TEMPERATURE','MAX_TOKENS','VISION_PROVIDER','VISION_MODEL','DASHSCOPE_MODEL','DASHSCOPE_API_KEY','BAIDU_QIANFAN_API_KEY','LOG_LEVEL'],'已设置的密钥不会显示；留空保持原值。')}</div>`
 }
 function pageReport(){
   return `<h1>群聊报告</h1><div class="sub">每日自动生成「群聊日常分析报告」，也可以在这里随时手动生成</div>

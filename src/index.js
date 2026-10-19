@@ -124,6 +124,7 @@ const llm = new DeepSeekClient({
   maxConcurrency: config.maxConcurrency,
   logger,
   label: 'DeepSeek',
+  reasoningEffort: config.deepseekReasoningEffort,
 })
 
 // 视觉模型：消息带图片/表情包时先把图读成文字描述，再交给对话模型写人设回复。
@@ -149,6 +150,7 @@ if (config.visionProvider === 'deepseek' ? config.deepseekApiKey : config.dashsc
     maxConcurrency: config.maxConcurrency,
     logger,
     label: isDeepseek ? 'DeepSeek 视觉' : '通义千问VL',
+    reasoningEffort: isDeepseek ? config.deepseekReasoningEffort : undefined,
     enableThinking: !isDeepseek && isQwenHybridModel(config.dashscopeModel) ? config.dashscopeThinking : undefined,
   })
 }
@@ -168,6 +170,7 @@ const summaryLLM = new DeepSeekClient({
   maxConcurrency: config.summaryConcurrency,
   logger,
   label: useQwenForSummary ? '总结模型(通义千问)' : '总结模型(DeepSeek)',
+  reasoningEffort: useQwenForSummary ? undefined : config.deepseekReasoningEffort,
   enableThinking: useQwenForSummary && isQwenHybridModel(config.summaryModel) ? config.dashscopeThinking : undefined,
 })
 
@@ -189,7 +192,7 @@ const memoryLLM = new DeepSeekClient({
   apiKey: summaryLLM.apiKey, baseUrl: summaryLLM.baseUrl, model: summaryLLM.model,
   temperature: summaryLLM.temperature, maxTokens: config.summaryMaxTokens,
   timeoutMs: Math.max(config.timeoutMs,180000), maxRetries: summaryLLM.maxRetries, maxConcurrency: 1,
-  enableThinking: summaryLLM.enableThinking, logger, label: '长期记忆模型',
+  enableThinking: summaryLLM.enableThinking, reasoningEffort: summaryLLM.reasoningEffort, logger, label: '长期记忆模型',
 })
 const longMemory = createLongMemory({
   file: path.join(config.dataDir, 'long-memory.json'),
@@ -351,7 +354,7 @@ process.on('unhandledRejection', (err) => logger.error(`未处理的 Promise 拒
 process.on('uncaughtException', (err) => logger.error(`未捕获异常：${err?.stack || err}`))
 
 logger.info('===== DeepSeek × QQ 机器人启动 =====')
-logger.info(`模型：${config.deepseekModel}`)
+logger.info(`模型：${config.deepseekModel}｜DeepSeek思考强度：${config.deepseekReasoningEffort ?? '服务端默认'}`)
 logger.info(
   visionLLM
     ? `视觉模型已启用：${config.visionProvider === 'deepseek' ? config.visionModel || 'deepseek-flash' : config.dashscopeModel} @ ${
