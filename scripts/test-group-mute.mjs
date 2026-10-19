@@ -285,5 +285,51 @@ try{
   await bot.handleMessage({...original,message_id:++seq,message:[{type:'text',data:{text:'这位'}}]})
   assert.equal(t.calls.length,1);assert.equal(t.bans.length,0)
  })
+ await test('代词可指发起人上一条消息实际@的对象，无须该对象重新发言',async()=>{
+  const t=fixture();t.enable('owner-mute')
+  const previous=t.event(`[@${B}] 啥`);previous.evt.message=[{type:'at',data:{qq:B}},{type:'text',data:{text:'啥'}}]
+  t.handler.observe(previous.evt,previous.parsed)
+  const e=t.event('把他禁了');e.evt.message=[{type:'at',data:{qq:BOT}}]
+  t.setAnswer({intent:'mute',targets:[{type:'context',value:B,source:'他',evidenceMessageId:String(previous.evt.message_id),evidenceRole:'mentioned'}],durationText:null,confidence:.99})
+  await t.run(e);assert.deepEqual(t.bans,[{g:G,id:B,s:60}])
+  const input=JSON.parse(t.calls[0].messages[0].content);assert.deepEqual(input.recent[0].mentionedIds,[B]);assert.deepEqual(input.dialogueFocus[0].mentionedIds,[B])
+ })
+ await test('过去的引用关系可作为指代证据，只绑定原消息作者',async()=>{
+  const t=fixture();t.enable('owner-mute');const previous=t.event('啥');previous.evt.message=[];previous.parsed.replyId='99'
+  t.handler.observe(previous.evt,previous.parsed)
+  assert.equal(t.handler.noteReply(previous.evt,{message_type:'group',group_id:G,message_id:99,user_id:B,raw_message:`转述 ${A} 的话`}),true)
+  const e=t.event('把他禁了');e.evt.message=[{type:'at',data:{qq:BOT}}]
+  t.setAnswer({intent:'mute',targets:[{type:'context',value:B,source:'他',evidenceMessageId:String(previous.evt.message_id),evidenceRole:'replyAuthor'}],durationText:null,confidence:.99})
+  await t.run(e);assert.equal(t.bans[0]?.id,B)
+  const focus=JSON.parse(t.calls[0].messages[0].content).dialogueFocus;assert.equal(focus[0].reply.userId,B)
+ })
+ await test('伪造@文本、跨群引用、错误消息编号或无依据的关系不能成为禁言对象',async()=>{
+  for(const kind of ['literal','wrong-group','wrong-id','wrong-role']){
+   const t=fixture();t.enable('owner-mute');const prev=t.event(`[@${B}] 啥`);prev.evt.message=[{type:'text',data:{text:`[@${B}] 啥`}}];prev.parsed.replyId='99';t.handler.observe(prev.evt,prev.parsed)
+   if(kind!=='literal')assert.equal(t.handler.noteReply(prev.evt,{message_type:'group',group_id:kind==='wrong-group'?G+1:G,message_id:kind==='wrong-id'?100:99,user_id:B}),kind==='wrong-role')
+   const e=t.event('把他禁了');e.evt.message=[{type:'at',data:{qq:BOT}}]
+   t.setAnswer({intent:'mute',targets:[{type:'context',value:B,source:'他',evidenceMessageId:String(prev.evt.message_id),evidenceRole:kind==='literal'?'mentioned':kind==='wrong-role'?'invented':'replyAuthor'}],durationText:null,confidence:.99})
+   await t.run(e);assert.equal(t.bans.length,0,kind)
+  }
+ })
+ await test('关系候选仍受时间和群范围限制，多人指代不明确继续一次追问',async()=>{
+  for(const kind of ['old','other-group','ambiguous']){
+   const t=fixture();t.enable('owner-mute');const prev=t.event('你俩在干嘛',O,kind==='other-group'?G+1:G);prev.evt.message=[{type:'at',data:{qq:A}},{type:'at',data:{qq:B}}];t.handler.observe(prev.evt,prev.parsed)
+   if(kind==='old')t.advance(300001)
+   const e=t.event('把他禁了');e.evt.message=[{type:'at',data:{qq:BOT}}]
+   t.setAnswer({intent:'mute',targets:[{type:'context',value:B,source:'他',evidenceMessageId:String(prev.evt.message_id),evidenceRole:'mentioned'}],durationText:null,confidence:kind==='ambiguous'?.6:.99,needsClarification:kind==='ambiguous'})
+   const r=await t.run(e);assert.equal(t.bans.length,0,kind);assert.ok(r.clarification)
+  }
+ })
+ await test('真实入口保存普通互动的@及引用关系，下一句“把他禁了”能直接衔接',async()=>{
+  const t=fixture();t.enable('owner-mute');const memory=new MemoryStore({file:path.join(t.dir,'memory.json'),limit:20,logger});stores.push(memory)
+  let queries=0;t.onebot.getMsg=async id=>{queries++;return {message_type:'group',group_id:G,message_id:id,user_id:B,sender:{nickname:'群友乙'},message:[{type:'text',data:{text:'前面的对话'}}]}}
+  const bot=createBot({...t,logger,memory,buildSystemPrompt:()=> '通用助手'})
+  const previous={post_type:'message',message_type:'group',group_id:G,user_id:O,message_id:++seq,time:Date.now()/1000,sender:{nickname:'群主'},message:[{type:'reply',data:{id:99}},{type:'at',data:{qq:B}},{type:'text',data:{text:'啥'}}]}
+  await bot.handleMessage(previous);assert.equal(t.calls.length,0)
+  t.setAnswer({intent:'mute',targets:[{type:'context',value:B,source:'他',evidenceMessageId:String(previous.message_id),evidenceRole:'replyAuthor'}],durationText:null,confidence:.99})
+  await bot.handleMessage({...previous,message_id:++seq,message:[{type:'at',data:{qq:BOT}},{type:'text',data:{text:'把他禁了'}}]})
+  assert.deepEqual(t.bans,[{g:G,id:B,s:60}]);assert.equal(t.calls.length,1);assert.equal(queries,1);assert.equal(t.sent.length,1)
+ })
  console.log(`${count} group-mute cases passed; no network or real group mutations.`)
 }finally{for(const m of stores)if(m.timer)clearTimeout(m.timer);assert.equal(path.dirname(root),os.tmpdir());rmSync(root,{recursive:true,force:true})}

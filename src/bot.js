@@ -735,6 +735,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       }
       // 引用目标要在回复策略前确认；引用他人的消息不提升为对机器人的直接提问。
       const quotedRaw = parsed.replyId ? await quotedMessages.resolve(evt, parsed.replyId) : null
+      groupMute.noteReply(evt,quotedRaw)
       const replyToBot = quotedMessages.isFromBot(quotedRaw)
       if (!samePersona()) return
       const directReply = isPrivate || parsed.atBot || replyToBot
