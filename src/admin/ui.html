@@ -196,6 +196,7 @@ let memoryText = ''
 let customCommands = []
 let commandBuiltins = []
 let pokeDiagnostics = {}
+let modelsInfo = {}
 let stickerList = []
 let stickerScenes = []
 let stickerLearned = 0
@@ -606,7 +607,7 @@ function pageHumanize(){
   <div class="card">${configForm(['PROACTIVE_RATE','PROACTIVE_RATE_PER_GROUP','PROACTIVE_COOLDOWN_MS','EMOJI_KEEP_RATE','HUMAN_DELAY_MIN_MS','HUMAN_DELAY_MAX_MS','REPLY_LENGTH_MATCH','REPLY_MAX_LINES','REPLY_LINE_MAX_CHARS','LINE_GAP_MIN_MS','LINE_GAP_MAX_MS','RATE_LIMIT_PER_HOUR','RATE_LIMIT_MIN_GAP_MS','QUIET_HOURS','HISTORY_LIMIT','CONTEXT_REMEMBER_ALL','POKE_REPLY_ENABLED','AUTO_PLUS_ONE_ENABLED'],'修改全局概率不会覆盖已经单独设置的群；限流相关参数需重启生效。')}</div>`
 }
 function pageApi(){
-  return `<h1>模型与接口</h1><div class="sub">配置对话模型、视觉模型与密钥。带“需重启”的改动在重启机器人后生效。</div>
+  return modelPickerCard() + `<h1>模型与接口</h1><div class="sub">配置对话模型、视觉模型与密钥。带“需重启”的改动在重启机器人后生效。</div>
   <div class="card"><strong>当前生效的识图模型：</strong>${esc(state?.bot?.visionModel || '未启用')}<div class="mut" style="margin-top:5px">图片识别与群聊报告分别配置；下方的 DashScope 模型只有切换识图服务商后才会用于读图。</div></div>
   <div class="card">${configForm(['DEEPSEEK_MODEL','DEEPSEEK_API_KEY','TEMPERATURE','MAX_TOKENS','VISION_PROVIDER','VISION_MODEL','DASHSCOPE_MODEL','DASHSCOPE_API_KEY','BAIDU_QIANFAN_API_KEY','LOG_LEVEL'],'已设置的密钥不会显示；留空保持原值。')}</div>`
 }
@@ -667,7 +668,7 @@ function pageMemory(){
   ].join('')
 }
 function modelPickerCard(){
-  const m = state?.models || {}
+  const m = modelsInfo || {}
   const cur = m.current || {}
   const providers = m.providers || []
   const levels = m.levels || []
@@ -751,6 +752,7 @@ function render(){
   else if (page === 'api') html = pageApi()
   else if (page === 'report') html = pageReport()
   else if (page === 'memory') html = pageMemory()
+  else if (page === 'stickers') html = pageStickers()
   else if (page === 'logs') html = pageLogs()
   else html = pageData()
   main.innerHTML = html
@@ -860,7 +862,7 @@ async function bind(){
   // 模型：供应商预填 / 自动检测 / 保存
   const mpProvider = document.getElementById('mpProvider')
   if (mpProvider) mpProvider.onchange = () => {
-    const p = (state?.models?.providers || []).find(x => x.id === mpProvider.value)
+    const p = (modelsInfo.providers || []).find(x => x.id === mpProvider.value)
     const base = document.getElementById('mpBaseUrl')
     if (p && p.baseUrl && base) base.value = p.baseUrl
   }
@@ -1206,7 +1208,7 @@ async function load(){
     customCommands = cc.items || []
     commandBuiltins = cc.builtinItems || []
     pokeDiagnostics = cc.poke || {}
-    state.models = models || {}
+    modelsInfo = models || {}
     stickerList = stk.items || []
     stickerScenes = stk.scenes || []
     stickerLearned = stk.learned || 0
