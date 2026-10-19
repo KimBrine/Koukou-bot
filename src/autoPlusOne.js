@@ -53,13 +53,13 @@ export function plusOneFingerprint(raw) {
 }
 
 /** 每群一个连续复读段；预留发送机会在 await 前完成，重连/重启也保留去重状态。 */
-export function createAutoPlusOne({ config, onebot, logger, onSent, now = Date.now }) {
+export function createAutoPlusOne({ config, onebot, logger, onSent, now = Date.now, isEnabled, canTrigger }) {
   const groups = new Map()
   const seen = new Map()
   const file = config.dataDir ? path.join(config.dataDir, 'auto-plus-one.json') : null
   let saveTimer = null
   let dirty = false
-  const active = id => config.autoPlusOneEnabled === true && config.whitelistGroups?.has(Number(id))
+  const active = id => (isEnabled ? isEnabled(id) : config.autoPlusOneEnabled === true) && config.whitelistGroups?.has(Number(id))
 
   function flush() {
     if (saveTimer) clearTimeout(saveTimer)
@@ -120,7 +120,7 @@ export function createAutoPlusOne({ config, onebot, logger, onSent, now = Date.n
     const same = hash !== null && hash === previous?.hash
     const state = same ? previous : { hash, count: 0, fired: false }
     if (seq && previous?.seq && BigInt(seq) !== BigInt(previous.seq) + 1n) state.count = 0
-    if (own || !selfId || !evt.user_id || !/^-?\d+$/.test(id) || id === '0' || !hash) state.count = 0
+    if (own || (canTrigger && !canTrigger(evt)) || !selfId || !evt.user_id || !/^-?\d+$/.test(id) || id === '0' || !hash) state.count = 0
     else state.count = Math.min(2, state.count + 1)
     state.lastId = id
     state.seq = seq

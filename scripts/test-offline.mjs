@@ -21,6 +21,7 @@ const scripts = [
   'test-fork-integration.mjs',
   'test-custom-schedule.mjs',
   'test-launcher-safety.mjs',
+  'test-command-center.mjs',
 ]
 for (const file of scripts) {
   const result = spawnSync(process.execPath, [path.join(root, 'scripts', file)], { cwd: root, stdio: 'inherit', windowsHide: true })

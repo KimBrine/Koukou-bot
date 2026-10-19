@@ -10,6 +10,7 @@ import { stripInternalReplyMetadata, REPLY_REPAIR_HINT } from './replySanitizer.
 import { parseMessage } from './cq.js'
 import { isBotAdmin, hasAdmins, adminHint } from './permissions.js'
 import { renderReply } from './customCommands.js'
+import { SUMMARY_RE, CLEAR_RE, HELP_RE } from './commandCenter.js'
 import { resetConversationMemory, prepareSessionPersona, sessionPersona, sameSessionPersona } from './conversationSessions.js'
 import { expandForwardRecords } from './forwardRecords.js'
 import { createQuotedMessageResolver } from './quotedMessage.js'
@@ -112,9 +113,9 @@ export function decideReply({ isPrivate, atBot, replyToBot = false, groupId, con
  */
 /** 指令列表：任何人都能问，管理员专属的那些只对管理员显示 */
 /** 管理员专用：清除记忆（只清本会话 / 全部会话） */
-export const ADMIN_CLEAR_MEMORY_CMD_RE = /^[\/／]\s*(?:清除记忆|清空记忆|重置记忆)\s*(全部|all)?\s*[。！!~～.…]*$/i
+export const ADMIN_CLEAR_MEMORY_CMD_RE = CLEAR_RE
 
-export const ADMIN_HELP_CMD_RE = /^[\/／]\s*(?:help|帮助|指令|命令)\s*[。！!~～.…]*$/i
+export const ADMIN_HELP_CMD_RE = HELP_RE
 
 /**
  * 读取"按群指定的人格"正文；文件缺失或读不到时返回空串（退回全局人格）。
@@ -124,7 +125,7 @@ export function loadSessionPersona(config, name) {
   try { return sessionPersona(config, name).text } catch { return '' }
 }
 
-export const SUMMARY_CMD_RE = /^\s*[\/／]?\s*(今日总结|每日总结|群总结|群聊总结)\s*(?:d\s*)?(\d{1,2})?\s*[。！!~～]?\s*$/i
+export const SUMMARY_CMD_RE = SUMMARY_RE
 
 /** 长回复按段落/句子边界切成多条（QQ 单条消息有长度限制） */
 export function splitLongMessage(text, size = 1800) {
@@ -284,7 +285,7 @@ const SEARCH_TOOLS = [{
   },
 }]
 
-export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, longMemory, rand = Math.random }) {
+export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, commandCenter, longMemory, rand = Math.random }) {
   const imageCache = sharedImageCache ?? (config.dataDir && config.visionCacheEnabled !== false ? createImageCache({
     dir: path.join(config.dataDir, 'image-cache'),
     maxBytes: config.visionCacheMaxBytes,
@@ -309,7 +310,10 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
   let repeatSession = onebot.messageTimeline?.session
   const lastReplayNote = new Map()
   const quotedMessages = createQuotedMessageResolver({ onebot, logger })
-  const autoPlusOne = createAutoPlusOne({ config, onebot, logger, onSent(evt) {
+  const autoPlusOne = createAutoPlusOne({ config, onebot, logger,
+    isEnabled:commandCenter ? id=>commandCenter.allowed({...commandCenter.get('auto-plus-one'),adminOnly:false},{isPrivate:false,groupId:id}) : undefined,
+    canTrigger:commandCenter ? evt=>commandCenter.allows('auto-plus-one',{isPrivate:false,groupId:evt.group_id,userId:evt.user_id}) : undefined,
+    onSent(evt) {
     const key = `g${evt.group_id}`
     const parsed = parseMessage(evt.message ?? evt.raw_message, onebot.selfId)
     if (parsed.text) memory.push(key, 'assistant', parsed.text)
@@ -419,7 +423,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
     const userId = String(evt.user_id ?? '')
     const key = String(groupId)
     const record = lastIdCheck.get(key)
-    if (!config.idCheckKickEnabled) {
+    if (commandCenter ? !commandCenter.enabled('id-check-kick') : !config.idCheckKickEnabled) {
       logger.info(`[踢人] 功能未启用（ID_CHECK_KICK_ENABLED=0），静默忽略`)
       return
     }
@@ -568,7 +572,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         can: verdict.ok,
         reason: verdict.reason,
         botRole: role,
-        enabled: config.idCheckKickEnabled,
+        enabled: commandCenter ? commandCenter.enabled('id-check-kick') : config.idCheckKickEnabled,
         windowMs: config.idCheckKickWindowMs,
         gapMs: config.idCheckKickGapMs,
         record: record
@@ -585,14 +589,18 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
     },
     /** 拍一拍（双击头像）回应：NapCat 以 notice(notify/poke) 事件推送 */
     async handleNotice(evt) {
-      if (!config.pokeEnabled || typeof pokeReplier !== 'function') return
       if (evt?.notice_type !== 'notify' || evt?.sub_type !== 'poke') return
+      if (commandCenter && !commandCenter.poke(evt,onebot.selfId)) return
       // 只回应"拍机器人自己"，且忽略机器人自己拍自己
       if (String(evt.target_id) !== String(onebot.selfId)) return
       if (String(evt.user_id) === String(onebot.selfId)) return
 
       const groupId = evt.group_id
       const key = groupId ? `g${groupId}` : `p${evt.user_id}`
+      const context={isPrivate:!groupId,groupId,userId:evt.user_id,event:'poke',direct:true,text:'拍一拍'}
+      if (commandCenter ? !commandCenter.allows('poke',context) : !config.pokeEnabled) return
+      if (evt.time && Date.now()-Number(evt.time)*1000>LIVE_MESSAGE_MAX_AGE_MS) return
+      const personaToken=config.personaRevision||0, memoryToken=memory.version?.(key)
       const now = Date.now()
       if (config.pokeCooldownMs > 0 && now - (lastPoke.get(key) || 0) < config.pokeCooldownMs) {
         logger.debug(`拍一拍冷却中，忽略（${key}）`)
@@ -610,9 +618,21 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
           /* 取不到就用默认称呼 */
         }
       }
-      const reply = renderFacesToCq(pokeReplier(name))
-      logger.info(`[拍一拍] ${name || evt.user_id} 拍了拍机器人：${reply}`)
       try {
+        const selected=commandCenter ? await commandCenter.resolve('',context) : null
+        if(selected&&!selected.allowed)return
+        const command=selected?.command||commandCenter?.get('poke')
+        const useRule=selected||command?.responseMode==='ai'
+        const selectedPersona=chatSettings?.get?.(key)?.persona||''
+        const ownPersona=command?.responseMode==='ai'?sessionPersona(config,selectedPersona).text:''
+        const personaText=ownPersona||config.persona
+        const policyVersion=JSON.stringify(commandCenter?.get('poke'))
+        const reply=renderFacesToCq(useRule ? await commandCenter.respond(command,{...context,name,persona:(personaText||'')+conversationRules(config)}) : (pokeReplier?.(name)||''))
+        if(!reply||personaToken!==(config.personaRevision||0)||memoryToken!==memory.version?.(key))return
+        if(commandCenter&&(!commandCenter.allows('poke',context)||(selected&&!commandCenter.current(selected,context))))return
+        if(commandCenter&&policyVersion!==JSON.stringify(commandCenter.get('poke')))return
+        if(command?.responseMode==='ai'&&sessionPersona(config,chatSettings?.get?.(key)?.persona||'').text!==ownPersona)return
+        logger.info(`[拍一拍] 已处理 ${key} 的拍一拍回应`)
         if (groupId) await onebot.sendGroup(groupId, reply)
         else await onebot.sendPrivate(evt.user_id, reply)
       } catch (err) {
@@ -715,6 +735,24 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       if (!parsed.text && !replyToBot) return
       if (!parsed.text) parsed.text = '[回复引用消息]'
 
+      const commandContext={isPrivate,groupId,userId:evt.user_id,direct:directReply,event:'message',text:parsed.text}
+      let commandResult=null
+      if(commandCenter){
+        let builtin=commandCenter.detect(parsed.text)
+        if(!builtin){
+          commandResult=await commandCenter.resolve(parsed.text,commandContext)
+          if(!samePersona()||!replyStillCurrent(onebot,evt))return
+          if(commandResult?.builtin){
+            builtin=commandResult.builtin
+            parsed.text=({summary:'/群总结 '+commandResult.days,help:'/help','id-check':'/id_check'})[builtin]||parsed.text
+          }
+        }
+        if(builtin&&(directReply||builtin==='id-check-kick')&&!commandCenter.allows(builtin,commandContext)){
+          if(directReply)await sendTo(evt,'这个指令在当前会话未启用，或需要机器人管理员权限。')
+          return
+        }
+      }
+
       // 名单核对 + 踢人：把上一次 /id_check 的结果落地执行。
       // 条件不满足时**静默返回**（用户要求"否则不要返回"），所以这里不做任何提示。
       // 刻意**不强求 @机器人**：真正的门禁是"必须在授权名单里"，多一道 @ 只会让人以为指令没生效。
@@ -725,7 +763,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
 
       // 群名片核对：@机器人 发 /id_check → 拉全群名单，把不符合「房间号 名字」格式的人 @ 出来
       if (ID_CHECK_CMD_RE.test(parsed.text.trim()) && (parsed.atBot || replyToBot) && !isPrivate) {
-        if (!config.idCheckEnabled) {
+        if (commandCenter ? !commandCenter.enabled('id-check') : !config.idCheckEnabled) {
           await sendTo(evt, '这个功能现在没开哦～')
           return
         }
@@ -739,7 +777,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
           await sendTo(evt, '这个指令只有管理员能用哦～别乱按啦')
           return
         }
-        if (config.idCheckGroups.length > 0 && !config.idCheckGroups.includes(Number(groupId))) {
+        if (!commandCenter && config.idCheckGroups.length > 0 && !config.idCheckGroups.includes(Number(groupId))) {
           await sendTo(evt, '这个群还没开放名单核对哦～')
           return
         }
@@ -752,7 +790,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       const cmdMatch = parsed.text.trim().match(summaryCmdRe)
       if (cmdMatch && directReply) {
         // 最高权限：ADMIN_USERS 配了名单时，只有管理员能触发群总结
-        if (!isBotAdmin(evt.user_id, config.adminUsers)) {
+        if (!commandCenter && !isBotAdmin(evt.user_id, config.adminUsers)) {
           logger.info(`[群总结] 拒绝 QQ ${evt.user_id}（不在 ADMIN_USERS 里）`)
           await sendTo(evt, '群总结只有管理员能触发哦～找管理员要权限吧')
           return
@@ -802,6 +840,12 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
 
       // 指令列表：谁都能问；管理员专属的只对管理员显示
       if (ADMIN_HELP_CMD_RE.test(parsed.text.trim()) && directReply) {
+        if(commandCenter){
+          const builtin=commandCenter.all().filter(c=>['summary','help','clear-memory','id-check','id-check-kick'].includes(c.id)&&commandCenter.allowed(c,commandContext))
+          const custom=customCommands.all().filter(c=>commandCenter.allowed(c,commandContext))
+          await sendTo(evt,['📋 当前会话的指令',...builtin.map(c=>c.trigger+'  '+c.name),...custom.slice(0,30).map(c=>(c.event==='poke'?'拍一拍':c.trigger)+'  '+c.name+(c.responseMode==='ai'?'（AI）':''))].join('\n'))
+          return
+        }
         const isAdmin = isBotAdmin(evt.user_id, config.adminUsers)
         const lines = ['📋 我能用的指令：', '', '【大家都能用】', '/help  打开这份指令列表']
         if (isAdmin) {
@@ -824,7 +868,22 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       }
 
       // 自定义指令：命中就回固定内容，不调用模型
-      if (typeof customCommands?.match === 'function') {
+      if(commandResult?.command){
+        if(!commandResult.allowed){if(directReply)await sendTo(evt,'这个指令在当前会话未启用，或需要机器人管理员权限。');return}
+        const customKey=isPrivate?`p${evt.user_id}`:`g${groupId}`
+        try{
+          const personaText=commandResult.command.responseMode==='ai'?prepareSessionPersona({config,memory,longMemory,chatSettings,targetWatch,key:customKey})||config.persona:''
+          memoryRevision=memory.version?.(conversationKey)
+          const text=await commandCenter.respond(commandResult.command,{...commandContext,name:evt.sender?.card||evt.sender?.nickname,persona:(personaText||'')+conversationRules(config)})
+          const current=()=>samePersona()&&replyStillCurrent(onebot,evt)&&commandCenter.current(commandResult,commandContext)
+          if(!text||!current())return
+          await sendTo(evt,text)
+          if(current())memory.push(customKey,'assistant',text,{time:Date.now()})
+          runtimeStats?.noteReply?.(customKey)
+        }catch(err){logger.warn(`[指令执行] ${err.message}`);if(samePersona()&&replyStillCurrent(onebot,evt))await sendTo(evt,'这条指令暂时没执行成功，请稍后再试。')}
+        return
+      }
+      if (!commandCenter && typeof customCommands?.match === 'function') {
         const custom = customCommands.match(parsed.text, { isPrivate, groupId, userId: evt.user_id })
         if (custom) {
           const replyText = renderReply(custom.reply, {

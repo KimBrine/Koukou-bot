@@ -180,7 +180,7 @@ function validateGroupConfig(key, value) {
   }
 }
 
-export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, bot, customCommands, restartBot }) {
+export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, bot, customCommands, commandCenter, restartBot }) {
   // 本实例自己的 .env（并行跑两个实例时，写死 rootDir\.env 会改到另一个实例的配置上）
   const envFile = config.envFile || path.join(config.rootDir, '.env')
   const logFile = path.join(config.logDir || path.join(config.rootDir, 'logs'), 'bot.log')
@@ -393,7 +393,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     'GET /api/state': async () => buildState(),
     'GET /api/chats': async () => ({ items: await buildChatList() }),
     'GET /api/groups': async () => ({ items: await getGroupList() }),
-    'GET /api/custom-commands': async () => ({ items: typeof customCommands?.all === 'function' ? customCommands.all() : [] }),
+    'GET /api/custom-commands': async () => ({ items: typeof customCommands?.all === 'function' ? customCommands.all() : [],builtinItems:commandCenter?.all()||[],poke:commandCenter?.diagnostics()||{} }),
     'GET /api/personas': async () => ({ items: listPersonas(), active: config.activePersona || '', dir: personaDir }),
     'GET /api/memory-overview': async () => {
       const map = new Map()
@@ -492,8 +492,8 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       PROACTIVE_COOLDOWN_MS: () => String(config.proactiveCooldownMs),
       CONTEXT_REMEMBER_ALL: () => (config.contextRememberAll ? '1' : '0'),
       REPLY_LENGTH_MATCH: () => (config.replyLengthMatch ? '1' : '0'),
-      POKE_REPLY_ENABLED: () => (config.pokeEnabled ? '1' : '0'),
-      AUTO_PLUS_ONE_ENABLED: () => (config.autoPlusOneEnabled ? '1' : '0'),
+      POKE_REPLY_ENABLED: () => ((commandCenter ? commandCenter.enabled('poke') : config.pokeEnabled) ? '1' : '0'),
+      AUTO_PLUS_ONE_ENABLED: () => ((commandCenter ? commandCenter.enabled('auto-plus-one') : config.autoPlusOneEnabled) ? '1' : '0'),
       DAILY_PING_CHAIN_ENABLED: () => (config.dailyPingChainEnabled ? '1' : '0'),
       DAILY_PING_CHAIN_MATCH: () => String(config.dailyPingChainMatch ?? ''),
       DAILY_PING_CHAIN_TEXT: () => String(config.dailyPingChainText ?? ''),
@@ -583,9 +583,11 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         config.contextRememberAll = bool(value)
         break
       case 'POKE_REPLY_ENABLED':
+        if(commandCenter)commandCenter.saveBuiltin({...commandCenter.get('poke'),enabled:bool(value)})
         config.pokeEnabled = bool(value)
         break
       case 'AUTO_PLUS_ONE_ENABLED':
+        if(commandCenter)commandCenter.saveBuiltin({...commandCenter.get('auto-plus-one'),enabled:bool(value)})
         config.autoPlusOneEnabled = bool(value)
         break
       case 'DAILY_PING_CHAIN_ENABLED':
@@ -744,14 +746,26 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       return result
     },
     async 'save-custom-command'(payload) {
+      if(payload?.event!=='poke'&&commandCenter){
+        const aliases=Array.isArray(payload.aliases)?payload.aliases:String(payload.aliases||'').split(/[,，\n]/)
+        if([payload.trigger,...aliases].some(t=>commandCenter.detect(t||'')))throw Error('触发词已由内置功能使用，请编辑已有功能或更换触发词')
+      }
       const saved = customCommands.upsert(payload || {})
+      commandCenter?.touch()
       logger?.info?.(`[控制台] 保存自定义指令「${saved.name}」`)
       return { ok: true, item: saved }
     },
     async 'delete-custom-command'(payload) {
       const ok = customCommands.remove(payload?.id)
+      commandCenter?.touch()
       return { ok, removed: ok }
     },
+    async 'save-builtin-command'(payload){return {ok:true,item:commandCenter.saveBuiltin(payload)}} ,
+    async 'generate-command'(payload){return {ok:true,draft:await commandCenter.generate(payload.description,{mode:payload.mode})}},
+    async 'export-commands'(payload){return commandCenter.exportPack(payload)},
+    async 'preview-commands'(payload){return commandCenter.preview(payload.content)},
+    async 'import-commands'(payload){return {ok:true,...commandCenter.importPack(payload.content,{includeBuiltins:payload.includeBuiltins===true})}},
+    async 'check-poke'(){return {ok:true,diagnostics:commandCenter.diagnostics(),enabled:commandCenter.enabled('poke'),note:'请在 QQ 拍机器人头像；此处只检查事件接收情况，不发送测试消息。'}},
     async 'clear-memory'(payload) {
       const key = String(payload?.key ?? '').trim()
       const all = payload?.all === true
@@ -889,6 +903,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       res.end(body)
     }
     try {
+      if (req.method==='GET'&&url.pathname==='/command-center.js') return send(200,readFileSync(path.join(__dirname,'commandCenter.js')),'text/javascript; charset=utf-8')
       if (url.pathname === '/' || url.pathname === '/index.html') {
         if (!existsSync(UI_FILE)) return send(500, '控制台界面文件缺失', 'text/plain; charset=utf-8')
         return send(200, readFileSync(UI_FILE), 'text/html; charset=utf-8')

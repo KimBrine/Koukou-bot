@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { writeJsonAtomic } from './stateFile.js'
-import { renderReply } from './customCommands.js'
+import { renderReply, commandScopeAllows } from './customCommands.js'
 import { parseMessage } from './cq.js'
 
 const normalize = text => String(text || '').replace(/\r\n?/g, '\n').trim()
@@ -94,6 +94,7 @@ export function createCustomCommandSchedule({ file, commands, onebot, memory, ra
         // 核验期间删除或停用的指令不能继续发送。
         const current = commands.all().find(c => c.id === item.command.id && c.enabled && c.scheduleEnabled)
         if (!current || !current.scheduleGroups.includes(item.groupId) || !current.scheduleTimes.includes(JSON.parse(key)[3])) continue
+        if (!commandScopeAllows(current,{isPrivate:false,groupId:item.groupId})) continue
         if (stopped) break
         entry = records[key] = {
           ...entry, groupId: item.groupId, targetAt: item.targetAt, selfId: String(onebot.selfId || ''),

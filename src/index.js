@@ -16,6 +16,7 @@ import { createWebSearch } from './search.js'
 import { loadPokeReplies, createPokeReplier } from './pokeReplies.js'
 import { createLongMemory } from './longMemory.js'
 import { createCustomCommands } from './customCommands.js'
+import { createCommandCenter } from './commandCenter.js'
 import { createCustomCommandSchedule } from './customCommandSchedule.js'
 import { createTargetWatch } from './targetWatch.js'
 import { createChatSettings } from './chatSettings.js'
@@ -200,6 +201,7 @@ memory.onEvict = (key, entries) => longMemory.addEvicted(key, entries)
 
 // 自定义指令：关键词命中回固定内容（含变量替换）与定时推送，不调用模型
 const customCommands = createCustomCommands({ file: path.join(config.dataDir, 'custom-commands.json'), logger })
+const commandCenter = createCommandCenter({file:path.join(config.dataDir,'command-center.json'),customCommands,config,logger,llm})
 
 // 联网搜索（百度千帆）：仅私聊与被@时可用，模型自行判断是否需要
 const webSearch = createWebSearch({ apiKey: config.baiduApiKey, timeoutMs: 20000, logger })
@@ -266,7 +268,7 @@ const runtimeStats = {
   },
 }
 
-const bot = createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt: systemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, longMemory })
+const bot = createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt: systemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, commandCenter, longMemory })
 
 // 本地控制台：机器人自己托管界面，用 Edge/Chrome 的 app 模式窗口打开就像一个桌面应用
 let adminServer = null
@@ -284,6 +286,7 @@ if (config.adminEnabled) {
     dailyPing,
     bot,
     customCommands,
+    commandCenter,
     restartBot: () => {
       // 让一个独立进程在 1.2 秒后杀掉当前实例并用计划任务重新拉起（避免自己杀自己杀不干净）
       //
@@ -375,8 +378,8 @@ if (config.mutedGroups && config.mutedGroups.size > 0) {
   logger.info(`白名单群主动搭话概率：${desc || `全局 ${Math.round(config.proactiveRate * 100)}%`}（冷却 ${Math.round(config.proactiveCooldownMs / 1000)}s）`)
 }
 logger.info(webSearch ? '联网搜索已启用（百度千帆，私聊/被@时模型按需调用）' : '联网搜索未启用（未配置 BAIDU_QIANFAN_API_KEY）')
-logger.info(config.pokeEnabled ? `拍一拍回应已启用（冷却 ${Math.round(config.pokeCooldownMs / 1000)}s，语料 poke-replies.txt）` : '拍一拍回应未启用（POKE_REPLY_ENABLED=0）')
-logger.info(config.autoPlusOneEnabled ? '自动+1已启用：仅白名单群，两条连续相同文字消息（可夹QQ自带表情）后原生跟一次；图片/纯表情不跟读，不受静音/安静时段限制，不调用模型' : '自动+1未启用（AUTO_PLUS_ONE_ENABLED=0）')
+logger.info(commandCenter.enabled('poke') ? `拍一拍回应已启用（冷却 ${Math.round(config.pokeCooldownMs / 1000)}s，语料 poke-replies.txt）` : '拍一拍回应未启用（POKE_REPLY_ENABLED=0）')
+logger.info(commandCenter.enabled('auto-plus-one') ? '自动+1已启用：仅白名单群，两条连续相同文字消息（可夹QQ自带表情）后原生跟一次；图片/纯表情不跟读，不受静音/安静时段限制，不调用模型' : '自动+1未启用（AUTO_PLUS_ONE_ENABLED=0）')
 logger.info(config.longMemoryEnabled
   ? `长期记忆已启用（摘要上限 ${config.longMemoryMaxChars} 字，每 ${Math.round(config.longMemoryIntervalMs / 60000)} 分钟整理一次）`
   : '长期记忆未启用（LONG_MEMORY_ENABLED=0）')

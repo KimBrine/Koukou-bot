@@ -11,6 +11,11 @@ const success = () => new Response(JSON.stringify({choices:[{message:{content:'�
 let passed = 0
 async function test(name, fn) { await fn(); passed++; console.log(`PASS ${name}`) }
 try {
+  await test('指令理解和规则草稿可单次限制输出预算，不能提高全局上限',async()=>{
+    const bodies=[];globalThis.fetch=async(_,options)=>{bodies.push(JSON.parse(options.body));return success()}
+    const c=client();await c.chat('p',[],{maxTokens:800});await c.chat('p',[],{maxTokens:2400});await c.chat('p',[],{maxTokens:99999});await c.chat('p',[])
+    assert.deepEqual(bodies.map(b=>b.max_tokens),[800,2400,12000,12000])
+  })
   await test('仅识别已支持混合思考的千问型号，不误改其他厂商或旧视觉模型', () => {
     for (const model of ['qwen3.8-flash','qwen3.7-flash-2026-07-15','qwen3.5-plus','qwen3-vl-flash','qwen-plus','qwen-flash']) assert.ok(isQwenHybridModel(model))
     for (const model of ['deepseek-flash','qwen-vl-plus','qwen3.8-max','qwen3.8-omni-flash','other-model']) assert.equal(isQwenHybridModel(model),false)

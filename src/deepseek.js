@@ -58,7 +58,8 @@ export class DeepSeekClient {
   }
 
   /** 纯文本对话：messages 为 [{role, content}] 历史（不含 system） */
-  async chat(systemPrompt, messages, { rejectTruncated = false, signal } = {}) {
+  async chat(systemPrompt, messages, { rejectTruncated = false, signal, maxTokens = this.maxTokens } = {}) {
+    const outputBudget=Number.isFinite(maxTokens)&&maxTokens>0?Math.min(this.maxTokens,Math.max(1,Math.floor(maxTokens))):this.maxTokens
     await this.#acquire(signal)
     try {
       let lastErr = null
@@ -69,7 +70,7 @@ export class DeepSeekClient {
           model: this.model,
           messages: [{ role: 'system', content: systemPrompt }, ...messages],
           temperature: this.temperature,
-          max_tokens: this.maxTokens,
+          max_tokens: outputBudget,
           stream: false,
         }, signal)
         const finishReason = data?.choices?.[0]?.finish_reason
@@ -79,7 +80,7 @@ export class DeepSeekClient {
           throw err
         }
         if (rejectTruncated && finishReason === 'length') {
-          const err = new Error(`${this.label} 达到输出 token 上限（max_tokens=${this.maxTokens}，completion_tokens=${data?.usage?.completion_tokens ?? '未知'}）`)
+          const err = new Error(`${this.label} 达到输出 token 上限（max_tokens=${outputBudget}，completion_tokens=${data?.usage?.completion_tokens ?? '未知'}）`)
           err.code = 'OUTPUT_LIMIT'
           throw err
         }
