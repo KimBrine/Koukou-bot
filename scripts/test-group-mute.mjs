@@ -16,19 +16,25 @@ let count=0,seq=0
 const mute=(type='mention',target=B,source=`[@${B}]`,duration=null)=>({intent:'mute',targetType:type,target,targetText:source,durationText:duration})
 function fixture(){
  const dir=path.join(root,String(++seq)),calls=[],bans=[],lookups=[],sent=[]
- let answer=mute(),live=true,actorRole='owner',targetRole='member',botRole='admin',hook=null
+ let answer=mute(),live=true,actorRole='owner',targetRole='member',botRole='admin',hook=null,clock=Date.now()
  const config={dataDir:dir,rootDir:dir,adminUsers:[],whitelistGroups:new Set([G]),mutedGroups:new Set(),autoPlusOneEnabled:false,quietHours:'',proactiveRate:0,contextRememberAll:false,replyMaxLines:1,replyLineMaxChars:80,replyLengthMatch:false,emojiKeepRate:0,humanDelayMinMs:0,humanDelayMaxMs:0}
  const customCommands=createCustomCommands({file:path.join(dir,'custom.json'),logger})
  const llm={async chat(prompt,messages,options){calls.push({prompt,messages,options});if(hook)await hook();return typeof answer==='string'?answer:JSON.stringify(answer)}}
  const commandCenter=createCommandCenter({file:path.join(dir,'center.json'),customCommands,config,logger,llm})
  const enable=id=>commandCenter.saveBuiltin({...commandCenter.get(id),enabled:true,scope:'group',groups:[G]})
  const onebot={selfId:BOT,async getGroupMemberInfo(g,id,timeout,options){lookups.push({g,id,options});return {user_id:id,role:String(id)===BOT?botRole:String(id)===O?actorRole:targetRole,nickname:'目标群友'}},async getGroupMemberList(){return [{user_id:B,card:'测试群友',nickname:'群友'}]},async setGroupBan(g,id,s){bans.push({g,id,s})},async sendGroup(g,text){sent.push(text);return {message_id:sent.length}}}
- const handler=createGroupMute({onebot,commandCenter,llm,logger,canExecute:()=>live})
+ const handler=createGroupMute({onebot,commandCenter,llm,logger,canExecute:()=>live,now:()=>clock})
  function event(text=`禁言 [@${B}]`,user=O,group=G,at=true){return {evt:{post_type:'message',message_type:'group',group_id:group,user_id:user,message_id:++seq,time:Date.now()/1000,message:[...(at?[{type:'at',data:{qq:BOT}}]:[]),{type:'at',data:{qq:B}}]},parsed:{text,atBot:at}}}
  const run=async (e,options)=>handler.handle(e.evt,e.parsed,options)
- return {dir,config,customCommands,llm,onebot,commandCenter,handler,calls,bans,lookups,sent,enable,event,run,setAnswer:a=>answer=a,setLive:v=>live=v,setActor:v=>actorRole=v,setTarget:v=>targetRole=v,setBot:v=>botRole=v,setHook:v=>hook=v}
+ return {dir,config,customCommands,llm,onebot,commandCenter,handler,calls,bans,lookups,sent,enable,event,run,setAnswer:a=>answer=a,setLive:v=>live=v,setActor:v=>actorRole=v,setTarget:v=>targetRole=v,setBot:v=>botRole=v,setHook:v=>hook=v,advance:n=>clock+=n}
 }
 async function test(name,fn){await fn();count++;console.log('PASS '+name)}
+async function question(t,text='禁言那位10s',duration='10s'){
+ t.enable('owner-mute');t.setAnswer({intent:'mute',targets:[],durationText:duration,needsClarification:true,confidence:.5})
+ const e=t.event(text);e.evt.message=[{type:'at',data:{qq:BOT}}];t.handler.observe(e.evt,e.parsed)
+ const r=await t.run(e);assert.ok(r.clarification);assert.equal(t.handler.arm(e.evt,r),true)
+ return e
+}
 try{
  await test('默认关闭，无群号参考包导入后仍关闭，不能扩大成所有群',()=>{
   const t=fixture();assert.equal(t.commandCenter.enabled('owner-mute'),false)
@@ -198,6 +204,86 @@ try{
   const e=t.event('禁言他10s');e.evt.message=[{type:'at',data:{qq:BOT}}]
   t.setAnswer({intent:'mute',targets:[{type:'context',value:B,source:'他',evidenceMessageId:'909'}],durationText:'10s',confidence:.99})
   await t.run(e);assert.equal(t.bans.length,0)
+ })
+ await test('追问保留原请求和时长；第一条无@的引用“这位”可补全',async()=>{
+  const t=fixture();await question(t)
+  const e=t.event('这位',O,G,false);e.evt.message=[{type:'reply',data:{id:'quoted'}}]
+  const followup=t.handler.reserveFollowup(e.evt);assert.ok(followup)
+  t.setAnswer({intent:'mute',targets:[{type:'reply',value:B,source:'这位'}],durationText:null,confidence:.99})
+  await t.run(e,{followup,quotedRaw:{message_type:'group',group_id:G,user_id:B,message_id:'quoted'}})
+  assert.deepEqual(t.bans,[{g:G,id:B,s:10}]);const input=JSON.parse(t.calls.at(-1).messages[0].content)
+  assert.equal(input.originalRequest.message,'禁言那位10s');assert.equal(input.message,'这位')
+  assert.equal(t.handler.reserveFollowup(t.event('这位',O,G,false).evt),null)
+ })
+ await test('其他人、其他群不占次数；同一人两条紧邻消息也只有第一条取走等待',async()=>{
+  const t=fixture();await question(t)
+  assert.equal(t.handler.reserveFollowup(t.event('这位',A,G,false).evt),null)
+  assert.equal(t.handler.reserveFollowup(t.event('这位',O,G+1,false).evt),null)
+  assert.ok(t.handler.reserveFollowup(t.event('第一条',O,G,false).evt))
+  assert.equal(t.handler.reserveFollowup(t.event('第二条',O,G,false).evt),null)
+ })
+ await test('第一条无关、取消或AI失败都消费机会，不继续追问或等第三句话',async()=>{
+  for(const mode of ['unrelated','cancel','error','still-unclear']){
+   const t=fixture();await question(t);const e=t.event(mode==='cancel'?'算了':'哦啊',O,G,false),followup=t.handler.reserveFollowup(e.evt)
+   t.setAnswer(mode==='still-unclear'?{intent:'mute',needsClarification:true,targets:[],durationText:null}:{intent:'none'})
+   if(mode==='error')t.setHook(()=>{throw Error('timeout')})
+   const r=await t.run(e,{followup});assert.match(r.text,/取消/);assert.equal(r.clarification,undefined);assert.equal(t.bans.length,0)
+   assert.equal(t.handler.reserveFollowup(t.event('这位',O,G,false).evt),null)
+  }
+ })
+ await test('等待超过两分钟、权限设置变更或重连，旧请求全部失效',async()=>{
+  for(const mode of ['ttl','disabled','reconnect']){
+   const t=fixture();await question(t)
+   if(mode==='ttl')t.advance(120001)
+   if(mode==='disabled')t.commandCenter.saveBuiltin({...t.commandCenter.get('owner-mute'),enabled:false})
+   if(mode==='reconnect')t.onebot.messageTimeline={session:1}
+   assert.equal(t.handler.reserveFollowup(t.event('这位',O,G,false).evt),null)
+   t.enable('owner-mute');assert.equal(t.handler.reserveFollowup(t.event('这位',O,G,false).evt),null)
+  }
+ })
+ await test('第一条补充不能借用第二条消息的新证据，也不能升级全员禁言',async()=>{
+  const t=fixture();await question(t);const e=t.event('这位',O,G,false),followup=t.handler.reserveFollowup(e.evt)
+  t.handler.observe(e.evt,e.parsed)
+  const later=t.event('后来的对象',B);t.handler.observe(later.evt,later.parsed)
+  t.setAnswer({intent:'mute',targets:[{type:'context',value:B,source:'这位',evidenceMessageId:String(later.evt.message_id)}],durationText:null,confidence:.99})
+  await t.run(e,{followup});assert.equal(t.bans.length,0)
+  assert.ok(!JSON.parse(t.calls.at(-1).messages[0].content).recent.some(m=>m.id===String(later.evt.message_id)))
+  const u=fixture();await question(u);const x=u.event('开启全员禁言',O,G,false),token=u.handler.reserveFollowup(x.evt)
+  let whole=0;u.onebot.setGroupWholeBan=async()=>whole++;u.setAnswer({intent:'whole_enable',durationText:null})
+  await u.run(x,{followup:token});assert.equal(whole,0)
+ })
+ await test('时长追问沿用已经@的对象，一次补清楚即可，不用重发原请求',async()=>{
+  const t=fixture();t.enable('owner-mute');const original=t.event(`禁言 [@${B}]几分钟`)
+  t.setAnswer(mute('mention',B,`[@${B}]`,'几分钟'));t.handler.observe(original.evt,original.parsed)
+  const r=await t.run(original);assert.ok(r.clarification);assert.equal(t.handler.arm(original.evt,r),true)
+  const e=t.event('10s',O,G,false);e.evt.message=[];const token=t.handler.reserveFollowup(e.evt)
+  t.setAnswer(mute('mention',B,`[@${B}]`,'10s'));await t.run(e,{followup:token});assert.deepEqual(t.bans,[{g:G,id:B,s:10}])
+ })
+ await test('迟到的追问不挂起旧操作，未确认送达不建立等待',async()=>{
+  const t=fixture();t.enable('owner-mute');t.setAnswer({intent:'mute',targets:[],durationText:null,needsClarification:true})
+  const original=t.event('禁言那位');t.handler.observe(original.evt,original.parsed);const r=await t.run(original)
+  const newer=t.event('我又说话了');t.handler.observe(newer.evt,newer.parsed)
+  assert.equal(t.handler.arm(original.evt,r),false);assert.equal(t.handler.reserveFollowup(t.event('这位',O,G,false).evt),null)
+ })
+ await test('真实入口在追问送达后接住无@引用补充，不进入图片聊天；后续消息不继承',async()=>{
+  const t=fixture();t.enable('owner-mute');const memory=new MemoryStore({file:path.join(t.dir,'memory.json'),limit:20,logger});stores.push(memory)
+  t.onebot.getMsg=async id=>({message_type:'group',group_id:G,user_id:B,message_id:id,message:[{type:'image',data:{file:'fake.jpg'}}]})
+  const bot=createBot({...t,logger,memory,buildSystemPrompt:()=> '通用助手'})
+  const e={post_type:'message',message_type:'group',group_id:G,user_id:O,message_id:++seq,time:Date.now()/1000,sender:{nickname:'群主'},message:[{type:'at',data:{qq:BOT}},{type:'text',data:{text:'禁言那位10s'}}]}
+  t.setAnswer({intent:'mute',targets:[],durationText:'10s',needsClarification:true,confidence:.5});await bot.handleMessage(e)
+  t.setAnswer({intent:'mute',targets:[{type:'reply',value:B,source:'这位'}],durationText:null,confidence:.99})
+  const next={...e,message_id:++seq,message:[{type:'reply',data:{id:77}},{type:'text',data:{text:'这位'}}]}
+  await bot.handleMessage(next);assert.deepEqual(t.bans,[{g:G,id:B,s:10}]);assert.equal(t.calls.length,2);assert.equal(t.sent.length,2)
+  await bot.handleMessage({...next,message_id:++seq});assert.equal(t.bans.length,1);assert.equal(t.calls.length,2)
+ })
+ await test('QQ未返回追问消息编号时不建立等待',async()=>{
+  const t=fixture();t.enable('owner-mute');const memory=new MemoryStore({file:path.join(t.dir,'memory.json'),limit:20,logger});stores.push(memory)
+  const bot=createBot({...t,logger,memory,buildSystemPrompt:()=> '通用助手'})
+  t.onebot.sendGroup=async()=>({});t.setAnswer({intent:'mute',targets:[],durationText:null,needsClarification:true})
+  const original={post_type:'message',message_type:'group',group_id:G,user_id:O,message_id:++seq,time:Date.now()/1000,message:[{type:'at',data:{qq:BOT}},{type:'text',data:{text:'禁言那位'}}]}
+  await bot.handleMessage(original)
+  await bot.handleMessage({...original,message_id:++seq,message:[{type:'text',data:{text:'这位'}}]})
+  assert.equal(t.calls.length,1);assert.equal(t.bans.length,0)
  })
  console.log(`${count} group-mute cases passed; no network or real group mutations.`)
 }finally{for(const m of stores)if(m.timer)clearTimeout(m.timer);assert.equal(path.dirname(root),os.tmpdir());rmSync(root,{recursive:true,force:true})}

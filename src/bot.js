@@ -329,10 +329,13 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
     if (!replyStillCurrent(onebot, evt)) return
     // 把模型写的 [表情:微笑] 转成 QQ 真实表情的 CQ 码
     const outgoing = renderFacesToCq(text)
+    let confirmed=true
     for (const piece of splitLongMessage(outgoing)) {
       const receipt = evt.message_type === 'private' ? await onebot.sendPrivate(evt.user_id, piece) : await onebot.sendGroup(evt.group_id, piece)
       quotedMessages.rememberSent(evt, receipt, piece)
+      if(receipt?.message_id==null)confirmed=false
     }
+    return confirmed
   }
 
   /**
@@ -681,8 +684,9 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       if (repetition.duplicate) return
       if (repetition.own || evt.post_type === 'message_sent' || evt.message_sent_type === 'self' ||
           (onebot.selfId && String(evt.user_id) === String(onebot.selfId))) return
+      const muteFollowup=groupMute.reserveFollowup(evt)
       // 用户指定：自动 +1 在白名单群独立运行，不受静音、安静时段、搭话概率控制。
-      const repeatTask = autoPlusOne.send(repetition)
+      const repeatTask = muteFollowup?Promise.resolve():autoPlusOne.send(repetition)
 
       const isPrivate = evt.message_type === 'private'
       const groupId = evt.group_id
@@ -718,7 +722,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       // 定时指令的链式判断：等目标账号"成功回应"后补发第二条指令
       if (dailyPing) await dailyPing.noteMessage(evt, parsed).catch(() => {})
       if (!samePersona()) return
-      if (repetition.suppress || autoPlusOne.wasTriggered(repetition)) {
+      if (!muteFollowup&&(repetition.suppress || autoPlusOne.wasTriggered(repetition))) {
         // 跟读与后续同内容消息直接结束，图片也不进入下载 / 识图 / 聊天模型。
         const key = `g${groupId}`
         runtimeStats?.noteMessage?.(key, Number(evt.time) * 1000 || Date.now())
@@ -735,13 +739,16 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       if (!samePersona()) return
       const directReply = isPrivate || parsed.atBot || replyToBot
       const incomingLen = measureText(parsed.text.replace(/\[合并聊天记录\]/g, '')) || (parsed.images.length > 0 ? 6 : 0)
-      if (!parsed.text && !replyToBot) return
+      if (!parsed.text && !replyToBot && !muteFollowup) return
       if (!parsed.text) parsed.text = '[回复引用消息]'
 
       const commandContext={isPrivate,groupId,userId:evt.user_id,direct:directReply,event:'message',text:parsed.text}
-      const muteResult=groupMute.applies(evt,parsed)?await groupMute.handle(evt,parsed,{quotedRaw}):null
+      const muteResult=groupMute.applies(evt,parsed,muteFollowup)?await groupMute.handle(evt,parsed,{quotedRaw,followup:muteFollowup}):null
       if(muteResult?.handled){
-        if(muteResult.text&&samePersona()&&replyStillCurrent(onebot,evt))await sendTo(evt,muteResult.text)
+        if(muteResult.text&&samePersona()&&replyStillCurrent(onebot,evt)){
+          const sent=await sendTo(evt,muteResult.text)
+          if(sent)groupMute.arm(evt,muteResult)
+        }
         return
       }
       let commandResult=null
