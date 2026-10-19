@@ -23,13 +23,13 @@ function fixture(){
  const commandCenter=createCommandCenter({file:path.join(dir,'center.json'),customCommands,config,logger,llm})
  const enable=id=>commandCenter.saveBuiltin({...commandCenter.get(id),enabled:true,scope:'group',groups:[G]})
  const onebot={selfId:BOT,async getGroupMemberInfo(g,id,timeout,options){lookups.push({g,id,options});return {user_id:id,role:String(id)===BOT?botRole:String(id)===O?actorRole:targetRole,nickname:'目标群友'}},async getGroupMemberList(){return [{user_id:B,card:'测试群友',nickname:'群友'}]},async setGroupBan(g,id,s){bans.push({g,id,s})},async sendGroup(g,text){sent.push(text);return {message_id:sent.length}}}
- const handler=createGroupMute({onebot,commandCenter,llm,logger,canExecute:()=>live,now:()=>clock})
+ const handler=createGroupMute({onebot,commandCenter,llm,logger,config,canExecute:()=>live,now:()=>clock})
  function event(text=`禁言 [@${B}]`,user=O,group=G,at=true){return {evt:{post_type:'message',message_type:'group',group_id:group,user_id:user,message_id:++seq,time:Date.now()/1000,message:[...(at?[{type:'at',data:{qq:BOT}}]:[]),{type:'at',data:{qq:B}}]},parsed:{text,atBot:at}}}
  const run=async (e,options)=>handler.handle(e.evt,e.parsed,options)
  return {dir,config,customCommands,llm,onebot,commandCenter,handler,calls,bans,lookups,sent,enable,event,run,setAnswer:a=>answer=a,setLive:v=>live=v,setActor:v=>actorRole=v,setTarget:v=>targetRole=v,setBot:v=>botRole=v,setHook:v=>hook=v,advance:n=>clock+=n}
 }
 async function test(name,fn){await fn();count++;console.log('PASS '+name)}
-async function question(t,text='禁言那位10s',duration='10s'){
+async function question(t,text='禁言那位90s',duration='90s'){
  t.enable('owner-mute');t.setAnswer({intent:'mute',targets:[],durationText:duration,needsClarification:true,confidence:.5})
  const e=t.event(text);e.evt.message=[{type:'at',data:{qq:BOT}}];t.handler.observe(e.evt,e.parsed)
  const r=await t.run(e);assert.ok(r.clarification);assert.equal(t.handler.arm(e.evt,r),true)
@@ -134,7 +134,7 @@ try{
   assert.doesNotMatch(t.calls[1].prompt,/群管理请求解析器/)
  })
  await test('英文缩写、混合单位与数学式经AI原文提取后执行真实秒数',async()=>{
-  for(const [phrase,expected] of [['10s',10],['10 seconds',10],['2min',120],['1m30s',90],['1H',3600],['1d',86400],['00:01:30',90],['(2^3+2)min',600],['2**3s',8],['根号九分钟',180],['5!秒',120],['log2(1024)分钟',600],['2π分钟',377],['10ms',1]]){
+  for(const [phrase,expected] of [['90s',90],['90 seconds',90],['2min',120],['1m30s',90],['1H',3600],['1d',86400],['00:01:30',90],['(2^3+2)min',600],['2**7s',128],['根号九分钟',180],['5!秒',120],['log2(1024)分钟',600],['2π分钟',377]]){
    const t=fixture();t.enable('owner-mute');t.setAnswer(mute('mention',B,`[@${B}]`,phrase))
    const r=await t.run(t.event(`禁言 [@${B}]${phrase}`));assert.equal(t.bans[0]?.s,expected,phrase);assert.match(r.text,/小黑屋/)
   }
@@ -142,14 +142,14 @@ try{
   for(const phrase of ['(1/0)秒','sqrt(-1)秒','171!秒','process.exit()秒','10','1小时*2小时'])assert.ok(parseMuteDuration(phrase).error,phrase)
  })
  await test('AI不能截短英文或数学时长，零值不得误判成解禁',async()=>{
-  for(const [text,answer] of [[`禁言 [@${B}]30d+1s`,mute('mention',B,`[@${B}]`,'30d')],[`禁言 [@${B}]10s+3`,mute('mention',B,`[@${B}]`,'10s')],[`禁言 [@${B}]0s`,{intent:'unmute',targets:[{type:'mention',value:B,source:`[@${B}]`}]}]]){
+  for(const [text,answer] of [[`禁言 [@${B}]30d+1s`,mute('mention',B,`[@${B}]`,'30d')],[`禁言 [@${B}]90s+3`,mute('mention',B,`[@${B}]`,'90s')],[`禁言 [@${B}]0s`,{intent:'unmute',targets:[{type:'mention',value:B,source:`[@${B}]`}]}]]){
    const t=fixture();t.enable('owner-mute');let unbans=0;t.onebot.clearGroupBan=async()=>unbans++;t.setAnswer(answer);await t.run(t.event(text));assert.equal(t.bans.length,0);assert.equal(unbans,0)
   }
  })
  await test('引用选人只绑定本群被回复消息的作者，不采用引文里提到的人',async()=>{
   for(const sameGroup of [true,false]){
-   const t=fixture();t.enable('owner-mute');const e=t.event('禁言10s');e.evt.message=[{type:'at',data:{qq:BOT}}]
-   t.setAnswer({intent:'mute',targets:[{type:'reply',value:B,source:''}],durationText:'10s'})
+   const t=fixture();t.enable('owner-mute');const e=t.event('禁言90s');e.evt.message=[{type:'at',data:{qq:BOT}}]
+   t.setAnswer({intent:'mute',targets:[{type:'reply',value:B,source:''}],durationText:'90s'})
    await t.run(e,{quotedRaw:{message_type:'group',group_id:sameGroup?G:G+1,message_id:99,user_id:B,raw_message:`别人的QQ ${A}`}})
    assert.equal(t.bans.length,sameGroup?1:0);if(sameGroup)assert.equal(t.bans[0].id,B)
   }
@@ -157,23 +157,23 @@ try{
  await test('上下文指代要求近期真实发言证据和高置信度，旧群/旧消息/含糊对象不猜',async()=>{
   for(const kind of ['valid','low','fake','other-group','clarify']){
    const t=fixture();t.enable('owner-mute');t.handler.observe({message_type:'group',group_id:kind==='other-group'?G+1:G,user_id:B,message_id:909,sender:{nickname:'群友'}},{text:'发了一个广告'})
-   const e=t.event('把刚才发广告那个人禁言10s');e.evt.message=[{type:'at',data:{qq:BOT}}]
-   t.setAnswer({intent:'mute',targets:[{type:'context',value:B,source:'刚才发广告那个人',evidenceMessageId:kind==='fake'?'wrong':'909'}],durationText:'10s',confidence:kind==='low'?.5:.99,needsClarification:kind==='clarify'})
+   const e=t.event('把刚才发广告那个人禁言90s');e.evt.message=[{type:'at',data:{qq:BOT}}]
+   t.setAnswer({intent:'mute',targets:[{type:'context',value:B,source:'刚才发广告那个人',evidenceMessageId:kind==='fake'?'wrong':'909'}],durationText:'90s',confidence:kind==='low'?.5:.99,needsClarification:kind==='clarify'})
    await t.run(e);assert.equal(t.bans.length,kind==='valid'?1:0,kind)
   }
  })
  await test('批量去重、单目标失败不阻断其他人，回执分别报告结果',async()=>{
-  const t=fixture();t.enable('owner-mute');const e=t.event(`把 [@${A}] 和 [@${B}] 禁言10s`)
+  const t=fixture();t.enable('owner-mute');const e=t.event(`把 [@${A}] 和 [@${B}] 禁言90s`)
   e.evt.message=[{type:'at',data:{qq:BOT}},{type:'at',data:{qq:A}},{type:'at',data:{qq:B}}]
-  t.setAnswer({intent:'mute',targets:[A,B,A].map(id=>({type:'mention',value:id,source:`[@${id}]`})),durationText:'10s'})
+  t.setAnswer({intent:'mute',targets:[A,B,A].map(id=>({type:'mention',value:id,source:`[@${id}]`})),durationText:'90s'})
   let failed=0;t.onebot.setGroupBan=async(g,id,s)=>{if(id===A){failed++;throw Error('timeout')}t.bans.push({g,id,s})}
-  const r=await t.run(e);assert.equal(failed,1);assert.deepEqual(t.bans,[{g:G,id:B,s:10}]);assert.match(r.text,/1位未能确认/);assert.match(r.text,/小黑屋/)
+  const r=await t.run(e);assert.equal(failed,1);assert.deepEqual(t.bans,[{g:G,id:B,s:90}]);assert.match(r.text,/1位未能确认/);assert.match(r.text,/小黑屋/)
  })
  await test('批量目标有歧义不先处理部分目标，普通成员不能借批量扩展本人权限',async()=>{
-  const t=fixture();t.enable('owner-mute');t.setAnswer({intent:'mute',targets:[{type:'mention',value:B,source:`[@${B}]`},{type:'name',value:'不存在',source:'不存在'}],durationText:'10s'})
-  await t.run(t.event(`禁言 [@${B}] 和不存在10s`));assert.equal(t.bans.length,0)
-  const s=fixture();s.enable('self-mute');s.setAnswer({intent:'mute',targets:[{type:'self',value:A,source:'我'},{type:'mention',value:B,source:`[@${B}]`}],durationText:'10s'})
-  await s.run(s.event(`禁言我和 [@${B}]10s`,A));assert.equal(s.bans.length,0)
+  const t=fixture();t.enable('owner-mute');t.setAnswer({intent:'mute',targets:[{type:'mention',value:B,source:`[@${B}]`},{type:'name',value:'不存在',source:'不存在'}],durationText:'90s'})
+  await t.run(t.event(`禁言 [@${B}] 和不存在90s`));assert.equal(t.bans.length,0)
+  const s=fixture();s.enable('self-mute');s.setAnswer({intent:'mute',targets:[{type:'self',value:A,source:'我'},{type:'mention',value:B,source:`[@${B}]`}],durationText:'90s'})
+  await s.run(s.event(`禁言我和 [@${B}]90s`,A));assert.equal(s.bans.length,0)
  })
  await test('全员禁言是原生开关，仅当前群主和指定群；不创建续期或频率规则',async()=>{
   for(const enable of [true,false]){
@@ -184,7 +184,7 @@ try{
   }
  })
  await test('时段计划、带自动结束时长和模型误判都不能误开始终禁言',async()=>{
-  for(const text of ['每天22:00到07:00开启全员禁言','开启全员禁言10s','今晚开启全员禁言','禁言指定成员']){
+  for(const text of ['每天22:00到07:00开启全员禁言','开启全员禁言90s','今晚开启全员禁言','禁言指定成员']){
    const t=fixture();t.enable('whole-mute');let calls=0;t.onebot.setGroupWholeBan=async()=>calls++
    t.setAnswer({intent:'whole_enable',durationText:null});await t.run(t.event(text));assert.equal(calls,0,text)
   }
@@ -201,8 +201,8 @@ try{
   const t=fixture();t.enable('owner-mute');t.onebot.messageTimeline={session:1}
   t.handler.observe({message_type:'group',group_id:G,user_id:B,message_id:909},{text:'旧话题'})
   t.onebot.messageTimeline.session=2
-  const e=t.event('禁言他10s');e.evt.message=[{type:'at',data:{qq:BOT}}]
-  t.setAnswer({intent:'mute',targets:[{type:'context',value:B,source:'他',evidenceMessageId:'909'}],durationText:'10s',confidence:.99})
+  const e=t.event('禁言他90s');e.evt.message=[{type:'at',data:{qq:BOT}}]
+  t.setAnswer({intent:'mute',targets:[{type:'context',value:B,source:'他',evidenceMessageId:'909'}],durationText:'90s',confidence:.99})
   await t.run(e);assert.equal(t.bans.length,0)
  })
  await test('追问保留原请求和时长；第一条无@的引用“这位”可补全',async()=>{
@@ -211,8 +211,8 @@ try{
   const followup=t.handler.reserveFollowup(e.evt);assert.ok(followup)
   t.setAnswer({intent:'mute',targets:[{type:'reply',value:B,source:'这位'}],durationText:null,confidence:.99})
   await t.run(e,{followup,quotedRaw:{message_type:'group',group_id:G,user_id:B,message_id:'quoted'}})
-  assert.deepEqual(t.bans,[{g:G,id:B,s:10}]);const input=JSON.parse(t.calls.at(-1).messages[0].content)
-  assert.equal(input.originalRequest.message,'禁言那位10s');assert.equal(input.message,'这位')
+  assert.deepEqual(t.bans,[{g:G,id:B,s:90}]);const input=JSON.parse(t.calls.at(-1).messages[0].content)
+  assert.equal(input.originalRequest.message,'禁言那位90s');assert.equal(input.message,'这位')
   assert.equal(t.handler.reserveFollowup(t.event('这位',O,G,false).evt),null)
  })
  await test('其他人、其他群不占次数；同一人两条紧邻消息也只有第一条取走等待',async()=>{
@@ -256,8 +256,8 @@ try{
   const t=fixture();t.enable('owner-mute');const original=t.event(`禁言 [@${B}]几分钟`)
   t.setAnswer(mute('mention',B,`[@${B}]`,'几分钟'));t.handler.observe(original.evt,original.parsed)
   const r=await t.run(original);assert.ok(r.clarification);assert.equal(t.handler.arm(original.evt,r),true)
-  const e=t.event('10s',O,G,false);e.evt.message=[];const token=t.handler.reserveFollowup(e.evt)
-  t.setAnswer(mute('mention',B,`[@${B}]`,'10s'));await t.run(e,{followup:token});assert.deepEqual(t.bans,[{g:G,id:B,s:10}])
+  const e=t.event('90s',O,G,false);e.evt.message=[];const token=t.handler.reserveFollowup(e.evt)
+  t.setAnswer(mute('mention',B,`[@${B}]`,'90s'));await t.run(e,{followup:token});assert.deepEqual(t.bans,[{g:G,id:B,s:90}])
  })
  await test('迟到的追问不挂起旧操作，未确认送达不建立等待',async()=>{
   const t=fixture();t.enable('owner-mute');t.setAnswer({intent:'mute',targets:[],durationText:null,needsClarification:true})
@@ -269,11 +269,11 @@ try{
   const t=fixture();t.enable('owner-mute');const memory=new MemoryStore({file:path.join(t.dir,'memory.json'),limit:20,logger});stores.push(memory)
   t.onebot.getMsg=async id=>({message_type:'group',group_id:G,user_id:B,message_id:id,message:[{type:'image',data:{file:'fake.jpg'}}]})
   const bot=createBot({...t,logger,memory,buildSystemPrompt:()=> '通用助手'})
-  const e={post_type:'message',message_type:'group',group_id:G,user_id:O,message_id:++seq,time:Date.now()/1000,sender:{nickname:'群主'},message:[{type:'at',data:{qq:BOT}},{type:'text',data:{text:'禁言那位10s'}}]}
-  t.setAnswer({intent:'mute',targets:[],durationText:'10s',needsClarification:true,confidence:.5});await bot.handleMessage(e)
+  const e={post_type:'message',message_type:'group',group_id:G,user_id:O,message_id:++seq,time:Date.now()/1000,sender:{nickname:'群主'},message:[{type:'at',data:{qq:BOT}},{type:'text',data:{text:'禁言那位90s'}}]}
+  t.setAnswer({intent:'mute',targets:[],durationText:'90s',needsClarification:true,confidence:.5});await bot.handleMessage(e)
   t.setAnswer({intent:'mute',targets:[{type:'reply',value:B,source:'这位'}],durationText:null,confidence:.99})
   const next={...e,message_id:++seq,message:[{type:'reply',data:{id:77}},{type:'text',data:{text:'这位'}}]}
-  await bot.handleMessage(next);assert.deepEqual(t.bans,[{g:G,id:B,s:10}]);assert.equal(t.calls.length,2);assert.equal(t.sent.length,2)
+  await bot.handleMessage(next);assert.deepEqual(t.bans,[{g:G,id:B,s:90}]);assert.equal(t.calls.length,2);assert.equal(t.sent.length,2)
   await bot.handleMessage({...next,message_id:++seq});assert.equal(t.bans.length,1);assert.equal(t.calls.length,2)
  })
  await test('QQ未返回追问消息编号时不建立等待',async()=>{
@@ -330,6 +330,63 @@ try{
   t.setAnswer({intent:'mute',targets:[{type:'context',value:B,source:'他',evidenceMessageId:String(previous.message_id),evidenceRole:'replyAuthor'}],durationText:null,confidence:.99})
   await bot.handleMessage({...previous,message_id:++seq,message:[{type:'at',data:{qq:BOT}},{type:'text',data:{text:'把他禁了'}}]})
   assert.deepEqual(t.bans,[{g:G,id:B,s:60}]);assert.equal(t.calls.length,1);assert.equal(queries,1);assert.equal(t.sent.length,1)
+ })
+ await test('授权是群主或机器人管理员与本群管理员的交集，空名单与伪造role不放行',async()=>{
+  for(const [role,admins,expected] of [['owner',[],true],['admin',[O],true],['admin',[],false],['admin',[A],false],['member',[O],false],['unknown',[O],false]]){
+   const t=fixture();t.enable('owner-mute');t.setActor(role);t.config.adminUsers=admins
+   const e=t.event();e.evt.sender={role:'owner'};await t.run(e)
+   assert.equal(t.bans.length,Number(expected),`${role}:${admins}`)
+   if(expected)assert.equal(JSON.parse(t.calls[0].messages[0].content).ownerMode,true)
+  }
+ })
+ await test('双重身份操作者可解禁和切换全员禁言，缺少任一身份均无动作',async()=>{
+  for(const [role,admins,expected] of [['owner',[],true],['admin',[O],true],['admin',[],false],['member',[O],false]]){
+   for(const action of ['unmute','whole_enable','whole_disable']){
+    const t=fixture();t.config.adminUsers=admins;t.setActor(role);t.enable(action==='unmute'?'owner-mute':'whole-mute')
+    const mutations=[];t.onebot.clearGroupBan=async(g,id)=>mutations.push({g,id});t.onebot.setGroupWholeBan=async(g,enable)=>mutations.push({g,enable})
+    t.setAnswer(action==='unmute'?{...mute(),intent:action}:{intent:action,durationText:null})
+    await t.run(t.event(action==='unmute'?`解禁 [@${B}]`:action==='whole_enable'?'开启全员禁言':'关闭全员禁言'))
+    assert.equal(mutations.length,Number(expected),`${role}:${action}`)
+   }
+  }
+ })
+ await test('解析期间撤销控制台管理员或本群管理身份，不继续个人及全员操作',async()=>{
+  for(const revoke of ['bot-admin','group-admin'])for(const whole of [false,true]){
+   const t=fixture();t.config.adminUsers=[O];t.setActor('admin');t.enable(whole?'whole-mute':'owner-mute');let actions=0
+   t.onebot.setGroupWholeBan=async()=>actions++
+   t.setHook(()=>revoke==='bot-admin'?t.config.adminUsers=[]:t.setActor('member'))
+   if(whole)t.setAnswer({intent:'whole_enable',durationText:null})
+   await t.run(t.event(whole?'开启全员禁言':undefined));assert.equal(t.bans.length+actions,0)
+  }
+ })
+ await test('批量中途撤权，后续目标不沿用首次授权',async()=>{
+  const t=fixture();t.enable('owner-mute');t.config.adminUsers=[O];t.setActor('admin')
+  t.setAnswer({intent:'mute',targets:[A,B].map(id=>({type:'mention',value:id,source:`[@${id}]`})),durationText:null})
+  const e=t.event(`禁言 [@${A}] 和 [@${B}]`);e.evt.message.push({type:'at',data:{qq:A}})
+  t.onebot.setGroupBan=async(g,id,s)=>{t.bans.push({g,id,s});t.config.adminUsers=[]}
+  await t.run(e);assert.deepEqual(t.bans,[{g:G,id:A,s:60}])
+ })
+ await test('正确识别秒数但不足一分钟时不提交，不把1秒悄悄变成一分钟',async()=>{
+  for(const phrase of ['1秒','10s','59 seconds','10ms','2**3秒']){
+   const t=fixture();t.enable('self-mute');const e=t.event(`禁言我${phrase}`,A);e.evt.message=[{type:'at',data:{qq:BOT}}]
+   t.setAnswer(mute('self',A,'我',phrase));const r=await t.run(e)
+   assert.equal(t.bans.length,0);assert.match(r.text,/不足1分钟/);assert.match(r.text,/不执行/)
+  }
+  const t=fixture();t.enable('owner-mute');t.setAnswer(mute('mention',B,`[@${B}]`,'60s'));await t.run(t.event(`禁言 [@${B}]60s`));assert.equal(t.bans[0].s,60)
+ })
+ await test('执行后核对QQ截止时间，实际更长时回执分别说明；不补发动作',async()=>{
+  const t=fixture();t.enable('owner-mute');t.setAnswer(mute('mention',B,`[@${B}]`,'90s'))
+  const get=t.onebot.getGroupMemberInfo;t.onebot.getGroupMemberInfo=async(...args)=>({...await get(...args),...(String(args[1])===B&&t.bans.length?{shut_up_timestamp:Math.floor(Date.now()/1000)+180}:{})})
+  const r=await t.run(t.event(`禁言 [@${B}]90s`));assert.deepEqual(t.bans,[{g:G,id:B,s:90}]);assert.match(r.text,/与申请时长不同/);assert.doesNotMatch(r.text,/到点就/)
+ })
+ await test('截止时间查询失败或返回0不伪称已核实，动作不重试不自动解禁',async()=>{
+  for(const kind of ['error','zero','missing']){
+   const t=fixture();t.enable('owner-mute');const get=t.onebot.getGroupMemberInfo
+   t.onebot.getGroupMemberInfo=async(...args)=>{const info=await get(...args);if(String(args[1])===B&&t.bans.length){if(kind==='error')throw Error('read timeout');if(kind==='zero')info.shut_up_timestamp=0}return info}
+   let unbans=0;t.onebot.clearGroupBan=async()=>unbans++
+   const r=await t.run(t.event());assert.equal(t.bans.length,1);assert.equal(unbans,0);assert.match(r.text,/已向 QQ 申请/);assert.doesNotMatch(r.text,/到点就|未能确认成功/)
+   if(kind==='zero')assert.match(r.text,/暂不能确认是否生效/)
+  }
  })
  console.log(`${count} group-mute cases passed; no network or real group mutations.`)
 }finally{for(const m of stores)if(m.timer)clearTimeout(m.timer);assert.equal(path.dirname(root),os.tmpdir());rmSync(root,{recursive:true,force:true})}

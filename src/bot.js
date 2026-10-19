@@ -311,7 +311,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
   let repeatSession = onebot.messageTimeline?.session
   const lastReplayNote = new Map()
   const quotedMessages = createQuotedMessageResolver({ onebot, logger })
-  const groupMute = createGroupMute({onebot,commandCenter,llm,logger,canExecute:evt=>replyStillCurrent(onebot,evt)})
+  const groupMute = createGroupMute({onebot,commandCenter,llm,logger,config,canExecute:evt=>replyStillCurrent(onebot,evt)})
   const autoPlusOne = createAutoPlusOne({ config, onebot, logger,
     isEnabled:commandCenter ? id=>commandCenter.allowed({...commandCenter.get('auto-plus-one'),adminOnly:false},{isPrivate:false,groupId:id}) : undefined,
     canTrigger:commandCenter ? evt=>commandCenter.allows('auto-plus-one',{isPrivate:false,groupId:evt.group_id,userId:evt.user_id}) : undefined,

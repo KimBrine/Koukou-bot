@@ -17,9 +17,9 @@ const DEFINITIONS=[
   {id:'id-check-kick',name:'按核对结果移出成员',trigger:'/id_check_kick',description:'仍须满足原有核对记录、操作员、时限和机器人权限条件，仅精确指令触发',ai:'none',pattern:ID_CHECK_KICK_CMD_RE},
   {id:'poke',name:'拍一拍回应',trigger:'拍机器人头像',description:'只检测拍机器人自己的事件；默认使用原有私有回复语料',ai:'optional'},
   {id:'auto-plus-one',name:'自动 +1',trigger:'连续两条文字（可夹 QQ 表情）',description:'仅白名单群，连续段只跟一次；继续独立于静音和安静时段',ai:'none'},
-  {id:'owner-mute',name:'群主自然语言禁言',trigger:'@机器人 禁言/解禁 指定成员',description:'仅所选群主可指定成员、引用发言人或明确上下文对象，支持批量与数学时长；默认一分钟，超过30天不执行',ai:'required',management:true},
+  {id:'owner-mute',name:'群管理自然语言禁言',trigger:'@机器人 禁言/解禁 指定成员',description:'所选群的群主，或同时拥有本群管理权限的已配置机器人管理员，可指定成员、引用发言人或明确上下文对象，支持批量与数学时长；默认一分钟，超过30天不执行',ai:'required',management:true},
   {id:'self-mute',name:'自助自然语言禁言',trigger:'@机器人 禁言我 十分钟',description:'仅所选群，由本人主动申请禁言自己；AI 理解当前请求，默认一分钟，超过30天不执行，不能替别人申请',ai:'required',management:true},
-  {id:'whole-mute',name:'全员禁言开关',trigger:'@机器人 开启/关闭全员禁言',description:'仅所选群主可要求切换 QQ 原生全员禁言，不设置发言频率；暂不支持原生时段计划。此处开关只控制指令能力，不改变 QQ 当前禁言状态',ai:'required',management:true},
+  {id:'whole-mute',name:'全员禁言开关',trigger:'@机器人 开启/关闭全员禁言',description:'所选群的群主，或同时拥有本群管理权限的已配置机器人管理员，可要求切换 QQ 原生全员禁言，不设置发言频率；暂不支持原生时段计划。此处开关只控制指令能力，不改变 QQ 当前禁言状态',ai:'required',management:true},
 ]
 const plain = d => {const {pattern,...rest}=d;return rest}
 const parseJson = text => JSON.parse(String(text).trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,''))
