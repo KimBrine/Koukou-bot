@@ -67,7 +67,8 @@ const EDITABLE = [
   { key: 'SUMMARY_TIMES', label: '报告时间', hint: 'HH:mm，逗号分隔可多个', live: false, type: 'text' },
   { key: 'SUMMARY_GROUPS', label: '报告目标群', hint: '留空=用白名单群', live: false, type: 'text' },
   { key: 'SUMMARY_SEND_MODE', label: '报告发送方式', hint: '先按空行分段；forward=合并转发卡片，split=逐段发送', live: false, type: 'text' },
-  { key: 'SUMMARY_UNRESTRICTED', label: '群总结宽裕模式', hint: '开启后使用完整主聊天记录，不设置本地输出token、固定话题数量或生成等待超时。下面的消息条数、输出token和准备时限暂不生效；模型服务商自身容量与网络限制仍然存在。', live: false, type: 'bool' },
+  { key: 'SUMMARY_UNRESTRICTED', label: '群总结宽裕模式', hint: '开启后使用完整主聊天记录，不设置本地输出token、固定话题数量或整份总结总时限；单次请求仍有故障等待检测。下面的消息条数、输出token和准备时限暂不生效；模型服务商自身容量与网络限制仍然存在。', live: false, type: 'bool' },
+  { key: 'SUMMARY_REQUEST_TIMEOUT_SECONDS', label: '单次模型等待（秒）', hint: '宽裕模式使用，60～3600，默认900（15分钟）。每次尝试分别计时，超时有限重试；整份总结无总时限。非流式接口无法区分正常思考和连接卡住，可按需加大。', live: false, type: 'number' },
   { key: 'SUMMARY_BOT_USERS', label: '已知机器人 QQ（选题降权）', hint: '逗号分隔。机器人的播报不算真人讨论；原始消息统计保持完整。默认不预置账号。', live: false, type: 'text' },
   { key: 'SUMMARY_MAX_MESSAGES', label: '报告消息条数上限', live: false, type: 'number' },
   { key: 'SUMMARY_MAX_TOKENS', label: '总结输出 token 上限', hint: '500～16000；控制总结篇幅，与普通聊天的输出上限分开设置', live: false, type: 'number' },
@@ -387,6 +388,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         summaryFallbackEnabled: config.summaryFallbackEnabled,
         summaryGroups: config.summaryGroups,
         summaryUnrestricted: Boolean(config.summaryUnrestricted),
+        summaryRequestTimeoutSeconds: config.summaryRequestTimeoutSeconds ?? 900,
         summaryActiveLimits: {maxMessages:config.summaryUnrestricted?null:config.summaryMaxMessages,maxOutputTokens:config.summaryUnrestricted?null:config.summaryMaxTokens,taskTimeoutMinutes:config.summaryUnrestricted?null:config.summaryTaskTimeoutMinutes},
         targetWatch: targetWatch?.enabled ? { group: targetWatch.groupId, user: targetWatch.userId, pending: targetWatch.pendingCount?.() ?? 0 } : null,
       },
@@ -481,6 +483,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       SUMMARY_MODEL: () => String(config.summaryModel),
       SUMMARY_BOT_USERS: () => (config.summaryBotUsers||[]).join(','),
       SUMMARY_UNRESTRICTED: () => config.summaryUnrestricted?'1':'0',
+      SUMMARY_REQUEST_TIMEOUT_SECONDS: () => String(config.summaryRequestTimeoutSeconds ?? 900),
       SUMMARY_VISION_MODEL: () => String(config.summaryVisionModel),
       SUMMARY_REFERENCE_MAX_IMAGES: () => String(config.summaryReferenceMaxImages),
       SUMMARY_CONCURRENCY: () => String(config.summaryConcurrency),
@@ -632,6 +635,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         }
         if (field.type === 'number' && !Number.isFinite(Number(value))) throw new Error(`${field.label} 需要填写数字`)
         if (key === 'SUMMARY_MAX_TOKENS' && (!Number.isInteger(Number(value)) || Number(value) < 500 || Number(value) > 16000)) throw new Error('总结输出 token 上限应为 500～16000 的整数')
+        if (key === 'SUMMARY_REQUEST_TIMEOUT_SECONDS' && (!Number.isInteger(Number(value)) || Number(value) < 60 || Number(value) > 3600)) throw new Error('单次模型等待应为60～3600秒的整数')
         if (key === 'SUMMARY_CONCURRENCY' && (!Number.isInteger(Number(value)) || Number(value) < 1 || Number(value) > 3)) throw new Error('同时生成的群数应为 1～3 的整数')
         if (key === 'SUMMARY_TASK_TIMEOUT_MINUTES' && (!Number.isInteger(Number(value)) || Number(value) < 2 || Number(value) > 30)) throw new Error('单群准备时限应为 2～30 分钟的整数')
         if (key === 'SUMMARY_REFERENCE_MAX_IMAGES' && (!Number.isInteger(Number(value)) || Number(value) < 0 || Number(value) > 12)) throw new Error('每份总结参考图片上限应为 0～12 的整数')

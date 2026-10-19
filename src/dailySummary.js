@@ -253,7 +253,7 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
     //    翻页循环一断就又变成"只有部分数据"。小页多翻几页更稳。
     const pageSize = Math.min(500, Math.max(200, count))
     // 超时给到 60 秒（默认 20 秒对历史接口太紧）
-    const pageTimeoutMs = config.summaryUnrestricted ? 0 : 60000
+    const pageTimeoutMs = 60000
     const maxPages = config.summaryUnrestricted ? Infinity : 60
     const maxRounds = 5
     let pages = 0

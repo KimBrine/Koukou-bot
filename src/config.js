@@ -184,6 +184,7 @@ export function loadConfig() {
     summaryMaxMessages: Math.max(50, Math.min(2000, Math.floor(num('SUMMARY_MAX_MESSAGES', 600)))),
     summaryBotUsers: String(env.SUMMARY_BOT_USERS??'').split(/[\s,，]+/).filter(id=>/^\d{1,15}$/.test(id)),
     summaryUnrestricted: /^(?:1|true)$/i.test(String(env.SUMMARY_UNRESTRICTED??'0')),
+    summaryRequestTimeoutSeconds: Math.max(60, Math.min(3600, Math.floor(num('SUMMARY_REQUEST_TIMEOUT_SECONDS', 900)))),
     summaryModel: String(env.SUMMARY_MODEL ?? '').trim() || null,
     // 总结模型提供方：deepseek | dashscope（DashScope/通义千问在长文总结上更稳，不会把预算烧在推理里）
     summaryProvider: String(env.SUMMARY_PROVIDER ?? 'deepseek').toLowerCase(),
