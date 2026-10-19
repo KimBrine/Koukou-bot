@@ -64,6 +64,38 @@ try {
     assert.equal((await summary.previewStats(102)).reason, 'api_failed')
     await summary.runSummary(102); assert.equal(notices, 1); assert.equal(summary.isRunning(102), false)
   })
+  await test('已读页游标消息消失时，从同页更晚消息重叠回溯，稳定后确认完整',async()=>{
+    const recent=packet(30,now-10),middle=packet(20,start+20),old=packet(10,start+10),boundary=packet(1,start-10)
+    const cursors=[];let rounds=0
+    const summary=createDailySummary({config,logger,llm:null,onebot:{selfId:'999',async getGroupMsgHistory(g,seq){
+      cursors.push(seq)
+      if(seq==null){rounds++;return {messages:[recent]}}
+      if(seq===30)return {messages:[old,middle,recent]}
+      if(seq===10)throw Error('OneBot API 失败：retcode=1200 消息10不存在')
+      if(seq===20)return {messages:[boundary,old,middle]}
+      throw Error('不能猜测游标')
+    }}})
+    const result=await summary.previewStats(104)
+    assert.equal(result.complete,true);assert.equal(rounds,2)
+    assert.deepEqual(result.records.map(m=>m.id).sort(),['10','20','30'])
+    assert.deepEqual(cursors,[null,30,10,20,null,30,10,20])
+  })
+  await test('同页相邻游标也失效时保留记录并有限重扫，不将中断轮次判定完整',async()=>{
+    let round=0
+    const messages=[packet(1,start-10),packet(2,start+10),packet(3,start+20)]
+    const summary=createDailySummary({config,logger,llm:null,onebot:{selfId:'999',async getGroupMsgHistory(g,seq){
+      if(seq==null){round++;return {messages:[messages[1]]}}
+      if(round===1)throw Error('消息2不存在')
+      return {messages}
+    }}})
+    const result=await summary.previewStats(104)
+    assert.equal(result.complete,true);assert.equal(round,3)
+    let calls=0,models=0;const notices=[]
+    const broken=createDailySummary({config,logger,llm:{async chat(){models++;throw Error('不能生成残缺总结')}},onebot:{selfId:'999',async getGroupMsgHistory(g,seq){
+      calls++;if(seq==null)return {messages:[messages[1]]};throw Error('消息2不存在')
+    },async sendGroup(g,text){notices.push(text)}}})
+    await broken.runSummary(102);assert.equal(models,0);assert.equal(calls,6);assert.equal(notices.length,1);assert.match(notices[0],/历史读取接口出现异常/)
+  })
   console.log(`${passed} cases passed`)
 } finally {
   mock.timers.reset()

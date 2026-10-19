@@ -262,6 +262,33 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
     let reachedStart = false
     let uncoveredStableRounds = 0
     let rounds = 0
+    let cursorRecoveries = 0
+    let cursorRestarts = 0
+    const missingCursor = err => /消息.*不存在|message.*(?:not found|does not exist)/i.test(String(err?.message || ''))
+    const order = msg => Number(msg.real_seq ?? msg.message_seq)
+    const compare = (a,b) => Number(a.time)-Number(b.time) || order(a)-order(b)
+    // 失效游标只改用刚读取同页内更晚的真实消息，重叠回溯，不猜测随机短ID。
+    async function readPage(seq, anchorPage) {
+      try { return await onebot.getGroupMsgHistory(groupId, seq, pageTimeoutMs, pageSize, true) }
+      catch (err) {
+        signal?.throwIfAborted()
+        if (!missingCursor(err)) throw err
+        const anchor=anchorPage.find(m=>String(m.message_seq)===String(seq))
+        const alternatives=anchor ? [...anchorPage].filter(m=>m.message_seq&&String(m.message_seq)!==String(seq)&&compare(m,anchor)>0).sort(compare) : []
+        const used=new Set([String(seq)])
+        let failure=err
+        for (const candidate of alternatives) {
+          if(cursorRecoveries>=6||used.size>=4)break
+          const next=String(candidate.message_seq);if(used.has(next))continue
+          used.add(next);cursorRecoveries++
+          signal?.throwIfAborted()
+          logger.warn(`群 ${groupId} 历史游标失效，使用同页相邻消息重叠回溯（恢复 ${cursorRecoveries}/6）`)
+          try { return await onebot.getGroupMsgHistory(groupId,candidate.message_seq,pageTimeoutMs,pageSize,true) }
+          catch (retryError) {signal?.throwIfAborted();if(!missingCursor(retryError))throw retryError;failure=retryError}
+        }
+        throw failure
+      }
+    }
     const add = (msgs) => {
       let newWindow = 0
       for (const m of msgs) {
@@ -293,9 +320,10 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
       pages++
       let newWindow = add(first)
       // NapCat message_seq 是随机短 ID；同秒消息用真实群序号排序，避免把较早消息当作最新游标。
-      const order = msg => Number(msg.real_seq ?? msg.message_seq)
       const latest = first.reduce((a, b) => Number(b.time) > Number(a.time) || (Number(b.time) === Number(a.time) && order(b) > order(a)) ? b : a, first[0])
       let seq = latest?.message_seq
+      let anchorPage = first
+      let cursorFailed = false
       let covered = false
       const roundSeen = new Set()
       if (!seq) {
@@ -307,11 +335,12 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
         signal?.throwIfAborted()
         let msgs
         try {
-          msgs = (await onebot.getGroupMsgHistory(groupId, seq, pageTimeoutMs, pageSize, true))?.messages || []
+          msgs = (await readPage(seq, anchorPage))?.messages || []
         } catch (err) {
           signal?.throwIfAborted()
           logger.warn(`群 ${groupId} 历史回溯失败（第 ${round} 轮第 ${i + 1} 页）：${err.message}`)
           failed = true
+          cursorFailed = missingCursor(err)
           break
         }
         signal?.throwIfAborted()
@@ -329,6 +358,13 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
         const nextSeq = oldestMsg?.message_seq
         if (!nextSeq || String(nextSeq) === String(seq) || fresh === 0) break
         seq = nextSeq
+        anchorPage = msgs
+      }
+      if(failed&&cursorFailed&&cursorRestarts<2&&round<maxRounds){
+        cursorRestarts++;failed=false
+        logger.warn(`群 ${groupId} 同页游标仍失效，保留已读取记录并从新首屏重扫（${cursorRestarts}/2）；本轮不视为完整`)
+        await sleep(700)
+        continue
       }
       if (failed) break
       reachedStart ||= covered
