@@ -10,14 +10,14 @@ export function createSummaryVisionClient({ config, logger }) {
   if (!config.dashscopeApiKey) return null
   const model = config.summaryVisionModel || config.dashscopeModel
   return new DeepSeekClient({ apiKey: config.dashscopeApiKey, baseUrl: config.dashscopeBaseUrl, model,
-    temperature: 0.2, maxTokens: 500, timeoutMs: 20000, maxRetries: 0,
+    temperature: 0.2, maxTokens: config.summaryUnrestricted?undefined:500, timeoutMs: config.summaryUnrestricted?0:20000, maxRetries: 0,
     maxConcurrency: config.summaryConcurrency || 2, logger, label: '总结资料读图(通义千问)',
     enableThinking: isQwenHybridModel(model) ? (config.dashscopeThinking ?? false) : undefined })
 }
 
 /** 原始统计与普通发言不变，转发及图片只生成有预算上限的参考资料。 */
 export async function prepareSummaryReferences({ records, onebot, visionLLM, imageCache, loadImage, logger,
-  signal, mainChars = 0, maxCards = 12, maxChars = 4000, maxImages = 6, timeoutMs = 60000 }) {
+  signal, mainChars = 0, maxCards = 12, maxChars = 4000, maxImages = 6, timeoutMs = 60000, unrestricted=false }) {
   const sources = records.filter(r => r.forwards?.length)
   const candidates = sources.length ? selectRelevantSummaryReferences(records) : []
   const result = { text: '', sources: sources.length, eligible: candidates.length, skippedUnrelated: sources.length - candidates.length,
@@ -27,7 +27,7 @@ export async function prepareSummaryReferences({ records, onebot, visionLLM, ima
   logger.info(`[总结转发筛选] 外层 ${sources.length} 条；有群内关联依据 ${candidates.length} 条；其余 ${result.skippedUnrelated} 条不展开、不读图`)
   if (!candidates.length) return result
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(new Error('转发参考资料读取达到时限')), timeoutMs)
+  const timer = unrestricted?null:setTimeout(() => controller.abort(new Error('转发参考资料读取达到时限')), timeoutMs)
   const taskSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
   const budget = Math.min(maxChars, Math.max(200, Math.floor(mainChars * 0.15)))
   const count = Math.min(candidates.length, maxCards, Math.max(1, Math.floor(budget / 200)))
@@ -63,7 +63,7 @@ export async function prepareSummaryReferences({ records, onebot, visionLLM, ima
       if (seen.has(key)) continue
       seen.add(key)
       const expanded = await wait(expandForwardRecords({ message: record.forwards, onebot: cachedOnebot, logger,
-        maxChars: 6000, maxImages, signal: taskSignal }))
+        maxChars: 6000, maxImages, signal: taskSignal,unrestrictedWait:unrestricted }))
       result.expanded++
       if (expanded.failed || expanded.truncated) result.incomplete = true
       const at = new Date(record.time * 1000).toLocaleString('zh-CN', {timeZone:'Asia/Shanghai',hour12:false})
@@ -87,7 +87,7 @@ export async function prepareSummaryReferences({ records, onebot, visionLLM, ima
           if (!loaded?.part) throw Error('未取得图片内容')
           const describe = async () => {
             const text = await visionLLM.describeImages(SUMMARY_IMAGE_PROMPT, IMAGE_ASK, [loaded.part],
-              {maxTokens:500,temperature:0.2,signal:taskSignal})
+              {maxTokens:unrestricted?0:500,temperature:0.2,signal:taskSignal})
             taskSignal.throwIfAborted()
             if (!String(text ?? '').trim()) throw Error('图片描述为空')
             return String(text).trim().slice(0, 600)

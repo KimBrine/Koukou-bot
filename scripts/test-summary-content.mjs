@@ -16,10 +16,10 @@ const records = [
   ...Array.from({ length: 128 }, (_, i) => ({ id: 143 + i, userId: '10001', name: '群友', time: start + 9000 + i, text: '[图片]' })),
 ]
 const profile = profileSummaryContent(records), stats = computeSummaryStats(records)
-const topics = (pigFirst = false, pigBody = '少量群友零点抽猪猪并查询库存。', topicCount = 3) => {
+const topics = (pigFirst = false, pigBody = '', topicCount = 3) => {
   const entries = [
-    '攻略交流\n参与者: 群友\n群友讨论配队、卡费和打断技能，并交换通关办法。',
-    '新歌争议\n参与者: 群友\n群友讨论歌曲与剧情的适配，以及社区对歌手的迁怒。',
+    '攻略交流\n参与者: 群友0、群友1\n群友讨论配队、卡费和打断技能，并交换通关办法。这轮交流继续比较不同配置的使用条件，逐一说明角色、资源和操作方式如何影响结果。群友结合自己的尝试回应建议，区分了可以直接采用的办法和仍需试验的部分，保留了具体限制与后续安排。这轮交流继续比较不同配置的使用条件，逐一说明角色、资源和操作方式如何影响结果。群友结合自己的尝试回应建议，区分了可以直接采用的办法和仍需试验的部分，保留了具体限制与后续安排。这轮交流继续比较不同配置的使用条件，逐一说明角色、资源和操作方式如何影响结果。群友结合自己的尝试回应建议，区分了可以直接采用的办法和仍需试验的部分，保留了具体限制与后续安排。',
+    '新歌争议\n参与者: 群友0、群友1\n群友讨论歌曲与剧情的适配，以及社区对歌手的迁怒。群友先说明争议出现的背景，再分别讨论作品呈现和评论中的不同意见。有人从表达效果提出看法，也有人补充具体语境并回应前面的疑问，双方没有形成统一结论，报告只保留实际交流中的信息与分歧。群友先说明争议出现的背景，再分别讨论作品呈现和评论中的不同意见。有人从表达效果提出看法，也有人补充具体语境并回应前面的疑问，双方没有形成统一结论，报告只保留实际交流中的信息与分歧。群友先说明争议出现的背景，再分别讨论作品呈现和评论中的不同意见。有人从表达效果提出看法，也有人补充具体语境并回应前面的疑问，双方没有形成统一结论，报告只保留实际交流中的信息与分歧。',
     '活动报名安排\n参与者: 群友\n群友通知本周活动在周六举行，报名在周五18点截止，要求参与者确认是否参加。',
   ].slice(0, topicCount)
   if (pigFirst) entries.unshift(`猪猪收集大作战\n参与者: 群友\n${pigBody}`)
@@ -57,7 +57,7 @@ test('少量例行猪猪占首位或长篇展开会触发修正', () => {
   assert.equal(quality.ok, false)
   assert.ok(quality.issues.some(s => s.includes('不应排在'))); assert.ok(quality.issues.some(s => s.includes('最多90字')))
 })
-test('短猪猪动态放在最后可以保留', () => { assert.equal(inspectSummaryQuality(topics(), { records, stats }).ok, true) })
+test('短猪猪动态即使放在最后也不独立凑热门话题', () => { assert.equal(inspectSummaryQuality(topics(false, '少量群友打卡。'), { records, stats }).ok, false) })
 test('即使只有两个主要活跃时段，大样本也不能只写两项', () => {
   assert.equal(inspectSummaryQuality(topics(false, '', 3), { records, stats }).ok, true)
   const onlyTwo = inspectSummaryQuality(topics(false, '', 2), { records, stats })
@@ -88,7 +88,7 @@ test('普通聊天也超预算时覆盖首尾和中间，保持时间顺序', ()
 })
 test('提示词要求全局选题、克制打卡篇幅和保留真实反应', () => {
   const prompt = buildSummaryPrompt({ botName: '口', dateLabel: '2026-10-07', stats, contentGuide: formatSummaryContentGuide(profile) })
-  assert.match(prompt, /先通读整个时间窗口/); assert.match(prompt, /不能写出记录没有的/); assert.match(prompt, /最多90字/)
+  assert.match(prompt, /先通读整个时间窗口/); assert.match(prompt, /不能写出记录没有的/); assert.match(prompt, /不单列热门话题/)
 })
 const outputs = [topics(true, '模板故事'.repeat(35)), topics(false, '')], calls = []
 const result = await generateCheckedSummary({ llm: { async chat(prompt, input) { calls.push(input); return outputs[calls.length - 1] } },

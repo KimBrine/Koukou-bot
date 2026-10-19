@@ -1,5 +1,7 @@
 import { parseSummaryFormat, summarySectionHeading } from './summaryFormat.js'
-import { profileSummaryContent, summaryTopicPolicy } from './summaryContent.js'
+import { profileSummaryContent, summaryTopicPolicy, summaryDetailPolicy } from './summaryContent.js'
+import {isSummaryTransientError} from './summaryFailure.js'
+import {setTimeout as pause} from 'node:timers/promises'
 
 /** 去除内部来源标记；过长参考整句省略，保留完整的群内讨论句子。 */
 export function limitSummaryReferenceWeight(text, logger) {
@@ -34,6 +36,7 @@ export function inspectSummaryQuality(text, { records = [], stats = {}, contentP
   // 完整窗口决定动态范围，不能用采样后的条数或统一三项门槛放行大群的过短报告。
   const substantive = contentProfile.ordinaryCount
   const topicPolicy = summaryTopicPolicy(contentProfile)
+  const detailPolicy=summaryDetailPolicy(contentProfile),detailIssues=[],topicBodies=[]
   const min = {topics: topicPolicy.min, members: Math.min(4, Math.max(1, Number(stats.people) || 1)), quotes: contentProfile.forwardOnly ? 0 : substantive >= 20 ? 3 : 1}
   const issues = []
   for (const [title, key] of Object.entries(names)) if (!headings.includes(key)) issues.push(`缺少「${title}」标题`)
@@ -45,6 +48,32 @@ export function inspectSummaryQuality(text, { records = [], stats = {}, contentP
   if (counts.members < min.members) issues.push(`群友称号只有 ${counts.members} 项，应至少 ${min.members} 项`)
   if (counts.members > 5) issues.push(`群友称号有 ${counts.members} 项，最多保留 5 项`)
   if (counts.quotes < min.quotes) issues.push(`群圣经只有 ${counts.quotes} 项，应至少 ${min.quotes} 项`)
+  let section=null
+  const aliases=new Map()
+  for(const person of contentProfile.people||[])for(const display of person.names){const list=aliases.get(display)||[];list.push(person);aliases.set(display,list)}
+  for(const block of blocks){
+    const heading=summarySectionHeading(block.split('\n',1)[0]);if(heading)section=heading
+    if(section!=='topics')continue
+    const lines=block.split('\n'),at=lines.findIndex(l=>/^\s*参与者\s*[:：]/.test(l));if(at<0)continue
+    const title=lines.find(l=>/^\s*\d+[.、．]/.test(l))||'',body=lines.slice(at+1).join('\n').replace(/〔参考〕[\s\S]*?〔\/参考〕/g,'').trim()
+    const size=[...body.replace(/\s/g,'')].length;topicBodies.push(size)
+    if(!body)issues.push(`「${title}」缺少话题正文`)
+    if((contentProfile.people||[]).filter(p=>!p.bot).length>=3&&contentProfile.ordinaryCount>=50){
+      let remaining=lines[at].replace(/^\s*参与者\s*[:：]/,''),humans=new Set(),bots=new Set()
+      for(const [display,people]of [...aliases].sort((a,b)=>b[0].length-a[0].length)){
+        if(!display||!remaining.includes(display))continue
+        if(people.length===1){const person=people[0];(person.bot?bots:humans).add(person.userId)}
+        remaining=remaining.split(display).join(' ')
+      }
+      if(/群成员|大家|众人|多人|全体|其他群友/.test(remaining))issues.push(`「${title}」参与者用了没有具名证据的统称，不能虚构参与人数`)
+      if(!humans.size&&bots.size)issues.push(`「${title}」只有已标记机器人的播报，不能作为热门讨论`)
+      else if(humans.size===1&&!/通知|公告|报名|安排|截止|决定|结果|提醒/.test(title))issues.push(`「${title}」只有一位可核对的真人参与者；讨论充足时不应以单人内容凑热门话题`)
+    }
+  }
+  if(detailPolicy.check&&topicBodies.length){
+    const thin=topicBodies.filter(n=>n<detailPolicy.minBody).length,mean=topicBodies.reduce((a,b)=>a+b,0)/topicBodies.length
+    if(thin>Math.max(1,Math.floor(topicBodies.length/4))||mean<detailPolicy.average)detailIssues.push(`主要话题正文过薄（平均${Math.round(mean)}字，${thin}项不足${detailPolicy.minBody}字）；主要话题约${detailPolicy.target}字，补充有记录支持的具体观点、互相回应和结果，不能靠标题、名单或空话凑长度`)
+  }
   if (contentProfile.forwardCount) {
     let section = null
     for (const block of blocks) {
@@ -66,38 +95,49 @@ export function inspectSummaryQuality(text, { records = [], stats = {}, contentP
       if (!title) continue
       position++
       if (!/猪猪|猪圈|养猪|收集.*猪|猪.*收集/.test(title)) continue
+      issues.push('普通讨论充足且猪猪只是少量例行交互，不应单列猪猪打卡话题；不要用它凑数量')
       const participantLine = lines.findIndex(line => /^\s*参与者\s*[:：]/.test(line))
       const body = participantLine < 0 ? '' : lines.slice(participantLine + 1).join('\n').trim()
       if (position === 1) issues.push(`猪猪例行交互仅 ${contentProfile.pigRoutineCount}/${contentProfile.total} 条且普通讨论充足，不应排在热门话题首位`)
       if ([...body].length > 90) issues.push('少量猪猪打卡作为次要动态时，正文最多90字；把篇幅留给有实际交流的主要讨论')
     }
   }
-  return {ok:issues.length === 0, counts, min, topicPolicy, issues}
+  return {ok:issues.length === 0&&detailIssues.length===0,counts,min,topicPolicy,detailPolicy,topicBodies,fatalIssues:issues,issues:[...issues,...detailIssues]}
 }
 
 export async function generateCheckedSummary({ llm, prompt, messages, records, stats, contentProfile = profileSummaryContent(records), logger, signal }) {
+  async function model(input){
+    try{return await llm.chat(prompt,input,{rejectTruncated:true,signal})}
+    catch(error){
+      signal?.throwIfAborted();if(!isSummaryTransientError(error))throw error
+      logger.warn('总结模型临时故障，未进入发送阶段，短暂等待后额外恢复一次')
+      await pause(700,undefined,{signal});signal?.throwIfAborted()
+      return llm.chat(prompt,input,{rejectTruncated:true,signal})
+    }
+  }
   signal?.throwIfAborted()
-  let reply = await llm.chat(prompt, messages, {rejectTruncated:true, signal})
+  let reply = await model(messages)
   signal?.throwIfAborted()
   reply = limitSummaryReferenceWeight(reply, logger)
   let quality = inspectSummaryQuality(reply, {records, stats, contentProfile})
   logger.info(`总结正文校验：${reply.length} 字，话题 ${quality.counts.topics} 项 / 群友称号 ${quality.counts.members} 项 / 群圣经 ${quality.counts.quotes} 项`)
   if (!quality.ok) {
     logger.warn(`总结正文不完整，自动修正一次：${quality.issues.join('；')}`)
-    reply = await llm.chat(prompt, [
+    reply = await model([
       ...messages,
       {role:'assistant',content:reply},
-      {role:'user',content:`上面的报告没有满足格式要求：${quality.issues.join('；')}。请基于前面同一份真实聊天记录完整重写报告，不能只补一段。保留三个小节的标题，${contentProfile.forwardOnly ? '没有有效群内交流，热门话题和群圣经不列条目，说明暂无足够依据。' : `话题写 ${quality.min.topics}～${quality.topicPolicy.max} 项，优先${quality.topicPolicy.target}项；有效普通文字样本为${quality.topicPolicy.meaningful}条。群圣经写 ${quality.min.quotes}～5 项。`}群友称号写 ${quality.min.members}～5 项。每个条目及不同小节之间空一行，条目内部正常换行。覆盖不同日期及不同讨论，也检查重要信息、通知、决定与安排，不要把其他话题并入一个大话题；两个活跃时段不等于两个话题。先重新检索整个窗口的独立事件与不同问题，再按重要性选题；高消息量时五项不是上限，也不能为了达到数量拆碎同一事件。转发记录不单独成题，最多用60字且不超过话题正文20%补充本群真实交流，内层人物和原话不得混入本群统计、参与者与群圣经。只写记录确实支持的内容，不能为了凑数编造话题或原话，也不能用少量例行打卡凑主要话题；如果证据不足，请如实说明。`},
-    ], {rejectTruncated:true, signal})
+      {role:'user',content:`上面的报告没有满足格式要求：${quality.issues.join('；')}。请基于前面同一份真实聊天记录完整重写报告，不能只补一段。保留三个小节的标题，${contentProfile.forwardOnly ? '没有有效群内交流，热门话题和群圣经不列条目，说明暂无足够依据。' : `话题写 ${Number.isFinite(quality.topicPolicy.max)?`${quality.min.topics}～${quality.topicPolicy.max} 项`:`至少${quality.min.topics}项，不设固定条数上限`}，优先${quality.topicPolicy.target}项；有效普通文字样本为${quality.topicPolicy.meaningful}条。群圣经写 ${quality.min.quotes}～5 项。`}群友称号写 ${quality.min.members}～5 项。每个条目及不同小节之间空一行，条目内部正常换行。覆盖不同日期及不同讨论，也检查重要信息、通知、决定与安排，不要把其他话题并入一个大话题；两个活跃时段不等于两个话题。先重新检索整个窗口的独立事件与不同问题，再按重要性选题；高消息量时五项不是上限，也不能为了达到数量拆碎同一事件。转发记录不单独成题，最多用60字且不超过话题正文20%补充本群真实交流，内层人物和原话不得混入本群统计、参与者与群圣经。只写记录确实支持的内容，不能为了凑数编造话题或原话，也不能用少量例行打卡凑主要话题；如果证据不足，请如实说明。`},
+    ])
     signal?.throwIfAborted()
     reply = limitSummaryReferenceWeight(reply, logger)
     quality = inspectSummaryQuality(reply, {records, stats, contentProfile})
     logger.info(`总结修正校验：${reply.length} 字，话题 ${quality.counts.topics} 项 / 群友称号 ${quality.counts.members} 项 / 群圣经 ${quality.counts.quotes} 项`)
-    if (!quality.ok) {
+    if (!quality.ok&&quality.fatalIssues.length) {
       const error = new Error(`总结修正后仍不完整：${quality.issues.join('；')}`)
       error.code = 'REPORT_INCOMPLETE'
       throw error
     }
+    if(!quality.ok)logger.warn(`总结篇幅建议未完全达到；已修正一次，以真实信息为先，不再强行凑字：${quality.issues.join('；')}`)
   }
   return reply
 }

@@ -96,6 +96,14 @@ try {
     },async sendGroup(g,text){notices.push(text)}}})
     await broken.runSummary(102);assert.equal(models,0);assert.equal(calls,6);assert.equal(notices.length,1);assert.match(notices[0],/历史读取接口出现异常/)
   })
+  await test('历史临时超时在准备阶段恢复当前页，不影响完整性和发送去重',async()=>{
+    let calls=0
+    const summary=createDailySummary({config,logger,llm:null,onebot:{selfId:'999',async getGroupMsgHistory(){
+      calls++;if(calls===1)throw Object.assign(Error('OneBot API timeout'),{code:'ETIMEDOUT'})
+      return {messages:[packet(1,start-10),packet(2,start+20)]}
+    }}})
+    const preview=await summary.previewStats(104);assert.equal(preview.complete,true);assert.equal(calls,5)
+  })
   console.log(`${passed} cases passed`)
 } finally {
   mock.timers.reset()

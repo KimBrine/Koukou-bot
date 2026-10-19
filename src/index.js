@@ -161,8 +161,8 @@ const summaryLLM = new DeepSeekClient({
   baseUrl: useQwenForSummary ? config.dashscopeBaseUrl : llm.baseUrl,
   model: config.summaryModel || llm.model,
   temperature: 1.0,
-  maxTokens: config.summaryMaxTokens,
-  timeoutMs: Math.max(config.timeoutMs, 180000),
+  maxTokens: config.summaryUnrestricted ? undefined : config.summaryMaxTokens,
+  timeoutMs: config.summaryUnrestricted ? 0 : Math.max(config.timeoutMs, 180000),
   maxRetries: config.maxRetries,
   maxConcurrency: config.summaryConcurrency,
   logger,
@@ -186,8 +186,8 @@ const summaryVisionLLM = createGroundedVisionClient(createSummaryVisionClient({ 
 // 共享型号与设置，但不共享并发队列；记忆整理不能占住定时群总结的等待位置。
 const memoryLLM = new DeepSeekClient({
   apiKey: summaryLLM.apiKey, baseUrl: summaryLLM.baseUrl, model: summaryLLM.model,
-  temperature: summaryLLM.temperature, maxTokens: summaryLLM.maxTokens,
-  timeoutMs: summaryLLM.timeoutMs, maxRetries: summaryLLM.maxRetries, maxConcurrency: 1,
+  temperature: summaryLLM.temperature, maxTokens: config.summaryMaxTokens,
+  timeoutMs: Math.max(config.timeoutMs,180000), maxRetries: summaryLLM.maxRetries, maxConcurrency: 1,
   enableThinking: summaryLLM.enableThinking, logger, label: '长期记忆模型',
 })
 const longMemory = createLongMemory({
@@ -389,7 +389,7 @@ logger.info(targetWatch.enabled
   : '盯人回复未启用（TARGET_WATCH_ENABLED=0）')
 logger.info(`反检测/拟人化：装饰符号保留 ${Math.round(config.emojiKeepRate * 100)}%｜打字延迟 ${config.humanDelayMinMs}-${config.humanDelayMaxMs}ms｜每会话每小时：主动/盯人 ≤${config.rateLimitPerHour} 条、被@或私聊 ≤${config.rateLimitAtPerHour} 条、间隔 ≥${Math.round(config.rateLimitMinGapMs / 1000)}s（不够时最多等 ${Math.round((config.rateLimitWaitMaxMs ?? 8000) / 1000)}s，不丢消息）｜${config.quietHours ? `安静时段 ${config.quietHours}（${config.quietHoursBlockAll ? '彻底静音：连被@和私聊都不回' : '只挡主动搭话，被@仍回'}）` : '安静时段未启用'}`)
 logger.info(`群聊报告：${config.summarySendMode === 'forward' ? '合并转发成「聊天记录」卡片（失败自动退回逐条）' : '按空行逐条发送'}｜卡片最多 ${config.summaryMaxBlocks} 条｜统计数字由代码精确计算`)
-logger.info(`总结调度：最多 ${config.summaryConcurrency} 群并行准备｜单群准备时限 ${config.summaryTaskTimeoutMinutes} 分钟｜报告发送串行，群间至少间隔 5 秒`)
+logger.info(`总结调度：最多 ${config.summaryConcurrency} 群并行准备｜${config.summaryUnrestricted?'宽裕模式：不设本地输入取样、输出token及准备超时上限':`单群准备时限 ${config.summaryTaskTimeoutMinutes} 分钟`}｜报告发送串行，群间至少间隔 5 秒`)
 logger.info(`总结转发资料：先筛选群内关联再展开嵌套记录，仅作低权重参考｜读图 ${summaryVisionLLM ? `${summaryVisionLLM.model}（通义千问）` : '未启用，缺少 DashScope Key'}｜每份最多 ${config.summaryReferenceMaxImages} 张参考图片`)
 logger.info(config.replyLengthMatch
   ? `回复长度自适应：跟着对方长度走｜最多 ${config.replyMaxLines} 行、单行 ≤${config.replyLineMaxChars} 字｜行间补句间隔 ${config.lineGapMinMs}-${config.lineGapMaxMs}ms｜多行时逐行分条发送`

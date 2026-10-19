@@ -292,7 +292,7 @@ export class OneBotClient extends EventEmitter {
     }
     const echo = String(++this.echoSeq)
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const timer = timeoutMs===0?null:setTimeout(() => {
         this.pending.delete(echo)
         reject(new Error(`OneBot API 超时：${action}`))
       }, timeoutMs)

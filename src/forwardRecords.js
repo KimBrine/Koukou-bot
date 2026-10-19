@@ -37,7 +37,7 @@ function nodeTime(value) {
  */
 export async function expandForwardRecords({
   message, onebot, logger, maxDepth = 6, maxNodes = 80, maxChars = 16000,
-  maxImages = 8, maxCards = 12, timeoutMs = 8000, requestTimeoutMs = 4000, signal,
+  maxImages = 8, maxCards = 12, timeoutMs = 8000, requestTimeoutMs = 4000, signal, unrestrictedWait=false,
 } = {}) {
   const roots = forwardSegments(message)
   const result = { text: '', images: [], found: roots.length > 0, truncated: false, failed: false, nodes: 0, cards: 0, issues: [] }
@@ -49,7 +49,7 @@ export async function expandForwardRecords({
   maxCards = integer(maxCards, 12, 1, 50)
   timeoutMs = integer(timeoutMs, 8000, 1, 30000)
   requestTimeoutMs = integer(requestTimeoutMs, 4000, 1, 15000)
-  const deadline = Date.now() + timeoutMs
+  const deadline = unrestrictedWait?Infinity:Date.now() + timeoutMs
   const seenIds = new Set()
   const pathObjects = new Set()
   const imageKeys = new Set()
@@ -101,14 +101,14 @@ export async function expandForwardRecords({
 
   async function fetchCard(id) {
     const remaining = Math.max(1, deadline - Date.now())
-    const waitMs = Math.min(requestTimeoutMs, remaining)
+    const waitMs = unrestrictedWait?0:Math.min(requestTimeoutMs, remaining)
     let timer
     let onAbort
     try {
       return await Promise.race([
         Promise.resolve().then(() => onebot.getForwardMsg(id, waitMs)),
         new Promise((_, reject) => {
-          timer = setTimeout(() => {
+          timer = unrestrictedWait?null:setTimeout(() => {
             // 定时器可能比墙钟截止时刻提前不足一毫秒触发；总预算用尽后不能再请求下一张。
             if (remaining <= requestTimeoutMs) { issue('TIME_LIMIT', '', { truncated: true }); stopped = true }
             reject(new Error('合并聊天记录读取超时'))

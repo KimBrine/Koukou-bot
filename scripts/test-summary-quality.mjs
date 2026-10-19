@@ -6,8 +6,8 @@ import { profileSummaryContent, summaryTopicPolicy, formatSummaryContentGuide, s
 const logger = {info(){},warn(){}}
 const records = Array.from({length:100},(_,i)=>({text:`真实测试消息${i}`}))
 const stats = {people:9}
-const report = ({topics=3,heading=true,members=5,quotes=3}={}) => [
-  '💬 热门话题\n' + Array.from({length:topics},(_,i)=>`${i+1}. 测试话题${i+1}\n   参与者: 群友\n   同一话题里的描述\n   第二行不会拆开。`).join('\n\n'),
+const report = ({topics=3,heading=true,members=5,quotes=3,body=null}={}) => [
+  '💬 热门话题\n' + Array.from({length:topics},(_,i)=>`${i+1}. 测试话题${i+1}\n   参与者: 群友\n   同一话题里的描述\n   ${body??("群友围绕当前问题提出各自的考虑，补充背景与具体限制，再逐项比较建议对实际安排的影响。讨论中保留了不同的意见，也明确了哪些条件仍有待确认，没有把尚未达成的意见写成结论。".repeat(5))}\n   第二行不会拆开。`).join('\n\n'),
   (heading?'🏆 群友称号\n':'') + Array.from({length:members},(_,i)=>`• 群友${i+1} - 测试称号\n  按真实数据说明。`).join('\n\n'),
   '💬 群圣经\n' + Array.from({length:quotes},(_,i)=>`${i+1}. "真实测试消息${i}" —— 群友\n   点评。`).join('\n\n'),
 ].join('\n\n')

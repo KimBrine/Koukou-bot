@@ -21,15 +21,21 @@ const stamp = sec => {
 }
 
 /** 用完整窗口统计选题依据；这些计数不会改动报告原始消息总数。 */
-export function profileSummaryContent(records = []) {
+export function profileSummaryContent(records = [], {botUsers=[]} = {}) {
+  const bots=new Set([...botUsers].map(String)),people=new Map(),unique=new Set()
+  let botCount=0,evidenceChars=0
   const counts = { 'pig-command': 0, 'pig-result': 0, 'routine-command': 0 }
   const ordinary = [], pigDiscussion = []
   for (const record of records) {
+    const id=String(record.userId??''),display=String(record.name??'').trim()
+    if(id&&display){const person=people.get(id)||{userId:id,names:[],bot:bots.has(id)};if(!person.names.includes(display))person.names.push(display);people.set(id,person)}
     const kind = summaryRoutineKind(record)
     if (kind) { counts[kind]++; continue }
+    if(bots.has(id)){botCount++;continue}
     const text = summaryMeaningfulText(record)
     if ([...text].length < 2) continue
     ordinary.push(record)
+    if(!unique.has(text)){unique.add(text);evidenceChars+=Math.min(120,[...text].length)}
     if (/猪/.test(text)) pigDiscussion.push(text)
   }
   const windows = []
@@ -47,6 +53,7 @@ export function profileSummaryContent(records = []) {
   const pigRoutineCount = counts['pig-command'] + counts['pig-result']
   const pigDiscussionChars = pigDiscussion.reduce((sum, text) => sum + [...text].length, 0)
   return { total: records.length, counts, routineCount, pigRoutineCount, ordinaryCount: ordinary.length,
+    botCount,evidenceChars,people:[...people.values()],
     forwardCount, forwardOnly: forwardCount > 0 && ordinary.every(r => r.forwards?.length || String(r.text ?? '').includes('[合并聊天记录]')),
     pigDiscussionCount: pigDiscussion.length, pigDiscussionChars,
     minorPigRoutine: ordinary.length >= 50 && pigRoutineCount > 0 && pigRoutineCount / records.length < 0.2 && pigDiscussion.length < 8 && pigDiscussionChars < 500,
@@ -54,49 +61,62 @@ export function profileSummaryContent(records = []) {
   }
 }
 
+/** 正文详细程度与选题数量分开：话题增多不能反过来挤压每项细节。 */
+export function summaryDetailPolicy(profile){
+  const n=Number(profile.ordinaryCount)||0,topics=summaryTopicPolicy(profile)
+  return {target:n>=2000?'300～500':n>=800?'260～450':'220～400',
+    minBody:n>=2000?180:n>=800?150:110,average:n>=2000?240:n>=800?210:170,
+    check:!topics.sparse&&!profile.forwardOnly&&Number(profile.evidenceChars)>=topics.target*300}
+}
+
 /** 按完整窗口的有效文字样本选数量，图片占位与固定模板不放大选题预算。 */
 export function summaryTopicPolicy(profile) {
   const meaningful = Math.max(0, Number(profile.ordinaryCount) || 0)
   const sparse = meaningful <= 40
+  const policy=value=>({...value,...(profile.unrestricted?{max:Infinity}:{})})
   if (profile.forwardOnly) return { meaningful, sparse: true, min: 0, target: 0, max: 0 }
   // 数量与完整窗口的有效文字挂钩；高消息量不能继续用统一的“三项及格、五项封顶”。
-  if (meaningful >= 2000) return { meaningful, sparse, min: 6, target: 8, max: 10 }
-  if (meaningful >= 800) return { meaningful, sparse, min: 4, target: 6, max: 8 }
-  if (meaningful >= 200) return { meaningful, sparse, min: 3, target: 4, max: 6 }
-  return {
+  if (meaningful >= 2000) return policy({ meaningful, sparse, min: 6, target: 8, max: 10 })
+  if (meaningful >= 800) return policy({ meaningful, sparse, min: 4, target: 6, max: 8 })
+  if (meaningful >= 200) return policy({ meaningful, sparse, min: 3, target: 4, max: 6 })
+  return policy({
     meaningful, sparse,
     min: sparse ? 1 : 3,
     target: meaningful <= 10 ? 1 : sparse ? 2 : 3,
     max: 5,
-  }
+  })
 }
 
 export function formatSummaryContentGuide(profile) {
   const { total, counts, routineCount, ordinaryCount, pigDiscussionCount } = profile
   const peakWindows = [...profile.windows].sort((a, b) => b.messages - a.messages).slice(0, 6)
   const topicPolicy = summaryTopicPolicy(profile)
+  const detail=summaryDetailPolicy(profile)
   return [
     `完整窗口 ${total} 条；可识别的例行交互 ${routineCount} 条；有实际文字内容的普通聊天 ${ordinaryCount} 条（均按消息计数，普通聊天剔除了纯图片/表情和上述例行交互）。`,
+    `正文详细程度：主要话题约${detail.target}字，信息丰富可继续展开，这不是上限。消息越多应保留更多起因、具体分歧、互相回应和实际结果，不能只增加条目却把每项压成几句话。材料不足时据实简写，不凑字、不虚构结论。`,
+    `已标记机器人的非例行发言 ${profile.botCount||0} 条，不计为真人来回讨论。机器人名片：${(profile.people||[]).filter(p=>p.bot).flatMap(p=>p.names).join('、')||'未配置'}。不能将单个账号的播报算成多人参与；参与者栏不能写“群成员、大家”等统称来充数。`,
     `猪猪例行交互 ${profile.pigRoutineCount} 条（指令 ${counts['pig-command']}、固定回复 ${counts['pig-result']}），占原始消息 ${total ? (100 * profile.pigRoutineCount / total).toFixed(1) : '0.0'}%；此外普通聊天中直接提到「猪」的 ${pigDiscussionCount} 条。这个词命中数不等于完整话题规模。`,
     ...peakWindows.map(w => `- ${stamp(w.start)}～${stamp(w.end)}：普通文字聊天 ${w.messages} 条、${w.people} 人；这是时间段统计，不是程序认定的单一话题。`),
     profile.forwardOnly
       ? '本期只有转发参考资料或非文本内容，没有有效群内交流；热门话题不凑数，保留标题并说明暂无足够依据。内层原话不能做本群群圣经。'
       : topicPolicy.sparse
       ? `本期有效普通文字样本只有 ${ordinaryCount} 条（不超过40条），允许按证据写1～2项话题，优先${topicPolicy.target}项；原始图片和固定模板条数不代表可总结的讨论量。`
-      : `话题数量要求：完整窗口有效普通文字 ${ordinaryCount} 条，热门话题至少${topicPolicy.min}项，优先${topicPolicy.target}项，最多${topicPolicy.max}项；不能只写两项就结束。${topicPolicy.target > 5 ? '本期讨论量较大，五项不是上限；不能把不相关的讨论合并为少数宽泛的大标题。' : ''}先通读整个窗口，在心里列出有证据的独立讨论、重要信息、通知、决定与安排，再归并同一事件并按重要性选取。不同问题有各自的交流、结论或后续时分别成题；同一件事跨时段出现则合并。不能为了数量编造或把同一件事机械拆分。`,
+      : `话题数量要求：完整窗口有效普通文字 ${ordinaryCount} 条，热门话题至少${topicPolicy.min}项，优先${topicPolicy.target}项，${Number.isFinite(topicPolicy.max)?`最多${topicPolicy.max}项`:'不设固定条数上限'}；不能只写两项就结束。${topicPolicy.target > 5 ? '本期讨论量较大，五项不是上限；不能把不相关的讨论合并为少数宽泛的大标题。' : ''}先通读整个窗口，在心里列出有证据的独立讨论、重要信息、通知、决定与安排，再归并同一事件并按重要性选取。不同问题有各自的交流、结论或后续时分别成题；同一件事跨时段出现则合并。不能为了数量编造或把同一件事机械拆分。`,
     '时间分布用于帮助通读上下文，不规定话题个数；同一时段可以有多个独立主题，同一主题也可能跨越多个时段，不能将两个活跃时段等同于两个话题。',
     profile.forwardCount ? `合并记录外层 ${profile.forwardCount} 条；只按外层消息计数。内层内容只作低权重参考，不能单列转发热门话题，也不能扩大有效文字样本或参与人数。` : '',
-    profile.minorPigRoutine ? '本期猪猪主要是少量例行交互：不要排在热门话题首位；若保留独立条目，放在主要讨论之后，用一两句简述（正文最多90字），不要与主要讨论占用同样篇幅。' : '',
+    profile.minorPigRoutine ? '本期普通讨论充足，猪猪只是少量例行交互：不单列热门话题，不用打卡、查库存或机器人模板凑数量；必要时在真正引发交流的相关主话题里用一句话提及。不能编造围观、热潮或后续交流。' : '',
   ].filter(Boolean).join('\n')
 }
 
 /** 模型预算不足时优先普通文字，并覆盖窗口首尾与中间；不会只保留最早和最近消息。 */
-export function selectSummaryRecords(records, budget) {
+export function selectSummaryRecords(records, budget, {botUsers=[]} = {}) {
   const cap = Math.max(1, Math.floor(Number(budget) || records.length))
   if (records.length <= cap) return records
   const ordinary = [], other = []
+  const bots=new Set([...botUsers].map(String))
   records.forEach((record, i) => {
-    const target = !summaryRoutineKind(record) && [...summaryMeaningfulText(record)].length >= 2 ? ordinary : other
+    const target = !bots.has(String(record.userId))&&!summaryRoutineKind(record) && [...summaryMeaningfulText(record)].length >= 2 ? ordinary : other
     target.push(i)
   })
   const sample = (indices, count) => count >= indices.length ? indices : count === 1 ? [indices.at(-1)] :
@@ -105,12 +125,23 @@ export function selectSummaryRecords(records, budget) {
   const ordinaryBudget = Math.min(ordinary.length, other.length ? Math.ceil(cap * 0.9) : cap)
   const otherBudget = Math.min(other.length, cap - ordinaryBudget)
   const regularBudget = Math.min(ordinary.length, cap - otherBudget)
-  return [...sample(ordinary, regularBudget), ...sample(other, otherBudget)].sort((a, b) => a - b).map(i => records[i])
+  // 普通文字按连续小段覆盖整个窗口，保留来回交流，避免每隔数条只抽一句而丢掉主线。
+  const neighborhoods=(indices,count)=>{
+    if(indices.length<=count||count<10)return sample(indices,count)
+    const selected=new Set(),chunks=Math.ceil(count/5)
+    for(let i=0;i<chunks;i++){
+      const width=Math.floor(count/chunks)+(i<count%chunks?1:0),start=Math.floor(i*(indices.length-width)/(chunks-1))
+      for(let j=0;j<width;j++)selected.add(indices[start+j])
+    }
+    for(const index of sample(indices.filter(x=>!selected.has(x)),count-selected.size))selected.add(index)
+    return [...selected]
+  }
+  return [...neighborhoods(ordinary, regularBudget), ...sample(other, otherBudget)].sort((a, b) => a - b).map(i => records[i])
 }
 
 /** 固定结果只给模型看简述，避免长模板的字数放大热度；原始记录仍用于精确统计。 */
-export function renderSummaryRecordText(record) {
-  if (summaryRoutineKind(record) !== 'pig-result') return String(record.text ?? '').slice(0, 120) || '（非文本消息）'
+export function renderSummaryRecordText(record,{unrestricted=false}={}) {
+  if (summaryRoutineKind(record) !== 'pig-result') return (unrestricted?String(record.text??''):String(record.text ?? '').slice(0, 120)) || '（非文本消息）'
   const text = String(record.text ?? '')
   const collection = /已收集\s*[:：]\s*(\d+\s*\/\s*\d+)/.exec(text)?.[1]
   if (collection) return `[例行猪圈查询结果：已收集 ${collection}；模板已压缩，非原话]`

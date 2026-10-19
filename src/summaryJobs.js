@@ -7,8 +7,8 @@ export function createSummaryDeadline(config) {
   const error = new Error(`群总结准备超过 ${minutes} 分钟，已取消本群任务`)
   error.name = 'TimeoutError'
   error.code = 'SUMMARY_DEADLINE'
-  const timer = setTimeout(() => controller.abort(error), minutes * 60000)
-  timer.unref?.()
+  const timer = config.summaryUnrestricted?null:setTimeout(() => controller.abort(error), minutes * 60000)
+  timer?.unref?.()
   const signal = controller.signal
   return {
     signal,

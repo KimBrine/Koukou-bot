@@ -1,6 +1,14 @@
 export const isSummaryContentRefusal = error => /DataInspectionFailed|data_inspection_failed|content_filter|content_policy_violation/i
   .test(`${error?.code || ''} ${error?.message || ''}`)
 
+/** 仅准备阶段的临时故障可有限恢复；拒绝、鉴权、额度、输入输出上限不能盲重试。 */
+export function isSummaryTransientError(error){
+  if(isSummaryContentRefusal(error)||['SUMMARY_DEADLINE','OUTPUT_LIMIT','REPORT_INCOMPLETE'].includes(error?.code))return false
+  const status=Number(error?.status)
+  if(status)return status===429||status>=500
+  return ['AbortError','TimeoutError'].includes(error?.name)||/ETIMEDOUT|ECONNRESET|EAI_AGAIN|UND_ERR_|fetch failed|暂时|temporary|超时|timeout/i.test(`${error?.code||''} ${error?.message||''}`)
+}
+
 /** 仅使用代码统计，不重发被拒绝的输入，也不拼接原话或虚构话题。 */
 export function statisticsOnlySummaryBody({ contentRefused = false } = {}) {
   return `ℹ️ 统计版说明\n${contentRefused ? '总结模型的内容检查未通过，本次无法生成正文。' : '本次补发统计版，未调用模型生成正文。'}\n本报告仅包含程序核验的消息统计，未生成热门话题、群友称号或原话点评；不代表今天没有讨论。`

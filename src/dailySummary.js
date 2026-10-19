@@ -3,7 +3,7 @@ import path from 'node:path'
 import { parseMessage } from './cq.js'
 import { splitLongMessage } from './bot.js'
 import { computeSummaryStats, formatUserTable, formatStatsBlock, formatReportDate } from './summaryStats.js'
-import { summaryFailureMessage, isSummaryContentRefusal, statisticsOnlySummaryBody } from './summaryFailure.js'
+import { summaryFailureMessage, isSummaryContentRefusal, statisticsOnlySummaryBody, isSummaryTransientError } from './summaryFailure.js'
 import { generateCheckedSummary } from './summaryQuality.js'
 import { parseSummaryFormat } from './summaryFormat.js'
 import { buildSummaryNameIndex, replaceTopicQqReferences, resolveSummaryNames } from './summaryNames.js'
@@ -73,9 +73,9 @@ export function buildSummaryPrompt({ botName, dateLabel, days = 1, stats = null,
 💬 热门话题
 1. 话题标题（10 字以内）
    参与者: 昵称A、昵称B、昵称C
-   用 100~200 字连贯归纳讨论内容、重要观点、互动和结果，讲清事情的主线；不要写成逐条发言流水账。叙述里提到群友时使用群昵称，与本条「参与者」栏的昵称完全一致，保留昵称中的括号和表情；不要用 QQ 号、[QQ号] 或 [@QQ号] 指代群友。
+   按下方正文详细程度要求连贯归纳讨论，主要话题通常约220～400字，大样本的重要讨论可写300～500字或更多；不再以200字封顶。写清起因、具体观点和分歧、谁回应了谁、进展与结果，保留能帮助读者理解的细节，不写逐条发言流水账，也不为了凑字编造。叙述里提到群友时使用群昵称，与本条「参与者」栏的昵称完全一致，保留昵称中的括号和表情；不要用 QQ 号、[QQ号] 或 [@QQ号] 指代群友。
 
-（下一个话题之前空一行，格式同上。具体数量范围和优先数量见下方选题依据，不能把5个误当成统一上限；小样本可写1~2个。按实际讨论的重要性排序。少量例行活动如需保留，放在最后，用一两句简述，不必写满 100~200 字。）
+（下一个话题之前空一行，格式同上。数量与详细程度分别保证，不能把更多条目挤进固定总篇幅。普通讨论充足时不单列例行打卡、库存播报、单个机器人的通知或缺少回应的单人碎片；真正重要的单条通知可以简写，但不能虚构围观和多人参与。实际证据不足时允许据实简写。）
 
 🏆 群友称号
 • 昵称 - 称号 (MBTI)
@@ -253,8 +253,8 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
     //    翻页循环一断就又变成"只有部分数据"。小页多翻几页更稳。
     const pageSize = Math.min(500, Math.max(200, count))
     // 超时给到 60 秒（默认 20 秒对历史接口太紧）
-    const pageTimeoutMs = 60000
-    const maxPages = 60
+    const pageTimeoutMs = config.summaryUnrestricted ? 0 : 60000
+    const maxPages = config.summaryUnrestricted ? Infinity : 60
     const maxRounds = 5
     let pages = 0
     let complete = false
@@ -264,12 +264,24 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
     let rounds = 0
     let cursorRecoveries = 0
     let cursorRestarts = 0
+    let transientRetries=0
+    async function historyRead(seq,reverse){
+      try{return await onebot.getGroupMsgHistory(groupId,seq,pageTimeoutMs,pageSize,reverse)}
+      catch(error){
+        signal?.throwIfAborted()
+        if(!isSummaryTransientError(error)||transientRetries>=3)throw error
+        transientRetries++
+        logger.warn(`群 ${groupId} 历史读取临时故障，当前页额外恢复一次（全程${transientRetries}/3）`)
+        await sleep(700);signal?.throwIfAborted()
+        return onebot.getGroupMsgHistory(groupId,seq,pageTimeoutMs,pageSize,reverse)
+      }
+    }
     const missingCursor = err => /消息.*不存在|message.*(?:not found|does not exist)/i.test(String(err?.message || ''))
     const order = msg => Number(msg.real_seq ?? msg.message_seq)
     const compare = (a,b) => Number(a.time)-Number(b.time) || order(a)-order(b)
     // 失效游标只改用刚读取同页内更晚的真实消息，重叠回溯，不猜测随机短ID。
     async function readPage(seq, anchorPage) {
-      try { return await onebot.getGroupMsgHistory(groupId, seq, pageTimeoutMs, pageSize, true) }
+      try { return await historyRead(seq,true) }
       catch (err) {
         signal?.throwIfAborted()
         if (!missingCursor(err)) throw err
@@ -283,7 +295,7 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
           used.add(next);cursorRecoveries++
           signal?.throwIfAborted()
           logger.warn(`群 ${groupId} 历史游标失效，使用同页相邻消息重叠回溯（恢复 ${cursorRecoveries}/6）`)
-          try { return await onebot.getGroupMsgHistory(groupId,candidate.message_seq,pageTimeoutMs,pageSize,true) }
+          try { return await historyRead(candidate.message_seq,true) }
           catch (retryError) {signal?.throwIfAborted();if(!missingCursor(retryError))throw retryError;failure=retryError}
         }
         throw failure
@@ -304,7 +316,7 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
       signal?.throwIfAborted()
       let first
       try {
-        first = (await onebot.getGroupMsgHistory(groupId, null, pageTimeoutMs, pageSize, false))?.messages || []
+        first = (await historyRead(null,false))?.messages || []
       } catch (err) {
         signal?.throwIfAborted()
         logger.warn(`群 ${groupId} 历史首屏拉取失败（第 ${round} 轮）：${err.message}`)
@@ -418,7 +430,7 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
     return records
       .map((r) => {
         const t = days > 1 ? `${fmtDate(r.time)} ${fmtTime(r.time)}` : fmtTime(r.time)
-        return `[${t}] ${r.name}：${renderSummaryRecordText(r)}`
+        return `[${t}] ${r.name}：${renderSummaryRecordText(r,{unrestricted:config.summaryUnrestricted})}`
       })
       .join('\n')
   }
@@ -544,12 +556,13 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
       // 统计必须覆盖**全天所有消息**（在截断之前算），否则"消息总数"只是喂给模型的那一部分
       const stats = computeSummaryStats(records)
       const nameIndex = buildSummaryNameIndex({ users: stats.users, records })
-      const contentProfile = profileSummaryContent(records)
+      const contentProfile = profileSummaryContent(records,{botUsers:config.summaryBotUsers||[]})
+      contentProfile.unrestricted=Boolean(config.summaryUnrestricted)
       const topicPolicy = summaryTopicPolicy(contentProfile)
       const referenceRecords = records
-      const cap = Math.min(1500, config.summaryMaxMessages * dayCount)
+      const cap = config.summaryUnrestricted ? Infinity : Math.min(1500, config.summaryMaxMessages * dayCount)
       if (total > cap) {
-        records = selectSummaryRecords(records, cap)
+        records = selectSummaryRecords(records, cap,{botUsers:config.summaryBotUsers||[]})
         logger.info(`群 ${groupId} ${scopeText}消息 ${total} 条，超出预算，截取 ${records.length} 条参与总结`)
       }
       const startKey = dateKey(new Date(startSec * 1000))
@@ -564,11 +577,11 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
         dateLabel: label,
         days: dayCount,
         stats,
-        userTable: formatUserTable(stats, { limit: config.summaryUserRows }),
+        userTable: formatUserTable(stats, { limit: config.summaryUnrestricted?stats.users.length:config.summaryUserRows }),
         contentGuide: formatSummaryContentGuide(contentProfile),
       })
       logger.info(`群 ${groupId} 总结选题依据：普通文字 ${contentProfile.ordinaryCount} 条；猪猪例行指令 ${contentProfile.counts['pig-command']} 条 / 固定回复 ${contentProfile.counts['pig-result']} 条；${contentProfile.minorPigRoutine ? '仅作次要动态' : '按实际讨论选题'}`)
-      logger.info(`群 ${groupId} 话题数量策略：完整窗口 ${total} 条 / 有效普通文字 ${topicPolicy.meaningful} 条；至少 ${topicPolicy.min} 项 / 优先 ${topicPolicy.target} 项 / 最多 ${topicPolicy.max} 项${contentProfile.forwardOnly ? '（只有参考资料，不凑话题）' : topicPolicy.sparse ? '（有效样本不足，允许1～2项）' : ''}`)
+      logger.info(`群 ${groupId} 话题数量策略：完整窗口 ${total} 条 / 有效普通文字 ${topicPolicy.meaningful} 条；至少 ${topicPolicy.min} 项 / 优先 ${topicPolicy.target} 项 / ${Number.isFinite(topicPolicy.max)?`最多 ${topicPolicy.max} 项`:'不设固定条数上限'}${contentProfile.forwardOnly ? '（只有参考资料，不凑话题）' : topicPolicy.sparse ? '（有效样本不足，允许1～2项）' : ''}`)
       logger.info(`开始${statsOnly ? '准备统计版' : '生成'}群 ${groupId} ${scopeText}报告（参与消息 ${records.length}/${total} 条）…`)
       const startedAt = Date.now()
       // 长报告要跑好几分钟，期间群里一点动静都没有会让人以为"指令没生效"。
@@ -587,7 +600,7 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
         else {
           const mainText = renderLines(records, dayCount)
           const references = await deadline.wait(prepareSummaryReferences({ records: referenceRecords, onebot, visionLLM, imageCache, loadImage,
-            logger, signal: deadline.signal, mainChars: mainText.length, maxImages: config.summaryReferenceMaxImages ?? 6 }))
+            logger, signal: deadline.signal, mainChars: mainText.length, maxImages: config.summaryReferenceMaxImages ?? 6,unrestricted:config.summaryUnrestricted }))
           const input = mainText + (references.text ? `\n\n${references.text}` : '')
           reply = await deadline.wait(generateCheckedSummary({llm, prompt, messages:[{ role: 'user', content: input }], records, stats, contentProfile, logger, signal: deadline.signal}))
         }

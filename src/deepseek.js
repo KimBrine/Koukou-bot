@@ -59,7 +59,9 @@ export class DeepSeekClient {
 
   /** 纯文本对话：messages 为 [{role, content}] 历史（不含 system） */
   async chat(systemPrompt, messages, { rejectTruncated = false, signal, maxTokens = this.maxTokens, temperature = this.temperature } = {}) {
-    const outputBudget=Number.isFinite(maxTokens)&&maxTokens>0?Math.min(this.maxTokens,Math.max(1,Math.floor(maxTokens))):this.maxTokens
+    const configured=Number.isFinite(this.maxTokens)&&this.maxTokens>0?Math.floor(this.maxTokens):undefined
+    const requested=Number.isFinite(maxTokens)&&maxTokens>0?Math.max(1,Math.floor(maxTokens)):undefined
+    const outputBudget=configured===undefined?requested:requested===undefined?configured:Math.min(configured,requested)
     await this.#acquire(signal)
     try {
       let lastErr = null
@@ -80,7 +82,7 @@ export class DeepSeekClient {
           throw err
         }
         if (rejectTruncated && finishReason === 'length') {
-          const err = new Error(`${this.label} 达到输出 token 上限（max_tokens=${outputBudget}，completion_tokens=${data?.usage?.completion_tokens ?? '未知'}）`)
+          const err = new Error(`${this.label} 达到输出 token 上限（max_tokens=${outputBudget??'服务商自身上限'}，completion_tokens=${data?.usage?.completion_tokens ?? '未知'}）`)
           err.code = 'OUTPUT_LIMIT'
           throw err
         }
@@ -134,7 +136,7 @@ export class DeepSeekClient {
           { role: 'user', content },
         ],
         temperature,
-        max_tokens: maxTokens,
+        max_tokens: maxTokens===0?undefined:maxTokens,
         stream: false,
       }, signal)
       const out = data?.choices?.[0]?.message?.content
@@ -189,7 +191,7 @@ export class DeepSeekClient {
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       signal?.throwIfAborted()
       const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), this.timeoutMs)
+      const timer = this.timeoutMs===0?null:setTimeout(() => controller.abort(), this.timeoutMs)
       try {
         const res = await fetch(`${this.baseUrl}/chat/completions`, {
           method: 'POST',
