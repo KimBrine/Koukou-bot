@@ -370,8 +370,15 @@ export class OneBotClient extends EventEmitter {
   }
 
   /** 获取群成员信息（用于拿到群名片/昵称） */
-  getGroupMemberInfo(groupId, userId, timeoutMs = 8000) {
-    return this.api('get_group_member_info', { group_id: Number(groupId), user_id: Number(userId), no_cache: false }, timeoutMs)
+  getGroupMemberInfo(groupId, userId, timeoutMs = 8000, { noCache = false } = {}) {
+    return this.api('get_group_member_info', { group_id: Number(groupId), user_id: Number(userId), no_cache: Boolean(noCache) }, timeoutMs)
+  }
+
+  /** 单人禁言；本功能不以0秒隐式解禁，不将超长时限截成30天。 */
+  setGroupBan(groupId, userId, duration, timeoutMs = 10000) {
+    if(!Number.isSafeInteger(duration)||duration<1||duration>30*86400)throw Error('禁言时长须为1秒至30天')
+    if(![groupId,userId].every(id=>/^\d{1,15}$/.test(String(id))&&Number.isSafeInteger(Number(id))&&Number(id)>0))throw Error('禁言目标无效')
+    return this.api('set_group_ban',{group_id:Number(groupId),user_id:Number(userId),duration},timeoutMs)
   }
 
   /** 拉取整个群的成员名单（群大时慢，超时给足；/id_check 用） */

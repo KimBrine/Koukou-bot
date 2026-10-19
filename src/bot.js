@@ -11,6 +11,7 @@ import { parseMessage } from './cq.js'
 import { isBotAdmin, hasAdmins, adminHint } from './permissions.js'
 import { renderReply } from './customCommands.js'
 import { SUMMARY_RE, CLEAR_RE, HELP_RE } from './commandCenter.js'
+import { createGroupMute } from './groupMute.js'
 import { resetConversationMemory, prepareSessionPersona, sessionPersona, sameSessionPersona } from './conversationSessions.js'
 import { expandForwardRecords } from './forwardRecords.js'
 import { createQuotedMessageResolver } from './quotedMessage.js'
@@ -310,6 +311,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
   let repeatSession = onebot.messageTimeline?.session
   const lastReplayNote = new Map()
   const quotedMessages = createQuotedMessageResolver({ onebot, logger })
+  const groupMute = createGroupMute({onebot,commandCenter,llm,logger,canExecute:evt=>replyStillCurrent(onebot,evt)})
   const autoPlusOne = createAutoPlusOne({ config, onebot, logger,
     isEnabled:commandCenter ? id=>commandCenter.allowed({...commandCenter.get('auto-plus-one'),adminOnly:false},{isPrivate:false,groupId:id}) : undefined,
     canTrigger:commandCenter ? evt=>commandCenter.allows('auto-plus-one',{isPrivate:false,groupId:evt.group_id,userId:evt.user_id}) : undefined,
@@ -736,6 +738,11 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       if (!parsed.text) parsed.text = '[回复引用消息]'
 
       const commandContext={isPrivate,groupId,userId:evt.user_id,direct:directReply,event:'message',text:parsed.text}
+      const muteResult=groupMute.applies(evt,parsed)?await groupMute.handle(evt,parsed):null
+      if(muteResult?.handled){
+        if(muteResult.text&&samePersona()&&replyStillCurrent(onebot,evt))await sendTo(evt,muteResult.text)
+        return
+      }
       let commandResult=null
       if(commandCenter){
         let builtin=commandCenter.detect(parsed.text)
@@ -841,7 +848,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       // 指令列表：谁都能问；管理员专属的只对管理员显示
       if (ADMIN_HELP_CMD_RE.test(parsed.text.trim()) && directReply) {
         if(commandCenter){
-          const builtin=commandCenter.all().filter(c=>['summary','help','clear-memory','id-check','id-check-kick'].includes(c.id)&&commandCenter.allowed(c,commandContext))
+          const builtin=commandCenter.all().filter(c=>(c.management||['summary','help','clear-memory','id-check','id-check-kick'].includes(c.id))&&commandCenter.allowed(c,commandContext))
           const custom=customCommands.all().filter(c=>commandCenter.allowed(c,commandContext))
           await sendTo(evt,['📋 当前会话的指令',...builtin.map(c=>c.trigger+'  '+c.name),...custom.slice(0,30).map(c=>(c.event==='poke'?'拍一拍':c.trigger)+'  '+c.name+(c.responseMode==='ai'?'（AI）':''))].join('\n'))
           return

@@ -1,0 +1,9 @@
+{
+  "format": "koukou.commands",
+  "version": 1,
+  "commands": [],
+  "builtins": [
+    {"id":"owner-mute","enabled":false,"scope":"group","groups":[],"adminOnly":false,"naturalLanguage":false,"responseMode":"fixed"},
+    {"id":"self-mute","enabled":false,"scope":"group","groups":[],"adminOnly":false,"naturalLanguage":false,"responseMode":"fixed"}
+  ]
+}
