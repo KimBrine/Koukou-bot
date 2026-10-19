@@ -442,6 +442,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       learned: stickers && typeof stickers.learned === 'function' ? stickers.learned() : 0,
       scenes: STICKER_SCENES,
       learn: { enabled: Boolean(config.stickerLearnEnabled), perHour: config.stickerLearnPerHour },
+      settings: { enabled: Boolean(config.stickersEnabled), autoRate: Math.round((config.stickerAutoRate || 0) * 100) },
     }),
     'GET /api/config': async () => {
       const env = readEnvFile(envFile)
