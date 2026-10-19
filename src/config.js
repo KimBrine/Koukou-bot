@@ -150,6 +150,13 @@ export function loadConfig() {
     deepseekApiKey: String(env.DEEPSEEK_API_KEY ?? '').trim(),
     deepseekBaseUrl: String(env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com').replace(/\/+$/, ''),
     deepseekModel: String(env.DEEPSEEK_MODEL ?? 'deepseek-chat'),
+    // 界面上的供应商选择，只用于预填地址；真正生效的是 baseUrl + model
+    modelProvider: String(env.MODEL_PROVIDER ?? 'deepseek').trim().toLowerCase(),
+    // 思考强度：''（不发送）/ low / medium / high，对应 OpenAI 兼容的 reasoning_effort
+    reasoningEffort: (() => {
+      const v = String(env.MODEL_REASONING_EFFORT ?? '').trim().toLowerCase()
+      return ['low', 'medium', 'high'].includes(v) ? v : ''
+    })(),
 
     // 视觉模型（通义千问 DashScope，OpenAI 兼容模式），用于读图/表情包
     // 用哪个服务商读图：deepseek（实测快 21 倍）或 dashscope。见 src/index.js 顶部的实测数据。
@@ -323,6 +330,16 @@ export function loadConfig() {
     longMemoryMaxChars: Math.max(300, Math.min(6000, Math.floor(num('LONG_MEMORY_MAX_CHARS', 1500)))),
     longMemoryIntervalMs: Math.max(60000, Math.floor(num('LONG_MEMORY_INTERVAL_MS', 600000))),
 
+    // 表情包库：模型可以在回复里用 [贴纸: 关键词] 让程序发图
+    stickersEnabled: !['0', 'false'].includes(String(env.STICKERS_ENABLED ?? '1').trim().toLowerCase()),
+    // 主动发表情包的概率（百分比）：0 = 只有模型明确要求时才发
+    stickerAutoRate: Math.min(1, Math.max(0, num('STICKER_AUTO_RATE', 0) / 100)),
+    // 从群聊自动学习表情包（只学白名单群、别人发的图）
+    stickerLearnEnabled: ['1', 'true'].includes(String(env.STICKER_LEARN_ENABLED ?? '0').trim().toLowerCase()),
+    // 每小时最多学习几张，防止刷屏式采集和 API 花销
+    stickerLearnPerHour: Math.max(0, Math.min(60, Math.floor(num('STICKER_LEARN_PER_HOUR', 6)))),
+    // 单条回复最多发几张，避免刷屏
+    stickerMaxPerReply: Math.max(1, Math.min(3, Math.floor(num('STICKER_MAX_PER_REPLY', 1)))),
     temperature: Math.min(2, Math.max(0, num('TEMPERATURE', 1.2))),
     maxTokens: Math.max(1, Math.floor(num('MAX_TOKENS', 500))),
     timeoutMs: Math.max(5000, Math.floor(num('TIMEOUT_MS', 90000))),

@@ -174,6 +174,7 @@ const PAGES = [
   ['api','⌘  模型与接口'],
   ['report','▤  群聊报告'],
   ['memory','▤  记忆浏览'],
+  ['stickers','☺  表情包'],
   ['logs','≡  运行日志'],
   ['data','▦  数据与记忆'],
 ]
@@ -195,6 +196,10 @@ let memoryText = ''
 let customCommands = []
 let commandBuiltins = []
 let pokeDiagnostics = {}
+let stickerList = []
+let stickerScenes = []
+let stickerLearned = 0
+let stickerLearn = {}
 
 const $ = (h) => { const d = document.createElement('div'); d.innerHTML = h.trim(); return d.firstElementChild }
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
@@ -661,6 +666,80 @@ function pageMemory(){
     '</section>'
   ].join('')
 }
+function modelPickerCard(){
+  const m = state?.models || {}
+  const cur = m.current || {}
+  const providers = m.providers || []
+  const levels = m.levels || []
+  const opts = providers.map(function(p){
+    return '<option value="' + esc(p.id) + '"' + (p.id === cur.provider ? ' selected' : '') + '>' + esc(p.name) + '</option>'
+  }).join('')
+  const lvls = levels.map(function(l){
+    return '<option value="' + esc(l.id) + '"' + (String(cur.reasoning || '') === String(l.id) ? ' selected' : '') + '>' + esc(l.name) + '</option>'
+  }).join('')
+  return [
+    '<section class="card"><h2>对话模型</h2>',
+    '<div class="note">先选供应商（会自动填入接口地址）→ 点「自动检测模型」拉取可用型号 → 选好后保存，立刻生效，不用重启。</div>',
+    '<div class="frow"><label>供应商</label><div><select id="mpProvider">' + opts + '</select></div></div>',
+    '<div class="frow"><label>接口地址</label><div><input id="mpBaseUrl" value="' + esc(cur.baseUrl || '') + '" placeholder="https://api.deepseek.com"><div class="mut" style="font-size:12px;margin-top:4px">需要兼容 OpenAI 的 /chat/completions 和 /models</div></div></div>',
+    '<div class="frow"><label>密钥</label><div><input id="mpKey" type="password" placeholder="' + (cur.hasKey ? '已配置，留空表示不修改' : '填 API Key') + '"><div class="mut" style="font-size:12px;margin-top:4px">检测模型和保存都会用到；不会显示明文</div></div></div>',
+    '<div class="frow"><label>模型</label><div><input id="mpModel" list="mpModelList" value="' + esc(cur.model || '') + '" placeholder="例如 deepseek-chat"><datalist id="mpModelList"></datalist><div class="mut" id="mpHint" style="font-size:12px;margin-top:4px">还没有检测，点下面的按钮获取列表</div></div></div>',
+    '<div class="frow"><label>思考强度</label><div><select id="mpReason">' + lvls + '</select><div class="mut" style="font-size:12px;margin-top:4px">不是所有服务商都支持；报错就改回「关闭」</div></div></div>',
+    '<div class="flexbar"><button class="btn" id="mpDetect">自动检测模型</button><button class="btn primary" id="mpSave">保存并生效</button></div>',
+    '</section>'
+  ].join('')
+}
+function pageStickers(){
+  const items = stickerList || []
+  const sceneList = stickerScenes || []
+  const learn = stickerLearn || {}
+  const groups = chats.filter(function(c){ return c.type === 'group' })
+  const gopts = groups.map(function(g){ return '<option value="' + g.id + '">' + esc(g.name) + '（' + g.id + '）</option>' }).join('')
+  const cards = items.map(function(s){
+    const scenes = (s.scenes || [])
+    const sceneBoxes = sceneList.map(function(sc){
+      const on = scenes.indexOf(sc.id) >= 0
+      return '<label style="font-size:12px;margin-right:8px;white-space:nowrap"><input type="checkbox" data-scene-item="' + esc(s.id) + '" value="' + esc(sc.id) + '"' + (on ? ' checked' : '') + '>' + esc(sc.name) + '</label>'
+    }).join('')
+    const badge = s.origin === 'learned' ? '<span class="pill" style="background:#2a7;color:#fff">学习</span>' : ''
+    return '<div style="border:1px solid var(--line,#ddd);border-radius:10px;padding:10px;width:200px">' +
+      '<img src="/api/sticker-file?id=' + encodeURIComponent(s.id) + '" style="width:100%;height:130px;object-fit:contain;border-radius:8px;background:#0001" alt="">' +
+      '<div style="margin-top:6px;display:flex;align-items:center;gap:6px">' + badge + '<span class="mut" style="font-size:12px">用过 ' + (s.usage || 0) + ' 次</span></div>' +
+      '<input data-stk-name="' + esc(s.id) + '" value="' + esc(s.name) + '" placeholder="名称" style="width:100%;margin-top:6px">' +
+      '<input data-stk-kw="' + esc(s.id) + '" value="' + esc((s.keywords || []).join(' ')) + '" placeholder="关键词 空格分隔" style="width:100%;margin-top:6px">' +
+      '<div style="margin-top:6px;line-height:1.7">' + sceneBoxes + '</div>' +
+      '<div class="row" style="margin-top:8px;display:flex;gap:6px">' +
+      '<button class="btn" data-stk-save="' + esc(s.id) + '">保存</button>' +
+      '<button class="btn" data-stk-del="' + esc(s.id) + '">删除</button>' +
+      '</div></div>'
+  }).join('')
+  return [
+    '<h1>表情包</h1><div class="sub">给每张图起名、打关键词和语境标签；机器人会按语境挑图，模型也能用 [贴纸: 名称] 点名要。</div>',
+    '<section class="card"><h2>学习状态</h2>',
+    '<div class="note">从群聊学习：<b>' + (learn.enabled ? '已开启' : '已关闭') + '</b>，每小时最多 ' + (learn.perHour || 0) + ' 张。开启后，白名单群里别人发的表情包会被自动收藏、起名和打标签（识别需要视觉模型）。</div>',
+    learn.enabled ? '' : '<div class="note">想开启：在「模型与接口」里把 <b>从群聊学习表情包</b> 设为 1（或直接编辑 .env 的 STICKER_LEARN_ENABLED=1）。</div>',
+    '<div class="mut" style="margin-top:6px">已学习 ' + (stickerLearned || 0) + ' 张 / 共 ' + items.length + ' 张</div>',
+    '</section>',
+    '<section class="card"><h2>上传 <span class="pill">' + items.length + ' 张</span></h2>',
+    '<div class="note">支持 PNG / JPEG / WebP / GIF，单张 ≤ 4MB。上传后可以改名称、关键词和语境。</div>',
+    '<div class="row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">',
+    '<input type="file" id="stkFile" accept="image/png,image/jpeg,image/webp,image/gif" multiple>',
+    '<input id="stkKw" placeholder="统一关键词（可留空，之后单独改）" style="flex:1;min-width:180px">',
+    '<button class="btn primary" id="stkUpload">上传</button>',
+    '</div>',
+    '<div class="mut" id="stkHint" style="margin-top:8px"></div>',
+    '</section>',
+    '<section class="card"><h2>手动发一张</h2>',
+    '<div class="row" style="display:flex;gap:8px;flex-wrap:wrap">',
+    '<select id="stkSendGroup">' + (gopts || '<option value="">没有群可发</option>') + '</select>',
+    '<input id="stkSendKw" placeholder="留空 = 随机一张" style="flex:1;min-width:160px">',
+    '<button class="btn" id="stkSend">发送</button>',
+    '</div></section>',
+    '<section class="card"><h2>全部表情包</h2>',
+    items.length ? ('<div style="display:flex;flex-wrap:wrap;gap:12px">' + cards + '</div>') : '<div class="mut">还没有表情包，先上传几张，或者开启群聊学习。</div>',
+    '</section>'
+  ].join('')
+}
 function render(){
   const main = document.getElementById('main')
   let html = ''
@@ -778,6 +857,91 @@ async function bind(){
     adminSaveBtn.disabled = false
   }
   if(page === 'commands') CommandCenterUI.bind({api,toast,load,render,ask})
+  // 模型：供应商预填 / 自动检测 / 保存
+  const mpProvider = document.getElementById('mpProvider')
+  if (mpProvider) mpProvider.onchange = () => {
+    const p = (state?.models?.providers || []).find(x => x.id === mpProvider.value)
+    const base = document.getElementById('mpBaseUrl')
+    if (p && p.baseUrl && base) base.value = p.baseUrl
+  }
+  const mpDetect = document.getElementById('mpDetect')
+  if (mpDetect) mpDetect.onclick = async () => {
+    const baseUrl = document.getElementById('mpBaseUrl').value.trim()
+    const apiKey = document.getElementById('mpKey').value.trim()
+    const hint = document.getElementById('mpHint')
+    mpDetect.disabled = true
+    if (hint) hint.textContent = '检测中…'
+    try {
+      const r = await api('/api/action/detect-models', { baseUrl, apiKey })
+      const list = document.getElementById('mpModelList')
+      if (list) list.innerHTML = (r.models || []).map(m => '<option value="' + esc(m.id) + '">').join('')
+      if (hint) hint.textContent = '检测到 ' + r.count + ' 个模型，点模型输入框可以选'
+      const input = document.getElementById('mpModel')
+      if (input && !input.value && r.models && r.models[0]) input.value = r.models[0].id
+    } catch (e) {
+      if (hint) hint.textContent = '检测失败：' + e.message
+      toast('检测失败：' + e.message, true)
+    }
+    mpDetect.disabled = false
+  }
+  const mpSave = document.getElementById('mpSave')
+  if (mpSave) mpSave.onclick = async () => {
+    const baseUrl = document.getElementById('mpBaseUrl').value.trim()
+    const model = document.getElementById('mpModel').value.trim()
+    const key = document.getElementById('mpKey').value.trim()
+    const provider = document.getElementById('mpProvider').value
+    const reasoning = document.getElementById('mpReason').value
+    mpSave.disabled = true
+    try {
+      const sets = [['MODEL_PROVIDER', provider], ['DEEPSEEK_BASE_URL', baseUrl], ['DEEPSEEK_MODEL', model], ['MODEL_REASONING_EFFORT', reasoning]]
+      if (key) sets.push(['DEEPSEEK_API_KEY', key])
+      for (const pair of sets) await api('/api/action/set-config', { key: pair[0], value: pair[1] })
+      await load()
+      toast('模型设置已保存并生效')
+    } catch (e) { toast('保存失败：' + e.message, true) }
+    mpSave.disabled = false
+  }
+  // 表情包：上传 / 保存 / 删除 / 测试发送
+  const stkUpload = document.getElementById('stkUpload')
+  if (stkUpload) stkUpload.onclick = async () => {
+    const input = document.getElementById('stkFile')
+    const kw = document.getElementById('stkKw').value.trim()
+    const hint = document.getElementById('stkHint')
+    const files = input && input.files ? Array.from(input.files) : []
+    if (!files.length) { toast('先选图片', true); return }
+    stkUpload.disabled = true
+    let ok = 0, dup = 0
+    for (const f of files) {
+      try {
+        const dataUrl = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = () => rej(new Error('读取失败')); fr.readAsDataURL(f) })
+        const r = await api('/api/action/sticker-add', { name: f.name.replace(/\.[^.]+$/, ''), keywords: kw, dataUrl })
+        if (r.duplicated) { dup++ } else { ok++ }
+      } catch (e) { if (hint) hint.textContent = '上传失败：' + e.message }
+    }
+    stkUpload.disabled = false
+    await load()
+    toast('已上传 ' + ok + ' 张' + (dup ? '，' + dup + ' 张重复已跳过' : ''))
+  }
+  document.querySelectorAll('[data-stk-save]').forEach(el => el.onclick = async () => {
+    const id = el.dataset.stkSave
+    const name = document.querySelector('[data-stk-name="' + id + '"]').value
+    const keywords = document.querySelector('[data-stk-kw="' + id + '"]').value
+    const scenes = Array.from(document.querySelectorAll('[data-scene-item="' + id + '"]:checked')).map(function(el){ return el.value })
+    try { await api('/api/action/sticker-update', { id, name, keywords, scenes }); toast('已保存'); await load() }
+    catch (e) { toast('保存失败：' + e.message, true) }
+  })
+  document.querySelectorAll('[data-stk-del]').forEach(el => el.onclick = async () => {
+    if (!await ask('删除这张表情包？', '图片文件也会一起删掉。', '删除')) return
+    try { await api('/api/action/sticker-delete', { id: el.dataset.stkDel }); await load(); toast('已删除') }
+    catch (e) { toast('删除失败：' + e.message, true) }
+  })
+  const stkSend = document.getElementById('stkSend')
+  if (stkSend) stkSend.onclick = async () => {
+    const groupId = document.getElementById('stkSendGroup').value
+    const keyword = document.getElementById('stkSendKw').value.trim()
+    try { const r = await api('/api/action/sticker-send', { groupId, keyword }); toast('已发送「' + r.name + '」') }
+    catch (e) { toast('发送失败：' + e.message, true) }
+  }
   // 记忆浏览：查看 / 清除
   document.querySelectorAll('[data-memview]').forEach(el => el.onclick = async () => {
     const key = el.dataset.memview
@@ -1036,12 +1200,17 @@ let personaCache = {}
 let appendixText = ''
 async function load(){
   try {
-    const [s, c, p, cfg, groups, cc] = await Promise.all([api('/api/state'), api('/api/chats'), api('/api/personas'), api('/api/config'), api('/api/groups').catch(() => ({items:[]})), api('/api/custom-commands').catch(()=>({items:[]}))])
+    const [s, c, p, cfg, groups, cc, models, stk] = await Promise.all([api('/api/state'), api('/api/chats'), api('/api/personas'), api('/api/config'), api('/api/groups').catch(() => ({items:[]})), api('/api/custom-commands').catch(()=>({items:[]})), api('/api/models').catch(()=>({})), api('/api/stickers').catch(()=>({items:[]}))])
     state = s; chats = c.items; personas = p.items; activePersona = p.active; configItems = cfg.items
     joinedGroups = groups.items || []
     customCommands = cc.items || []
     commandBuiltins = cc.builtinItems || []
     pokeDiagnostics = cc.poke || {}
+    state.models = models || {}
+    stickerList = stk.items || []
+    stickerScenes = stk.scenes || []
+    stickerLearned = stk.learned || 0
+    stickerLearn = stk.learn || {}
     updateSideStatus(s.bot)
     // 预取人格内容与附加说明
     for (const item of personas) {

@@ -3,6 +3,8 @@ import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
+import { PROVIDERS, REASONING_LEVELS, detectModels } from '../modelCatalog.js'
+import { STICKER_SCENES } from '../stickers.js'
 import { fileURLToPath } from 'node:url'
 import { keyToGroupId, keyToUserId } from '../chatSettings.js'
 import { activatePersona } from '../personaSwitch.js'
@@ -87,8 +89,15 @@ const EDITABLE = [
   { key: 'DAILY_PING_CHAIN_MATCH', label: '链式：成功判据(正则)', hint: '匹配对方回复内容，例：抓到.*猪猪', live: true, type: 'text', wide: true },
   { key: 'DAILY_PING_CHAIN_TEXT', label: '链式：补发内容', hint: '例：/我的猪圈', live: true, type: 'text' },
   { key: 'DAILY_PING_CHAIN_WINDOW_MS', label: '链式：等待窗口(ms)', live: true, type: 'number' },
-  { key: 'DEEPSEEK_MODEL', label: '对话模型', live: false, type: 'text' },
-  { key: 'DEEPSEEK_API_KEY', label: 'DeepSeek Key', live: false, type: 'secret' },
+  { key: 'MODEL_PROVIDER', label: '模型供应商', hint: 'deepseek / dashscope / openai / moonshot / zhipu / custom；只影响界面预填，实际以接口地址为准', live: true, type: 'text' },
+  { key: 'DEEPSEEK_BASE_URL', label: '接口地址（Base URL）', hint: 'OpenAI 兼容地址，例如 https://api.deepseek.com', live: true, type: 'text', wide: true },
+  { key: 'DEEPSEEK_MODEL', label: '对话模型', hint: '建议先用「自动检测模型」拿到列表再选', live: true, type: 'text' },
+  { key: 'MODEL_REASONING_EFFORT', label: '思考强度', hint: '留空 = 不发送；low / medium / high = 发送 reasoning_effort', live: true, type: 'text' },
+  { key: 'STICKERS_ENABLED', label: '表情包库', hint: '1 开启，0 关闭；开启后模型可用 [贴纸: 名称] 指定发图', live: true, type: 'text' },
+  { key: 'STICKER_LEARN_ENABLED', label: '从群聊学习表情包', hint: '1 开启：白名单群里别人发的图会自动收藏并打标签；0 关闭', live: true, type: 'text' },
+  { key: 'STICKER_LEARN_PER_HOUR', label: '每小时最多学习几张', hint: '0 = 不学；建议 3~10，避免刷屏式采集', live: true, type: 'number' },
+  { key: 'STICKER_AUTO_RATE', label: '主动发表情概率(%)', hint: '0 = 只在模型明确要求时发；10 = 大约每十次回复补一张', live: true, type: 'number' },
+  { key: 'DEEPSEEK_API_KEY', label: '模型 Key', live: true, type: 'secret' },
   { key: 'VISION_PROVIDER', label: '识图服务商', hint: '当前选用哪家服务识别图片', live: false, type: 'text' },
   { key: 'VISION_MODEL', label: 'DeepSeek 识图模型', hint: '识图服务商为 DeepSeek 时使用', live: false, type: 'text' },
   { key: 'DASHSCOPE_MODEL', label: 'DashScope 识图模型', hint: '仅识图服务商为 DashScope 时使用；不代表当前生效模型', live: false, type: 'text' },
@@ -182,7 +191,7 @@ function validateGroupConfig(key, value) {
   }
 }
 
-export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, bot, customCommands, commandCenter, restartBot }) {
+export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, bot, customCommands, commandCenter, llm, stickers, restartBot }) {
   // 本实例自己的 .env（并行跑两个实例时，写死 rootDir\.env 会改到另一个实例的配置上）
   const envFile = config.envFile || path.join(config.rootDir, '.env')
   const logFile = path.join(config.logDir || path.join(config.rootDir, 'logs'), 'bot.log')
@@ -416,6 +425,24 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       const items = [...map.values()].sort((a, b) => b.recent + b.longTermChars - (a.recent + a.longTermChars))
       return { persona: config.activePersona || '', items }
     },
+    'GET /api/models': async () => ({
+      providers: PROVIDERS,
+      levels: REASONING_LEVELS,
+      current: {
+        provider: config.modelProvider || 'deepseek',
+        baseUrl: config.deepseekBaseUrl,
+        model: config.deepseekModel,
+        reasoning: config.reasoningEffort || '',
+        hasKey: Boolean(config.deepseekApiKey),
+      },
+    }),
+    'GET /api/stickers': async () => ({
+      items: stickers ? stickers.list() : [],
+      enabled: Boolean(config.stickersEnabled),
+      learned: stickers && typeof stickers.learned === 'function' ? stickers.learned() : 0,
+      scenes: STICKER_SCENES,
+      learn: { enabled: Boolean(config.stickerLearnEnabled), perHour: config.stickerLearnPerHour },
+    }),
     'GET /api/config': async () => {
       const env = readEnvFile(envFile)
       return {
@@ -536,6 +563,49 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
           .split(',')
           .map((x) => x.trim())
           .filter(Boolean)
+        break
+      case 'DEEPSEEK_BASE_URL': {
+        const v = String(value || '').trim().replace(/\/+$/, '')
+        if (!/^https?:\/\//i.test(v)) throw new Error('接口地址要以 http:// 或 https:// 开头')
+        config.deepseekBaseUrl = v
+        if (llm) llm.baseUrl = v
+        break
+      }
+      case 'DEEPSEEK_MODEL': {
+        const v = String(value || '').trim()
+        if (!v) throw new Error('模型名不能为空')
+        config.deepseekModel = v
+        if (llm) llm.model = v
+        break
+      }
+      case 'DEEPSEEK_API_KEY': {
+        const v = String(value || '').trim()
+        if (!v) return false
+        config.deepseekApiKey = v
+        if (llm) llm.apiKey = v
+        break
+      }
+      case 'MODEL_PROVIDER':
+        config.modelProvider = String(value || '').trim().toLowerCase()
+        break
+      case 'MODEL_REASONING_EFFORT': {
+        const v = String(value || '').trim().toLowerCase()
+        const level = ['low', 'medium', 'high'].includes(v) ? v : ''
+        config.reasoningEffort = level
+        if (llm) llm.reasoningEffort = level
+        break
+      }
+      case 'STICKERS_ENABLED':
+        config.stickersEnabled = !['0', 'false'].includes(String(value ?? '').trim().toLowerCase())
+        break
+      case 'STICKER_LEARN_ENABLED':
+        config.stickerLearnEnabled = ['1', 'true'].includes(String(value ?? '').trim().toLowerCase())
+        break
+      case 'STICKER_LEARN_PER_HOUR':
+        config.stickerLearnPerHour = Math.max(0, Math.min(60, Math.floor(num(value, 6))))
+        break
+      case 'STICKER_AUTO_RATE':
+        config.stickerAutoRate = Math.min(1, Math.max(0, num(value, 0) / 100))
         break
       case 'PROACTIVE_RATE':
         config.proactiveRate = Math.min(1, Math.max(0, num(value, config.proactiveRate)))
@@ -796,6 +866,41 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       const st = targetWatch.configure({ enabled: true, groupId: String(gid), userId: uid })
       return { ok: true, ...st }
     },
+    async 'detect-models'(payload) {
+      const baseUrl = String(payload?.baseUrl || '').trim() || config.deepseekBaseUrl
+      const apiKey = String(payload?.apiKey || '').trim() || config.deepseekApiKey
+      const out = await detectModels({ baseUrl, apiKey })
+      logger?.info?.(`[模型检测] ${baseUrl} 返回 ${out.count} 个模型`)
+      return out
+    },
+    async 'sticker-add'(payload) {
+      if (!stickers) throw new Error('表情包库未启用')
+      const out = stickers.add({ name: payload?.name, keywords: payload?.keywords, scenes: payload?.scenes, dataUrl: payload?.dataUrl })
+      return { ok: true, item: out.item, duplicated: out.duplicated, count: stickers.count() }
+    },
+    async 'sticker-update'(payload) {
+      if (!stickers) throw new Error('表情包库未启用')
+      const item = stickers.update(String(payload?.id || ''), { name: payload?.name, keywords: payload?.keywords, scenes: payload?.scenes })
+      if (!item) throw new Error('找不到这张表情包')
+      return { ok: true, item }
+    },
+    async 'sticker-delete'(payload) {
+      if (!stickers) throw new Error('表情包库未启用')
+      const ok = stickers.remove(String(payload?.id || ''))
+      return { ok, count: stickers.count() }
+    },
+    async 'sticker-send'(payload) {
+      if (!stickers) throw new Error('表情包库未启用')
+      const groupId = String(payload?.groupId || '').trim()
+      if (!/^\d{5,12}$/.test(groupId)) throw new Error('请选择要发送到的群')
+      const item = payload?.id ? stickers.get(String(payload.id)) : stickers.find(String(payload?.keyword || '')) || stickers.random()
+      if (!item) throw new Error('表情包库里还没有图')
+      const file = stickers.dataUrlOf(item)
+      if (!file) throw new Error('图片文件读不到，可能已被删除')
+      await onebot.sendGroup(groupId, [{ type: 'image', data: { file } }])
+      logger?.info?.(`[控制台] 测试发送表情包「${item.name}」到群 ${groupId}`)
+      return { ok: true, name: item.name }
+    },
     async 'restart-bot'() {
       logger?.info?.('[控制台] 收到重启机器人指令')
       setTimeout(() => restartBot?.(), 300)
@@ -914,6 +1019,15 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         if (!existsSync(UI_FILE)) return send(500, '控制台界面文件缺失', 'text/plain; charset=utf-8')
         return send(200, readFileSync(UI_FILE), 'text/html; charset=utf-8')
       }
+      // 表情包图片（控制台预览用）
+      if (req.method === 'GET' && url.pathname === '/api/sticker-file') {
+        const id = String(url.searchParams.get('id') || '')
+        const item = stickers ? stickers.get(id) : null
+        if (!item) return send(404, 'not found', 'text/plain; charset=utf-8')
+        const file = path.join(stickers.dir, item.file)
+        if (!existsSync(file)) return send(404, 'missing', 'text/plain; charset=utf-8')
+        return send(200, readFileSync(file), item.mime || 'image/png')
+      }
       if (url.pathname.startsWith('/api/')) {
         const query = Object.fromEntries(url.searchParams.entries())
         if (req.method === 'GET') {
@@ -926,7 +1040,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
             let data = ''
             req.on('data', (c) => {
               data += c
-              if (data.length > 2_000_000) req.destroy()
+              if (data.length > 12_000_000) req.destroy() // 表情包上传走 base64，需要更大上限
             })
             req.on('end', () => {
               try {

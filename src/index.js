@@ -17,6 +17,8 @@ import { loadPokeReplies, createPokeReplier } from './pokeReplies.js'
 import { createLongMemory } from './longMemory.js'
 import { createCustomCommands } from './customCommands.js'
 import { createCommandCenter } from './commandCenter.js'
+import { createStickers } from './stickers.js'
+import { createStickerLearner } from './stickerLearn.js'
 import { createCustomCommandSchedule } from './customCommandSchedule.js'
 import { createTargetWatch } from './targetWatch.js'
 import { createChatSettings } from './chatSettings.js'
@@ -121,6 +123,7 @@ const llm = new DeepSeekClient({
   timeoutMs: config.timeoutMs,
   maxRetries: config.maxRetries,
   maxConcurrency: config.maxConcurrency,
+  reasoningEffort: config.reasoningEffort,
   logger,
   label: 'DeepSeek',
 })
@@ -201,6 +204,10 @@ memory.onEvict = (key, entries) => longMemory.addEvicted(key, entries)
 
 // 自定义指令：关键词命中回固定内容（含变量替换）与定时推送，不调用模型
 const customCommands = createCustomCommands({ file: path.join(config.dataDir, 'custom-commands.json'), logger })
+
+// 表情包库：图片存 data/stickers，模型可用 [贴纸: 名称] 指定发送
+const stickers = createStickers({ dir: path.join(config.dataDir, 'stickers'), logger })
+const stickerLearner = createStickerLearner({ config, logger, onebot, stickers, visionLLM })
 const commandCenter = createCommandCenter({file:path.join(config.dataDir,'command-center.json'),customCommands,config,logger,llm})
 
 // 联网搜索（百度千帆）：仅私聊与被@时可用，模型自行判断是否需要
@@ -286,6 +293,8 @@ if (config.adminEnabled) {
     dailyPing,
     bot,
     customCommands,
+    llm,
+    stickers,
     commandCenter,
     restartBot: () => {
       // 让一个独立进程在 1.2 秒后杀掉当前实例并用计划任务重新拉起（避免自己杀自己杀不干净）
@@ -411,6 +420,7 @@ logger.info(`管理员（ADMIN_USERS）：${config.adminUsers.length ? config.ad
   const cmds = typeof customCommands?.all === 'function' ? customCommands.all() : []
   const sched = cmds.filter((c) => c.scheduleEnabled && (c.scheduleTimes || []).length).length
   logger.info(`自定义指令：${cmds.length} 条${sched ? `（其中 ${sched} 条带定时推送）` : ''}`)
+  logger.info(`表情包：${stickers.count()} 张${config.stickersEnabled ? '' : '（已关闭）'}${config.stickerLearnEnabled ? `｜群聊学习开启（每小时 ${config.stickerLearnPerHour} 张）` : ''}${config.stickerAutoRate > 0 ? `｜主动发 ${Math.round(config.stickerAutoRate * 100)}%` : ''}`)
 }
 
 dailySummary.schedule()
