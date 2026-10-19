@@ -58,7 +58,7 @@ export class DeepSeekClient {
   }
 
   /** 纯文本对话：messages 为 [{role, content}] 历史（不含 system） */
-  async chat(systemPrompt, messages, { rejectTruncated = false, signal, maxTokens = this.maxTokens } = {}) {
+  async chat(systemPrompt, messages, { rejectTruncated = false, signal, maxTokens = this.maxTokens, temperature = this.temperature } = {}) {
     const outputBudget=Number.isFinite(maxTokens)&&maxTokens>0?Math.min(this.maxTokens,Math.max(1,Math.floor(maxTokens))):this.maxTokens
     await this.#acquire(signal)
     try {
@@ -69,7 +69,7 @@ export class DeepSeekClient {
         const data = await this.#post({
           model: this.model,
           messages: [{ role: 'system', content: systemPrompt }, ...messages],
-          temperature: this.temperature,
+          temperature: Number.isFinite(temperature)?Math.max(0,Math.min(2,temperature)):this.temperature,
           max_tokens: outputBudget,
           stream: false,
         }, signal)

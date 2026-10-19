@@ -4,6 +4,7 @@
   "commands": [],
   "builtins": [
     {"id":"owner-mute","enabled":false,"scope":"group","groups":[],"adminOnly":false,"naturalLanguage":false,"responseMode":"fixed"},
-    {"id":"self-mute","enabled":false,"scope":"group","groups":[],"adminOnly":false,"naturalLanguage":false,"responseMode":"fixed"}
+    {"id":"self-mute","enabled":false,"scope":"group","groups":[],"adminOnly":false,"naturalLanguage":false,"responseMode":"fixed"},
+    {"id":"whole-mute","enabled":false,"scope":"group","groups":[],"adminOnly":false,"naturalLanguage":false,"responseMode":"fixed"}
   ]
 }

@@ -381,6 +381,18 @@ export class OneBotClient extends EventEmitter {
     return this.api('set_group_ban',{group_id:Number(groupId),user_id:Number(userId),duration},timeoutMs)
   }
 
+  /** 显式解除个人禁言，与正时长禁言分开，避免算式0值意外成为解禁。 */
+  clearGroupBan(groupId,userId,timeoutMs=10000){
+    if(![groupId,userId].every(id=>/^\d{1,15}$/.test(String(id))&&Number.isSafeInteger(Number(id))&&Number(id)>0))throw Error('解禁目标无效')
+    return this.api('set_group_ban',{group_id:Number(groupId),user_id:Number(userId),duration:0},timeoutMs)
+  }
+
+  /** QQ 原生全员禁言开关，不代表设置了时段计划或发言频率。 */
+  setGroupWholeBan(groupId,enable,timeoutMs=10000){
+    if(!/^\d{1,15}$/.test(String(groupId))||!Number.isSafeInteger(Number(groupId))||Number(groupId)<=0||typeof enable!=='boolean')throw Error('全员禁言参数无效')
+    return this.api('set_group_whole_ban',{group_id:Number(groupId),enable},timeoutMs)
+  }
+
   /** 拉取整个群的成员名单（群大时慢，超时给足；/id_check 用） */
   getGroupMemberList(groupId, timeoutMs = 30000) {
     return this.api('get_group_member_list', { group_id: Number(groupId), no_cache: true }, timeoutMs)

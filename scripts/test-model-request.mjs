@@ -92,5 +92,11 @@ try {
     assert.equal(await c.chat('p',[]),'完整回复');assert.equal(requests,2);assert.equal(c.active,1)
     release();await rejection;assert.equal(c.active,0)
   })
+  await test('管理解析可单次降低温度，不改变普通聊天的配置',async()=>{
+    const c=client({temperature:1.2}),bodies=[]
+    globalThis.fetch=async(_,options)=>{bodies.push(JSON.parse(options.body));return success()}
+    await c.chat('parse',[],{temperature:0});await c.chat('normal',[])
+    assert.equal(bodies[0].temperature,0);assert.equal(bodies[1].temperature,1.2);assert.equal(c.temperature,1.2)
+  })
   console.log(`${passed} cases passed`)
 } finally {globalThis.fetch=originalFetch}

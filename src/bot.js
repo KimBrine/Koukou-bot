@@ -711,6 +711,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       const parsed = parseMessage(evt.message ?? evt.raw_message, onebot.selfId)
 
       // 每日总结：实时捕获群消息（在回复策略之前，未回复的消息也要记）
+      groupMute.observe(evt,parsed)
       dailySummary?.capture(evt, parsed)
       // 盯人回复：记录目标用户在目标群的发言（每 N 秒统一处理一次）
       targetWatch?.note(evt, parsed)
@@ -738,7 +739,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       if (!parsed.text) parsed.text = '[回复引用消息]'
 
       const commandContext={isPrivate,groupId,userId:evt.user_id,direct:directReply,event:'message',text:parsed.text}
-      const muteResult=groupMute.applies(evt,parsed)?await groupMute.handle(evt,parsed):null
+      const muteResult=groupMute.applies(evt,parsed)?await groupMute.handle(evt,parsed,{quotedRaw}):null
       if(muteResult?.handled){
         if(muteResult.text&&samePersona()&&replyStillCurrent(onebot,evt))await sendTo(evt,muteResult.text)
         return

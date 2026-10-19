@@ -35,7 +35,7 @@ let messageId=1000
 const evt=(text,groupId=200000002,userId=200000011,direct=true)=>({post_type:'message',message_type:'group',group_id:groupId,user_id:userId,message_id:messageId++,time:Date.now()/1000,sender:{nickname:'测试群友'},message:[...(direct?[{type:'at',data:{qq:'200000010'}}]:[]),{type:'text',data:{text}}]})
 try{
  await test('已有功能默认继承原配置，清理记忆保留显式管理员门槛',()=>{
-  const t=fixture(),c=t.commandCenter;assert.equal(c.all().length,9)
+  const t=fixture(),c=t.commandCenter;assert.equal(c.all().length,10)
   assert.equal(c.allows('summary',t.ctx),true);assert.equal(c.allows('clear-memory',t.ctx),false)
   c.saveBuiltin({...c.get('clear-memory'),adminOnly:false,naturalLanguage:true});assert.equal(c.get('clear-memory').adminOnly,true);assert.equal(c.get('clear-memory').naturalLanguage,false)
   assert.equal(c.allows('id-check',{...t.ctx,groupId:200000003}),false)
@@ -122,7 +122,7 @@ try{
   try{t.setResult('{"trigger":"早安","reply":"早上好","name":"问候"}')
    await admin.actions['generate-command']({description:'早安回复',mode:'fixed'});assert.equal(t.customCommands.all().length,0)
    assert.equal((await admin.actions['check-poke']()).enabled,true)
-   const data=await admin.routes['GET /api/custom-commands']();assert.equal(data.builtinItems.length,9)
+   const data=await admin.routes['GET /api/custom-commands']();assert.equal(data.builtinItems.length,10)
    assert.equal(t.sent.length,0)
    await assert.rejects(admin.actions['save-custom-command']({trigger:'/群总结',reply:'伪总结'}),/内置功能/)
   }finally{admin.server.close()}
@@ -147,7 +147,7 @@ try{
   const t=fixture(),context={window:{},structuredClone,console,Date};vm.createContext(context)
   vm.runInContext(readFileSync(new URL('../src/admin/commandCenter.js',import.meta.url),'utf8'),context)
   const html=context.window.CommandCenterUI.render({custom:[{name:'<script>test</script>',id:'test',enabled:false}],builtins:t.commandCenter.all(),poke:{},groups:[]})
-  assert.match(html,/9 项已有功能/);assert.match(html,/调用一次 AI/);assert.match(html,/开始观察拍一拍/)
+  assert.match(html,/10 项已有功能/);assert.match(html,/调用一次 AI/);assert.match(html,/开始观察拍一拍/)
   assert.match(html,/先预览/);assert.match(html,/&lt;script&gt;/);assert.doesNotMatch(html,/<script>test/)
  })
  console.log(`${passed} command-center cases passed; no QQ or paid model calls.`)
