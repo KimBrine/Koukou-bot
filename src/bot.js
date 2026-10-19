@@ -12,6 +12,7 @@ import { isBotAdmin, hasAdmins, adminHint } from './permissions.js'
 import { renderReply } from './customCommands.js'
 import { SUMMARY_RE, CLEAR_RE, HELP_RE } from './commandCenter.js'
 import { createGroupMute } from './groupMute.js'
+import { createSelfActions } from './selfActions.js'
 import { resetConversationMemory, prepareSessionPersona, sessionPersona, sameSessionPersona } from './conversationSessions.js'
 import { expandForwardRecords } from './forwardRecords.js'
 import { createQuotedMessageResolver } from './quotedMessage.js'
@@ -312,6 +313,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
   const lastReplayNote = new Map()
   const quotedMessages = createQuotedMessageResolver({ onebot, logger })
   const groupMute = createGroupMute({onebot,commandCenter,llm,logger,config,canExecute:evt=>replyStillCurrent(onebot,evt)})
+  const selfActions = createSelfActions({onebot,commandCenter,llm,logger,canExecute:evt=>replyStillCurrent(onebot,evt)})
   const autoPlusOne = createAutoPlusOne({ config, onebot, logger,
     isEnabled:commandCenter ? id=>commandCenter.allowed({...commandCenter.get('auto-plus-one'),adminOnly:false},{isPrivate:false,groupId:id}) : undefined,
     canTrigger:commandCenter ? evt=>commandCenter.allows('auto-plus-one',{isPrivate:false,groupId:evt.group_id,userId:evt.user_id}) : undefined,
@@ -685,8 +687,9 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       if (repetition.own || evt.post_type === 'message_sent' || evt.message_sent_type === 'self' ||
           (onebot.selfId && String(evt.user_id) === String(onebot.selfId))) return
       const muteFollowup=groupMute.reserveFollowup(evt)
+      const selfFollowup=selfActions.reserveFollowup(evt)
       // 用户指定：自动 +1 在白名单群独立运行，不受静音、安静时段、搭话概率控制。
-      const repeatTask = muteFollowup?Promise.resolve():autoPlusOne.send(repetition)
+      const repeatTask = muteFollowup||selfFollowup?Promise.resolve():autoPlusOne.send(repetition)
 
       const isPrivate = evt.message_type === 'private'
       const groupId = evt.group_id
@@ -722,7 +725,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       // 定时指令的链式判断：等目标账号"成功回应"后补发第二条指令
       if (dailyPing) await dailyPing.noteMessage(evt, parsed).catch(() => {})
       if (!samePersona()) return
-      if (!muteFollowup&&(repetition.suppress || autoPlusOne.wasTriggered(repetition))) {
+      if (!muteFollowup&&!selfFollowup&&(repetition.suppress || autoPlusOne.wasTriggered(repetition))) {
         // 跟读与后续同内容消息直接结束，图片也不进入下载 / 识图 / 聊天模型。
         const key = `g${groupId}`
         runtimeStats?.noteMessage?.(key, Number(evt.time) * 1000 || Date.now())
@@ -740,10 +743,21 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       if (!samePersona()) return
       const directReply = isPrivate || parsed.atBot || replyToBot
       const incomingLen = measureText(parsed.text.replace(/\[合并聊天记录\]/g, '')) || (parsed.images.length > 0 ? 6 : 0)
-      if (!parsed.text && !replyToBot && !muteFollowup) return
+      if (!parsed.text && !replyToBot && !muteFollowup&&!selfFollowup) return
       if (!parsed.text) parsed.text = '[回复引用消息]'
 
       const commandContext={isPrivate,groupId,userId:evt.user_id,direct:directReply,event:'message',text:parsed.text}
+      const selfResult=!muteFollowup&&selfActions.applies(evt,parsed,selfFollowup)?await selfActions.handle(evt,parsed,{followup:selfFollowup,canReply:samePersona,replyPrompt:()=>{
+        const personaText=sessionPersona(config,chatSettings?.get?.(conversationKey)?.persona||'').text
+        return buildSystemPrompt({botName:config.botName,now:new Date(),chatKey:conversationKey,query:parsed.text,personaText})
+      }}):null
+      if(selfResult?.handled){
+        if(selfResult.text&&samePersona()&&replyStillCurrent(onebot,evt)){
+          const sent=await sendTo(evt,selfResult.text)
+          if(sent)selfActions.arm(evt,selfResult)
+        }
+        return
+      }
       const muteResult=groupMute.applies(evt,parsed,muteFollowup)?await groupMute.handle(evt,parsed,{quotedRaw,followup:muteFollowup}):null
       if(muteResult?.handled){
         if(muteResult.text&&samePersona()&&replyStillCurrent(onebot,evt)){

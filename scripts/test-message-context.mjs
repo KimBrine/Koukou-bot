@@ -36,7 +36,7 @@ function setup({config={},getMsg,forwards={},chat,chatSettings,rateLimiter,visio
   const bot=createBot({config:cfg,logger,onebot,memory,chatSettings,rateLimiter,visionLLM,rand:()=>0.5,
     buildSystemPrompt:()=> '群聊人设',llm:{async chat(...args){requests.push(args);return chat?chat(...args):'明白了，继续聊呀'}},
     dailySummary:{capture(evt){captured.push(evt.message_id)},summaryGroups:()=>summaryGroups}})
-  function event(message,extra={}){const evt={post_type:'message',message_type:'group',user_id:user,group_id:group,
+  function event(message,extra={}){time=Math.max(time,Math.floor(Date.now()/1000)*1000);const evt={post_type:'message',message_type:'group',user_id:user,group_id:group,
     message_id:++ids,time:time/1000,sender:{nickname:'群友甲'},message:typeof message==='string'?[text(message)]:message,...extra}
     evt.messageContext=timeline.receive(evt);return evt}
   return {bot,memory,cfg,timeline,onebot,sent,requests,lookups,forwardReads,captured,event,advance:ms=>{time+=ms},time:()=>time}

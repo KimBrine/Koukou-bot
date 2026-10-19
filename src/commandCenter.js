@@ -17,6 +17,8 @@ const DEFINITIONS=[
   {id:'id-check-kick',name:'按核对结果移出成员',trigger:'/id_check_kick',description:'仍须满足原有核对记录、操作员、时限和机器人权限条件，仅精确指令触发',ai:'none',pattern:ID_CHECK_KICK_CMD_RE},
   {id:'poke',name:'拍一拍回应',trigger:'拍机器人头像',description:'只检测拍机器人自己的事件；默认使用原有私有回复语料',ai:'optional'},
   {id:'auto-plus-one',name:'自动 +1',trigger:'连续两条文字（可夹 QQ 表情）',description:'仅白名单群，连续段只跟一次；继续独立于静音和安静时段',ai:'none'},
+  {id:'self-recall',name:'帮忙撤回本人消息',trigger:'引用本人消息并 @机器人 帮我撤回',description:'仅撤回请求者在本群发出的原消息；没有引用时，只接住本人两分钟内的下一条补充。实际撤回须有群管理权限，受 QQ 时限约束',ai:'required',groupAction:true},
+  {id:'request-poke',name:'请求拍一拍自己',trigger:'@机器人 拍一拍我',description:'本人用自然语言请求拍一拍；实际拍到本人后，再按当前人格用 AI 回复一句话，不代拍别人',ai:'required',groupAction:true},
   {id:'owner-mute',name:'群管理自然语言禁言',trigger:'@机器人 禁言/解禁 指定成员',description:'所选群的群主，或同时拥有本群管理权限的已配置机器人管理员，可指定成员、引用发言人或明确上下文对象，支持批量与数学时长；默认一分钟，超过30天不执行',ai:'required',management:true},
   {id:'self-mute',name:'自助自然语言禁言',trigger:'@机器人 禁言我 十分钟',description:'仅所选群，由本人主动申请禁言自己；AI 理解当前请求，默认一分钟，超过30天不执行，不能替别人申请',ai:'required',management:true},
   {id:'whole-mute',name:'全员禁言开关',trigger:'@机器人 开启/关闭全员禁言',description:'所选群的群主，或同时拥有本群管理权限的已配置机器人管理员，可要求切换 QQ 原生全员禁言，不设置发言频率；暂不支持原生时段计划。此处开关只控制指令能力，不改变 QQ 当前禁言状态',ai:'required',management:true},
@@ -35,16 +37,16 @@ export function createCommandCenter({file,customCommands,config,logger,llm,now=D
   try {if(existsSync(file)){const value=JSON.parse(readFileSync(file,'utf8'));if(value.version!==1)throw Error('版本不支持');overrides=value.builtins||{}}}
   catch(err){throw Error(`指令中心设置读取失败：${err.message}`)}
   function base(d) {
-    const enabled=d.management?false:d.id==='poke'?Boolean(config.pokeEnabled):d.id==='auto-plus-one'?config.autoPlusOneEnabled===true:d.id==='id-check-kick'?Boolean(config.idCheckKickEnabled):d.id==='id-check'?Boolean(config.idCheckEnabled):true
+    const enabled=d.management||d.groupAction?false:d.id==='poke'?Boolean(config.pokeEnabled):d.id==='auto-plus-one'?config.autoPlusOneEnabled===true:d.id==='id-check-kick'?Boolean(config.idCheckKickEnabled):d.id==='id-check'?Boolean(config.idCheckEnabled):true
     const specific=d.id.startsWith('id-check')&&config.idCheckGroups?.length
-    return {...plain(d),enabled,scope:d.management||specific?'group':d.id==='auto-plus-one'||d.id.startsWith('id-check')?'groups':'all',groups:specific?[...config.idCheckGroups]:[],adminOnly:Boolean(d.protected || (d.id==='summary'&&hasAdmins(config.adminUsers))),naturalLanguage:false,responseMode:'fixed',aiPrompt:'根据当前人格，用一句简短自然的话回应对方拍一拍。',...overrides[d.id],...(d.protected?{adminOnly:true,naturalLanguage:false}:{})}
+    return {...plain(d),enabled,scope:d.management||d.groupAction||specific?'group':d.id==='auto-plus-one'||d.id.startsWith('id-check')?'groups':'all',groups:specific?[...config.idCheckGroups]:[],adminOnly:Boolean(d.protected || (d.id==='summary'&&hasAdmins(config.adminUsers))),naturalLanguage:false,responseMode:'fixed',aiPrompt:'根据当前人格，用一句简短自然的话回应对方拍一拍。',...overrides[d.id],...(d.protected?{adminOnly:true,naturalLanguage:false}:{})}
   }
   function all(){return DEFINITIONS.map(base)}
   function get(id){const d=DEFINITIONS.find(d=>d.id===id);return d?base(d):null}
   function cleanBuiltin(input){
     const d=DEFINITIONS.find(d=>d.id===input.id);if(!d)throw Error('未知内置指令')
     const old=get(d.id), scope=['all','groups','group','private'].includes(input.scope)?input.scope:old.scope
-    if(d.management&&scope!=='group')throw Error('禁言功能只能配置明确的指定群聊')
+    if((d.management||d.groupAction)&&scope!=='group')throw Error('禁言或本人互动功能只能配置明确的指定群聊')
     const groups=ids(input.groups??old.groups)
     if(scope==='group'&&!groups.length&&(input.enabled??old.enabled)!==false)throw Error('请至少选择一个适用群聊')
     return {enabled:(input.enabled??old.enabled)===true,scope,groups,adminOnly:d.protected?true:(input.adminOnly??old.adminOnly)===true,

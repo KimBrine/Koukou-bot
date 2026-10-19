@@ -343,6 +343,18 @@ export class OneBotClient extends EventEmitter {
     return this.api('send_group_forward_msg', { group_id: Number(groupId), messages }, timeoutMs)
   }
 
+  /** 撤回指定原生消息；群范围与作者由本人互动模块核实。 */
+  deleteMessage(messageId,timeoutMs=10000){
+    if(!/^-?\d{1,16}$/.test(String(messageId))||!Number.isSafeInteger(Number(messageId))||Number(messageId)===0)throw Error('撤回消息编号无效')
+    return this.api('delete_msg',{message_id:Number(messageId)},timeoutMs)
+  }
+
+  /** 主动拍群成员；目标由调用者固定，不发送文本模拟拍一拍。 */
+  pokeGroupMember(groupId,userId,timeoutMs=10000){
+    if(![groupId,userId].every(id=>/^\d{1,15}$/.test(String(id))&&Number.isSafeInteger(Number(id))&&Number(id)>0))throw Error('拍一拍群或成员无效')
+    return this.api('send_poke',{group_id:Number(groupId),user_id:Number(userId)},timeoutMs)
+  }
+
   /** 获取图片文件（返回 { file, url } 或报错） */
   getImage(file, timeoutMs = 15000) {
     return this.api('get_image', { file: String(file) }, timeoutMs)
