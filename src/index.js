@@ -22,6 +22,8 @@ import { createCustomCommandSchedule } from './customCommandSchedule.js'
 import { createTargetWatch } from './targetWatch.js'
 import { createChatSettings } from './chatSettings.js'
 import { createDailyPing } from './dailyPing.js'
+import { createQuietGreetings } from './quietGreetings.js'
+import { createPersonaGreetingLibrary } from './personaGreetings.js'
 import { createAdminServer } from './admin/server.js'
 import { createRateLimiter } from './humanize.js'
 import { createChatPromptBuilder } from './chatPrompt.js'
@@ -274,6 +276,11 @@ const runtimeStats = {
 
 const bot = createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt: systemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, commandCenter, longMemory })
 
+// 固定语库调度不使用模型；语库与人格正文绑定，发送状态与迁移语库分开保存。
+const personaGreetings=createPersonaGreetingLibrary({file:path.join(config.dataDir,'persona-greetings.json'),logger})
+const quietGreetings=createQuietGreetings({config,onebot,chatSettings,memory,logger,library:personaGreetings,
+  file:path.join(config.dataDir,'quiet-greetings-state.json')})
+
 // 本地控制台：机器人自己托管界面，用 Edge/Chrome 的 app 模式窗口打开就像一个桌面应用
 let adminServer = null
 if (config.adminEnabled) {
@@ -288,6 +295,7 @@ if (config.adminEnabled) {
     longMemory,
     runtimeStats,
     dailyPing,
+    quietGreetings, personaGreetings,
     bot,
     customCommands,
     commandCenter,
@@ -342,6 +350,7 @@ function shutdown() {
   logger.info('正在关闭，保存记忆…')
   memory.flush()
   bot.flush()
+  quietGreetings.stop()
   customSchedule.stop()
   dailySummary.stop()
   onebot.stop()
@@ -404,6 +413,7 @@ logger.info(config.adminEnabled
   : '机器人控制台未启用（ADMIN_ENABLED=0）')
 logger.info(`会话独立设置：${chatSettings.keys().length} 个会话有单独配置（data/chat-settings.json）`)
 logger.info(`定时指令：${dailyPing.describe()}`)
+logger.info(`固定语库早晚安：${config.quietGreetingsEnabled?'已启用（不调用AI）':'未启用'}；语库就绪 ${quietGreetings.status().groups.filter(g=>g.ready).length}/${quietGreetings.status().groups.length} 群`)
 if (config.idCheckEnabled) {
   const where = config.idCheckGroups.length > 0 ? config.idCheckGroups.join(', ') : '（未限制群）'
   const who =
@@ -421,5 +431,6 @@ dailySummary.schedule()
 if (config.longMemoryEnabled) longMemory.start()
 targetWatch.start()
 dailyPing.schedule()
+quietGreetings.start()
 
 onebot.run().catch((err) => logger.error(`OneBot 运行失败：${err.message}`))

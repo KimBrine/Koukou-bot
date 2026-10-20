@@ -303,6 +303,7 @@ export function loadConfig() {
     // 两条消息间隔不够时，最多等这么久再发（超过就放弃这条）——等一等是为了拟人，丢消息才是事故
     rateLimitWaitMaxMs: Math.max(0, Math.floor(num('RATE_LIMIT_WAIT_MAX_MS', 8000))),
     quietHours: String(env.QUIET_HOURS ?? '').trim(),
+    quietGreetingsEnabled: /^(1|true)$/i.test(String(env.QUIET_GREETINGS_ENABLED??'0')),
     // 安静时段是否"彻底静音"（默认是）：连被 @ 和私聊都不回。
     // 为什么默认开：真人睡着时不回任何消息，"凌晨被@就秒回"是很容易被看出的机器人特征。
     // 设 0 则退回旧行为：安静时段只是不主动搭话，被 @ 仍回。

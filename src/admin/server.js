@@ -34,6 +34,7 @@ const EDITABLE = [
   { key: 'PROACTIVE_RATE', label: '全局主动搭话概率', hint: '未单独配置的群使用这个百分比', live: true, type: 'rate' },
   { key: 'PROACTIVE_RATE_PER_GROUP', label: '按群独立概率', hint: '给指定群设置默认概率；移除后沿用全局。会话单独设置优先。', live: true, type: 'text', wide: true },
   { key: 'PROACTIVE_COOLDOWN_MS', label: '主动搭话冷却(ms)', hint: '同一个群两条主动消息的最小间隔', live: true, type: 'number' },
+  { key: 'QUIET_GREETINGS_ENABLED', label: '白名单群早晚安', hint: '按各群安静时段与人格固定语库随机发送，不调用AI；晚安只在开始边界触发，早安在结束后首次确认在线时触发。遵守会话总开关与静音名单。', live: false, type: 'bool' },
   { key: 'QUIET_HOURS', label: '安静时段', hint: '如 01:00-07:00；留空=不启用。默认停止普通聊天（连被@也不回）；拍一拍、自动 +1 单独控制', live: true, type: 'text' },
   {
     key: 'QUIET_HOURS_BLOCK_ALL',
@@ -184,7 +185,7 @@ function validateGroupConfig(key, value) {
   }
 }
 
-export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, bot, customCommands, commandCenter, restartBot }) {
+export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, quietGreetings, personaGreetings, bot, customCommands, commandCenter, restartBot }) {
   // 本实例自己的 .env（并行跑两个实例时，写死 rootDir\.env 会改到另一个实例的配置上）
   const envFile = config.envFile || path.join(config.rootDir, '.env')
   const logFile = path.join(config.logDir || path.join(config.rootDir, 'logs'), 'bot.log')
@@ -382,6 +383,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         proactiveRatePerGroup: [...(config.proactiveRatePerGroup ?? new Map())].map(([g, r]) => ({ groupId: g, rate: r })),
         emojiKeepRate: config.emojiKeepRate,
         quietHours: config.quietHours,
+        quietGreetings: quietGreetings?.status?.() ?? {enabled:false,groups:[]},
         replyMaxLines: config.replyMaxLines,
         lineMaxChars: config.replyLineMaxChars,
         activePersona: config.activePersona || '',
@@ -472,6 +474,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
   }
 
   function fieldEffective(key) {
+    if (key === 'QUIET_GREETINGS_ENABLED') return config.quietGreetingsEnabled?'1':'0'
     if (key === 'DEEPSEEK_REASONING_EFFORT') return config.deepseekReasoningEffort ?? ''
     const cur = readEnvFile(envFile)[key]
     const map = {
@@ -710,6 +713,29 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       const content = config.persona || buildSystemPrompt({ botName: config.botName || 'Koukou' })
       return { name, filename: `Koukou-${safe}-人格.txt`, content }
     },
+    async 'export-persona-package'(payload) {
+      const {buildSystemPrompt}=await import('../persona.js')
+      const name=String(payload?.name||config.activePersona||config.botName||'默认人格')
+      const content=payload?.content??(config.persona||quietGreetings?.defaultPersona?.()||buildSystemPrompt({botName:config.botName,now:new Date('2000-01-01T00:00:00Z')}))
+      if(typeof content!=='string'||!content.trim()||content.length>262144)throw Error('人格正文无效')
+      const safe=name.replace(/[\\/:*?"<>|\u0000-\u001f]/g,'_').slice(0,60)
+      const bundle={format:'koukou-persona',version:1,name,content,greetings:personaGreetings?.exportFor(content)??null}
+      return {filename:`Koukou-${safe}-人格.json`,content:JSON.stringify(bundle,null,2)}
+    },
+    async 'send-morning-greetings'() {
+      if(!quietGreetings)throw Error('早晚安未加载')
+      return quietGreetings.catchUpMorning()
+    },
+    async 'get-greeting-library'(payload) {
+      const content=String(payload?.content??config.persona??'')
+      return {library:personaGreetings?.exportFor(content)??null}
+    },
+    async 'save-greeting-library'(payload) {
+      if(!personaGreetings)throw Error('人格语库未加载')
+      const content=payload?.content
+      if(typeof content!=='string'||!content.trim()||content.length>262144)throw Error('请先填写有效的人格正文')
+      return {ok:true,library:personaGreetings.set(content,payload.library)}
+    },
     async 'import-persona'(payload) {
       const name = String(payload?.name ?? '').trim()
       if (typeof payload?.content !== 'string') throw Error('人格内容必须是纯文本')
@@ -720,6 +746,11 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       if (content.length > 262144 || content.includes('\u0000')) throw Error('人格文件过大或不是纯文本')
       const file = personaPath(name)
       if (existsSync(file) || listPersonas().some(p => p.name.toLowerCase() === name.toLowerCase())) throw Error('同名人格已存在，请修改名称；原人格不会被覆盖')
+      if(payload?.greetings){
+        if(!personaGreetings)throw Error('人格语库未加载')
+        personaGreetings.validateImport(content,payload.greetings)
+        personaGreetings.set(content,payload.greetings)
+      }
       mkdirSync(personaDir, { recursive: true })
       writeFileSync(file, content, { encoding: 'utf8', flag: 'wx' })
       return { ok: true, name, content }

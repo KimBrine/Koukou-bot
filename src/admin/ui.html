@@ -447,7 +447,7 @@ async function readPersonaFile(file){
   return content
 }
 function suggestPersonaName(filename){
-  const stem = filename.replace(/\.(txt|md)$/i, '')
+  const stem = filename.replace(/\.(txt|md|json)$/i, '')
   const match = /^Koukou-(.+?)-人格(?:-\d{4}-\d{2}-\d{2})?$/.exec(stem)
   const base = (match?.[1] || stem).replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').replace(/[. ]+$/, '').slice(0, 50) || '导入人格'
   let name = base, number = 2
@@ -455,9 +455,9 @@ function suggestPersonaName(filename){
   while (names.has(name.toLowerCase())) name = `${base}（${number++}）`
   return name
 }
-function previewPersonaImport(file, content){
+function previewPersonaImport(file, content, greetings=null){
   const root = document.getElementById('modalRoot')
-  root.innerHTML = `<div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="personaImportTitle"><h2 id="personaImportTitle">导入人格</h2><p>预览后保存到人格库。已有的人格会保留，可随时切换。</p><div class="note">文件：${esc(file.name)}</div><label class="field-label" for="personaImportName">人格名称</label><input id="personaImportName" type="text" maxlength="60"><label class="field-label" for="personaImportContent">内容预览（可以编辑）</label><textarea id="personaImportContent" style="min-height:210px"></textarea><label class="row"><input id="personaImportActivate" type="checkbox">导入后立即使用</label><div class="inline-error" id="personaImportError" role="status"></div><div class="row"><button class="btn" id="personaImportCancel">取消</button><button class="btn primary" id="personaImportCommit">保存到人格库</button></div></div>`
+  root.innerHTML = `<div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="personaImportTitle"><h2 id="personaImportTitle">导入人格</h2><p>预览后保存到人格库；人格包中的早晚安语库一并导入。编辑人格正文后会舍弃原语库，避免语气混用。</p><div class="note">文件：${esc(file.name)}</div><label class="field-label" for="personaImportName">人格名称</label><input id="personaImportName" type="text" maxlength="60"><label class="field-label" for="personaImportContent">内容预览（可以编辑）</label><textarea id="personaImportContent" style="min-height:210px"></textarea><label class="row"><input id="personaImportActivate" type="checkbox">导入后立即使用</label><div class="inline-error" id="personaImportError" role="status"></div><div class="row"><button class="btn" id="personaImportCancel">取消</button><button class="btn primary" id="personaImportCommit">保存到人格库</button></div></div>`
   root.classList.add('show'); root.setAttribute('aria-hidden', 'false')
   root.querySelector('#personaImportName').value = suggestPersonaName(file.name)
   root.querySelector('#personaImportContent').value = content
@@ -479,7 +479,7 @@ function previewPersonaImport(file, content){
     if (pending) return
     pending = true; button.disabled = true; error.textContent = ''
     try {
-      const imported = await api('/api/action/import-persona', {name, content:text})
+      const imported = await api('/api/action/import-persona', {name, content:text, greetings: text.trim()===content.trim()?greetings:null})
       personaCache[imported.name] = imported.content; selectedPersona = imported.name
       let activationError = ''
       if (activate) {
@@ -500,7 +500,7 @@ function pagePersona(){
   <div class="flexbar">
     <select id="personaSel" aria-label="选择人格">${personas.map(p=>`<option value="${esc(p.name)}" ${cur?.name === p.name?'selected':''}>${esc(p.name)}${p.active?'（使用中）':''}</option>`).join('')}</select>
     <button class="btn primary" id="activate">切换使用</button>
-    <button class="btn" id="importPersonaBtn">导入文件</button><input id="importPersonaFile" type="file" accept=".txt,.md,text/plain,text/markdown" hidden>
+    <button class="btn" id="importPersonaBtn">导入文件</button><input id="importPersonaFile" type="file" accept=".txt,.md,.json,text/plain,text/markdown,application/json" hidden>
     <button class="btn" id="exportActivePersona">导出当前使用</button>
     <input id="newPersona" type="text" placeholder="新人格名称" style="width:160px">
     <button class="btn" id="createPersona">新建</button>
@@ -512,10 +512,11 @@ function pagePersona(){
     <div class="flexbar">
       <button class="btn primary" id="savePersona">保存</button>
       <button class="btn" id="exportEditedPersona">导出编辑内容</button>
+      <button class="btn" id="editGreetingLibrary">编辑此人格的早晚安语库</button>
       <span class="mut" id="personaHint">选择左侧下拉可切换要编辑的人格</span>
     </div>
   </div>
-  <div class="note">导出当前使用：下载正在生效的人格。导出编辑内容：下载编辑框中的文字，包含尚未保存的改动。均为可分享的 .txt 文件。</div>
+  <div class="note">导出当前使用：下载人格与其早晚安语库的 JSON 人格包，可迁移至其他实例。导出编辑内容：只下载文字 TXT。导出不额外打包群号配置或聊天记录；切换人格只读取对应语库，缺失时跳过问候。</div>
   <h2>系统附加说明（只读）</h2>
   <div class="card"><div class="mono" style="max-height:260px;overflow:auto">${esc(appendixText)}</div></div>`
 }
@@ -599,9 +600,10 @@ function configForm(keys, hint){
   }).join('') + `<div class="flexbar sticky-save"><button class="btn primary" id="saveCfg" disabled>没有待保存的改动</button><span class="mut" id="cfgDirty">${hint||''}</span></div>`
 }
 function pageHumanize(){
+  const greetings=state?.config?.quietGreetings
   return `<h1>回复行为</h1><div class="sub">这里修改“沿用全局”的默认值；会话单独设置优先，其次是按群独立概率，最后才是全局概率。</div>
   <div class="flexbar"><a class="btn" href="#chats">管理白名单群聊 →</a><span class="note">概率填写百分比，例如 20%，不需要输入配置格式。</span></div>
-  <div class="card">${configForm(['PROACTIVE_RATE','PROACTIVE_RATE_PER_GROUP','PROACTIVE_COOLDOWN_MS','EMOJI_KEEP_RATE','HUMAN_DELAY_MIN_MS','HUMAN_DELAY_MAX_MS','REPLY_LENGTH_MATCH','REPLY_MAX_LINES','REPLY_LINE_MAX_CHARS','LINE_GAP_MIN_MS','LINE_GAP_MAX_MS','RATE_LIMIT_PER_HOUR','RATE_LIMIT_MIN_GAP_MS','QUIET_HOURS','HISTORY_LIMIT','CONTEXT_REMEMBER_ALL','POKE_REPLY_ENABLED','AUTO_PLUS_ONE_ENABLED'],'修改全局概率不会覆盖已经单独设置的群；限流相关参数需重启生效。')}</div>`
+  <div class="card">${configForm(['PROACTIVE_RATE','PROACTIVE_RATE_PER_GROUP','PROACTIVE_COOLDOWN_MS','EMOJI_KEEP_RATE','HUMAN_DELAY_MIN_MS','HUMAN_DELAY_MAX_MS','REPLY_LENGTH_MATCH','REPLY_MAX_LINES','REPLY_LINE_MAX_CHARS','LINE_GAP_MIN_MS','LINE_GAP_MAX_MS','RATE_LIMIT_PER_HOUR','RATE_LIMIT_MIN_GAP_MS','QUIET_HOURS','QUIET_GREETINGS_ENABLED','HISTORY_LIMIT','CONTEXT_REMEMBER_ALL','POKE_REPLY_ENABLED','AUTO_PLUS_ONE_ENABLED'],'修改全局概率不会覆盖已经单独设置的群；限流相关参数需重启生效。')}</div><div class="note">固定语库早晚安：${greetings?.enabled?'已启用':'未启用'}；语库就绪 ${greetings?.groups?.filter(g=>g.ready).length||0}/${greetings?.groups?.length||0} 群。检查时段、选句和发送均不调用 AI。<a href="#persona">前往人格页面编辑或导出语库 →</a> <button class="btn sm" id="catchUpMorning">补发本轮未发的早安</button></div>`
 }
 function pageApi(){
   return `<h1>模型与接口</h1><div class="sub">配置对话模型、视觉模型与密钥。带“需重启”的改动在重启机器人后生效。</div>
@@ -862,8 +864,34 @@ async function bind(){
   }
   const exportActive = document.getElementById('exportActivePersona')
   if (exportActive) exportActive.onclick = async () => {
-    try { const p = await api('/api/action/export-persona', {}); downloadPersonaFile(p.filename, p.content); toast('已导出当前使用的人格') }
+    try { const p = await api('/api/action/export-persona-package', {}); downloadPersonaFile(p.filename, p.content); toast('已导出当前使用的人格') }
     catch(e){ toast(e.message, true) }
+  }
+  const greetingEditor=document.getElementById('editGreetingLibrary')
+  if(greetingEditor)greetingEditor.onclick=async()=>{
+    const content=document.getElementById('personaText').value
+    if(!content.trim())return toast('请先填写人格正文',true)
+    try{
+      const result=await api('/api/action/get-greeting-library',{content}),lib=result.library||{}
+      const root=document.getElementById('modalRoot')
+      root.innerHTML=`<div class="modal wide" role="dialog" aria-modal="true"><h2>此人格的早晚安语库</h2><p>每段用空行分隔，每种最多24段，每段最多240字。定时随机发送，不调用AI；多段时避免连续选中同一句。正文改动后需为新版本设置语库。</p><h3>早安</h3><textarea id="morningPhrases" style="min-height:130px"></textarea><h3>晚安</h3><textarea id="nightPhrases" style="min-height:130px"></textarea><div class="row"><button class="btn" id="closePhrases">取消</button><button class="btn primary" id="savePhrases">保存语库</button></div></div>`
+      root.querySelector('#morningPhrases').value=(lib.goodmorning||[]).join('\n\n')
+      root.querySelector('#nightPhrases').value=(lib.goodnight||[]).join('\n\n')
+      root.classList.add('show');root.setAttribute('aria-hidden','false')
+      const close=()=>{root.classList.remove('show');root.setAttribute('aria-hidden','true');root.innerHTML=''}
+      root.querySelector('#closePhrases').onclick=close
+      root.querySelector('#savePhrases').onclick=async()=>{
+        const button=root.querySelector('#savePhrases');button.disabled=true
+        const lines=id=>root.querySelector(id).value.split(/\n\s*\n/).map(s=>s.trim()).filter(Boolean)
+        try{await api('/api/action/save-greeting-library',{content,library:{goodmorning:lines('#morningPhrases'),goodnight:lines('#nightPhrases')}});close();toast('语库已保存，只供此人格版本使用')}
+        catch(e){button.disabled=false;toast(e.message,true)}
+      }
+    }catch(e){toast(e.message,true)}
+  }
+  const morningCatchup=document.getElementById('catchUpMorning')
+  if(morningCatchup)morningCatchup.onclick=async()=>{
+    morningCatchup.disabled=true
+    try{const result=await api('/api/action/send-morning-greetings',{});toast(`已补发 ${result.sent} 群早安${result.uncertain?'；部分发送结果待核实':''}；已发、寂静时段内或语库缺失的群跳过`)}catch(e){toast(e.message,true)}finally{morningCatchup.disabled=false}
   }
   const exportEdited = document.getElementById('exportEditedPersona')
   if (exportEdited) exportEdited.onclick = () => {
@@ -876,7 +904,14 @@ async function bind(){
     personaImportButton.onclick = () => personaImportFile.click()
     personaImportFile.onchange = async () => {
       const file = personaImportFile.files?.[0]; personaImportFile.value = ''; if (!file) return
-      try { previewPersonaImport(file, await readPersonaFile(file)) }
+      try {
+        if(/\.json$/i.test(file.name)){
+          if(file.size>1200000)throw Error('人格包过大')
+          const pkg=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(await file.arrayBuffer()).replace(/^\uFEFF/,''))
+          if(pkg.format!=='koukou-persona'||pkg.version!==1||typeof pkg.content!=='string')throw Error('不是支持的人格包')
+          previewPersonaImport(file,pkg.content,pkg.greetings)
+        }else previewPersonaImport(file, await readPersonaFile(file))
+      }
       catch(e){ toast(e.message, true) }
     }
   }
