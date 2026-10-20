@@ -421,6 +421,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         visionProvider: config.visionProvider,
         visionCustomModel: config.visionCustomModel,
         visionModelDeepseek: config.visionModel || '',
+        visionCustomReady: Boolean(config.visionCustomApiKey && config.visionCustomBaseUrl && config.visionCustomModel),
         visionModelDashscope: config.dashscopeModel || '',
         stickerTagProvider: config.stickerTagProvider,
         visionModelName: config.visionProvider === 'deepseek' ? (config.visionModel || 'deepseek-flash') : config.dashscopeModel,

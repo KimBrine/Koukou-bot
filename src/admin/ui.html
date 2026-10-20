@@ -785,7 +785,9 @@ function visionCard(){
       '<option value="dashscope"' + sel('dashscope', provider) + '>通义千问</option>' +
       '<option value="custom"' + sel('custom', provider) + '>自定义（OpenAI 兼容）</option>' +
       '</select>'),
-    row('识图模型', '<div class="row" style="display:flex;gap:8px"><input id="vcModelPick" list="vcModelList" value="' + esc(modelByProvider[provider] || '') + '" placeholder="先点右边的自动检测" style="flex:1"><button class="btn" type="button" id="vcDetect">自动检测模型</button></div><datalist id="vcModelList"></datalist><div class="mut" id="vcDetectHint" style="font-size:12px;margin-top:4px"></div>'),
+    row('识图模型', '<div class="row" style="display:flex;gap:8px"><select id="vcModel" style="flex:1">' +
+      '<option value="' + esc(modelByProvider[provider] || '') + '"' + (modelByProvider[provider] ? ' selected' : '') + '>' + esc(modelByProvider[provider] || '（先点自动检测）') + '</option>' +
+      '</select><button class="btn" type="button" id="vcDetect">自动检测模型</button></div><div class="mut" id="vcDetectHint" style="font-size:12px;margin-top:4px"></div>'),
     row('自定义接口地址', '<input id="vcBase" value="' + esc(s.visionCustomBaseUrl || '') + '" placeholder="https://你的服务/v1（选择自定义时必填）">'),
     row('自定义 Key', '<input id="vcKey" type="password" placeholder="留空表示不修改"><div class="mut" style="font-size:12px;margin-top:4px">选自定义时，检测和识图都用这个 Key</div>'),
     row('表情包打标模型', '<select id="vcTag">' +
@@ -995,21 +997,30 @@ async function bind(){
   if(page === 'commands') CommandCenterUI.bind({api,toast,load,render,ask})
   // 识图设置：检测 / 切换 / 保存
   const vcProvider = document.getElementById('vcProvider')
-  const vcModelPick = document.getElementById('vcModelPick')
+  const vcModel = document.getElementById('vcModel')
   const vcDetect = document.getElementById('vcDetect')
   const vcDetectHint = document.getElementById('vcDetectHint')
-  const vcList = document.getElementById('vcModelList')
+  const visionModelCache = {}
   const vcValueOf = (p) => {
     const s = state?.config || {}
     if (p === 'deepseek') return s.visionModelDeepseek || ''
     if (p === 'dashscope') return s.visionModelDashscope || ''
     return s.visionCustomModel || ''
   }
-  if (vcProvider && vcModelPick) {
+  const fillVisionModels = (provider, models, current) => {
+    if (!vcModel) return
+    const list = (models && models.length) ? models.slice() : []
+    if (current && list.indexOf(current) < 0) list.unshift(current)
+    vcModel.innerHTML = list.length
+      ? list.map(function(id){ return '<option value="' + esc(id) + '"' + (id === current ? ' selected' : '') + '>' + esc(id) + '</option>' }).join('')
+      : '<option value="">（先点自动检测）</option>'
+  }
+  if (vcProvider && vcModel) {
     vcProvider.onchange = () => {
-      vcModelPick.value = vcValueOf(vcProvider.value)
-      if (vcList) vcList.innerHTML = ''
-      if (vcDetectHint) vcDetectHint.textContent = '切换了服务商，重新检测一下模型列表'
+      const p = vcProvider.value
+      const current = vcValueOf(p)
+      fillVisionModels(p, visionModelCache[p] || [], current)
+      if (vcDetectHint) vcDetectHint.textContent = visionModelCache[p] ? ('已缓存 ' + visionModelCache[p].length + ' 个型号') : '切换了服务商，点自动检测拿列表'
     }
   }
   if (vcDetect) vcDetect.onclick = async () => {
@@ -1023,9 +1034,10 @@ async function bind(){
     if (vcDetectHint) vcDetectHint.textContent = '检测中…'
     try {
       const r = await api('/api/action/detect-vision-models', payload)
-      if (vcList) vcList.innerHTML = (r.models || []).map(m => '<option value="' + esc(m.id) + '"></option>').join('')
-      if (vcDetectHint) vcDetectHint.textContent = '检测到 ' + r.count + ' 个模型，点输入框可以选'
-      if (vcModelPick && !vcModelPick.value && r.models && r.models[0]) vcModelPick.value = r.models[0].id
+      const ids = (r.models || []).map(function(m){ return m.id })
+      visionModelCache[provider] = ids
+      fillVisionModels(provider, ids, vcModel.value || vcValueOf(provider))
+      if (vcDetectHint) vcDetectHint.textContent = '检测到 ' + r.count + ' 个型号，直接在下拉里选'
     } catch (e) {
       if (vcDetectHint) vcDetectHint.textContent = '检测失败：' + e.message
       toast('检测失败：' + e.message, true)
@@ -1036,7 +1048,7 @@ async function bind(){
   if (vcSave) vcSave.onclick = async () => {
     const hint = document.getElementById('vcHint')
     const provider = vcProvider.value
-    const model = vcModelPick.value.trim()
+    const model = vcModel.value.trim()
     vcSave.disabled = true
     try {
       await api('/api/action/set-config', { key: 'VISION_PROVIDER', value: provider })
@@ -1058,11 +1070,22 @@ async function bind(){
   // 工作台：识图模型切换
   const quickVision = document.getElementById('quickVision')
   if (quickVision) quickVision.onchange = async () => {
+    const target = quickVision.value
+    const prev = state?.config?.visionProvider || 'deepseek'
+    if (target === 'custom' && !state?.config?.visionCustomReady) {
+      toast('自定义识图还没配置好，请到「模型与接口 → 识图设置」填写地址和 Key', true)
+      quickVision.value = prev
+      return
+    }
     try {
-      await api('/api/action/set-config', { key: 'VISION_PROVIDER', value: quickVision.value })
+      await api('/api/action/set-config', { key: 'VISION_PROVIDER', value: target })
       await load()
-      toast(quickVision.value === 'dashscope' ? '识图已切换到通义千问' : '识图已切换到 DeepSeek')
-    } catch (e) { toast('切换失败：' + e.message, true) }
+      const label = target === 'dashscope' ? '通义千问' : target === 'custom' ? '自定义识图' : 'DeepSeek'
+      toast('识图已切换到 ' + label)
+    } catch (e) {
+      quickVision.value = prev
+      toast('切换失败：' + e.message, true)
+    }
   }
   // 工作台快捷开关
   const quickTiming = document.getElementById('quickTiming')
