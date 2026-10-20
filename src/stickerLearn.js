@@ -86,12 +86,14 @@ export function createStickerLearner({ config, logger, onebot, stickers, filterL
   }
 
   function learnFromMessage(message = {}) {
-    const { images, chatKey } = message
+    // 兼容旧调用：只传 groupId 时等价于 g<群号>
+    const { images, groupId } = message
+    const chatKey = message.chatKey || (groupId ? 'g' + groupId : '')
     if (!allowed(chatKey) || !stickers || !filterLLM?.describeImages || !tagLLM?.describeImages || !images?.length) return Promise.resolve(null)
     if (now() - windowStart >= 3600000) { windowStart = now(); used = 0 }
     if (used >= Math.max(0, config.stickerLearnPerHour || 0)) return Promise.resolve(null)
     used++
-    const task = queue.then(() => learn(message)).catch(err => {
+    const task = queue.then(() => learn({ ...message, chatKey })).catch(err => {
       logger?.warn?.(`[表情包学习] 未收录：${err.message}`); return null
     })
     queue = task.then(() => {})
