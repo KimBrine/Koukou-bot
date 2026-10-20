@@ -83,10 +83,13 @@ if (-not $consoleUp) {
   if (Test-Ping $consolePort) {
     $state.healthFails = 0
   } else {
-    $state.healthFails = $state.healthFails + 1
-    $actions += ('⚠ 控制台无响应（连续 {0} 次）' -f $state.healthFails)
-    if ($state.healthFails -ge 2) {
-      $actions += '机器人假死 → 结束并重启任务'
+    # 复检一次：10 秒仍无响应就判定卡死，立刻重启（不必等下一轮）
+    Start-Sleep -Seconds 10
+    if (Test-Ping $consolePort) {
+      $state.healthFails = 0
+    } else {
+      $state.healthFails = $state.healthFails + 1
+      $actions += '机器人卡死（端口在但不响应）→ 结束并重启任务'
       Restart-BotTask
       $state.healthFails = 0
     }

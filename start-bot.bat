@@ -75,7 +75,7 @@ echo.
 echo [3/3] 启动机器人 ...
 cd /d "%BOTDIR%"
 start "" http://127.0.0.1:%CONSOLE_PORT%/
-node "%BOTDIR%\src\index.js" --profile=%BOT_PROFILE% >> "%BOT_LOG_DIR%\console.log" 2>&1
+node "%BOTDIR%\src\index.js" --profile=%BOT_PROFILE% 1>nul 2>>"%BOT_LOG_DIR%\console-err.log"
 
 echo.
 echo ===== 机器人已退出 =====
