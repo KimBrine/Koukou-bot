@@ -114,5 +114,15 @@ try {
     assert.throws(()=>client({reasoningEffort:'invalid'}),/思考强度/)
     await client({enableThinking:false}).chat('p',[]);assert.equal(bodies[4].enable_thinking,false);assert.equal(Object.hasOwn(bodies[4],'reasoning_effort'),false)
   })
+  await test('空回复重试保留DeepSeek max，不关闭思考', async () => {
+    const bodies=[]
+    globalThis.fetch=async(_, options)=>{
+      bodies.push(JSON.parse(options.body))
+      return bodies.length===1 ? { ok:true, json:async()=>({ choices:[{ message:{ content:'' }, finish_reason:'stop' }] }) } : success()
+    }
+    await client({ model:'deepseek-flash', reasoningEffort:'max' }).chat('p',[])
+    assert.equal(bodies.length,2)
+    for (const body of bodies) { assert.equal(body.reasoning_effort,'max'); assert.deepEqual(body.thinking,{type:'enabled'}) }
+  })
   console.log(`${passed} cases passed`)
 } finally {globalThis.fetch=originalFetch}

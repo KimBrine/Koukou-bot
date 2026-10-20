@@ -18,6 +18,8 @@ import { loadPokeReplies, createPokeReplier } from './pokeReplies.js'
 import { createLongMemory } from './longMemory.js'
 import { createCustomCommands } from './customCommands.js'
 import { createCommandCenter } from './commandCenter.js'
+import { createStickers } from './stickers.js'
+import { createStickerLearner } from './stickerLearn.js'
 import { createCustomCommandSchedule } from './customCommandSchedule.js'
 import { createTargetWatch } from './targetWatch.js'
 import { createChatSettings } from './chatSettings.js'
@@ -199,7 +201,7 @@ const memoryLLM = new DeepSeekClient({
 const longMemory = createLongMemory({
   file: path.join(config.dataDir, 'long-memory.json'),
   logger,
-  llm: { chat: (prompt, messages) => memoryLLM.chat(prompt, messages) },
+  llm: { chat: (prompt, messages, options) => memoryLLM.chat(prompt, messages, options) },
   maxChars: config.longMemoryMaxChars,
   intervalMs: config.longMemoryIntervalMs,
 })
@@ -207,6 +209,18 @@ memory.onEvict = (key, entries) => longMemory.addEvicted(key, entries)
 
 // 自定义指令：关键词命中回固定内容（含变量替换）与定时推送，不调用模型
 const customCommands = createCustomCommands({ file: path.join(config.dataDir, 'custom-commands.json'), logger })
+
+// 表情包库：图片存 data/stickers，模型可用 [贴纸: 名称] 指定发送
+const stickers = createStickers({ dir: path.join(config.dataDir, 'stickers'), logger })
+const stickerFilterLLM = config.deepseekApiKey ? new DeepSeekClient({
+  apiKey: config.deepseekApiKey, baseUrl: config.deepseekBaseUrl, model: 'deepseek-flash',
+  reasoningEffort: 'max', temperature: 0.2, maxTokens: undefined,
+  timeoutMs: Math.max(config.timeoutMs, 180000), maxRetries: config.maxRetries,
+  maxConcurrency: 1, logger, label: '表情包初筛(DeepSeek Flash)',
+}) : null
+const stickerTagLLM = createSummaryVisionClient({ config: { ...config, summaryUnrestricted: true }, logger })
+const stickerLearner = createStickerLearner({ config, logger, onebot, stickers,
+  filterLLM: stickerFilterLLM, tagLLM: stickerTagLLM, imageCache: sharedImageCache })
 const commandCenter = createCommandCenter({file:path.join(config.dataDir,'command-center.json'),customCommands,config,logger,llm})
 
 // 联网搜索（百度千帆）：仅私聊与被@时可用，模型自行判断是否需要
@@ -274,7 +288,7 @@ const runtimeStats = {
   },
 }
 
-const bot = createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt: systemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, commandCenter, longMemory })
+const bot = createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt: systemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, commandCenter, longMemory, stickers, stickerLearner })
 
 // 固定语库调度不使用模型；语库与人格正文绑定，发送状态与迁移语库分开保存。
 const personaGreetings=createPersonaGreetingLibrary({file:path.join(config.dataDir,'persona-greetings.json'),logger})
@@ -298,6 +312,8 @@ if (config.adminEnabled) {
     quietGreetings, personaGreetings,
     bot,
     customCommands,
+    llm,
+    stickers,
     commandCenter,
     restartBot: () => {
       // 让一个独立进程在 1.2 秒后杀掉当前实例并用计划任务重新拉起（避免自己杀自己杀不干净）
@@ -333,6 +349,17 @@ const customSchedule = createCustomCommandSchedule({
 })
 customSchedule.start()
 
+// 事件循环看门狗：正常每秒最多延迟几十毫秒；超过 1.5 秒说明有同步代码卡住，
+// 恢复后会打一条带时间的告警，方便定位是哪一步（控制台 / 消息处理）把进程卡死。
+let lastTickAt = Date.now()
+const watchdog = setInterval(() => {
+  const now = Date.now()
+  const lag = now - lastTickAt - 1000
+  lastTickAt = now
+  if (lag > 1500) logger.warn(`[看门狗] 事件循环被阻塞约 ${(lag / 1000).toFixed(1)} 秒（${new Date().toLocaleTimeString()}）`)
+}, 1000)
+if (watchdog.unref) watchdog.unref()
+
 onebot.on('message', (evt) => {
   bot.handleMessage(evt).catch((err) => logger.error(`处理消息异常：${err?.stack || err}`))
 })
@@ -364,6 +391,9 @@ process.on('uncaughtException', (err) => logger.error(`未捕获异常：${err?.
 
 logger.info('===== DeepSeek × QQ 机器人启动 =====')
 logger.info(`模型：${config.deepseekModel}｜DeepSeek思考强度：${config.deepseekReasoningEffort ?? '服务端默认'}`)
+if (config.deepseekReasoningEffort && config.deepseekReasoningEffort !== 'none' && config.maxTokens < 800) {
+  logger.warn(`思考强度开启但 MAX_TOKENS=${config.maxTokens} 偏小：思考会占用输出预算，建议 ≥ 1200（否则可能出现空回复）`)
+}
 logger.info(
   visionLLM
     ? `视觉模型已启用：${config.visionProvider === 'deepseek' ? config.visionModel || 'deepseek-flash' : config.dashscopeModel} @ ${
@@ -425,6 +455,7 @@ logger.info(`管理员（ADMIN_USERS）：${config.adminUsers.length ? config.ad
   const cmds = typeof customCommands?.all === 'function' ? customCommands.all() : []
   const sched = cmds.filter((c) => c.scheduleEnabled && (c.scheduleTimes || []).length).length
   logger.info(`自定义指令：${cmds.length} 条${sched ? `（其中 ${sched} 条带定时推送）` : ''}`)
+  logger.info(`表情包：${stickers.count()} 张${config.stickersEnabled ? '' : '（已关闭）'}${config.stickerLearnEnabled ? `｜群聊学习开启（每小时 ${config.stickerLearnPerHour} 张）` : ''}${config.stickerAutoRate > 0 ? `｜主动发 ${Math.round(config.stickerAutoRate * 100)}%` : ''}`)
 }
 
 dailySummary.schedule()

@@ -150,6 +150,8 @@ export function loadConfig() {
     deepseekApiKey: String(env.DEEPSEEK_API_KEY ?? '').trim(),
     deepseekBaseUrl: String(env.DEEPSEEK_BASE_URL ?? 'https://api.deepseek.com').replace(/\/+$/, ''),
     deepseekModel: String(env.DEEPSEEK_MODEL ?? 'deepseek-chat'),
+    // 界面上的供应商选择，只用于预填地址；真正生效的是 baseUrl + model
+    modelProvider: String(env.MODEL_PROVIDER ?? 'deepseek').trim().toLowerCase(),
     deepseekReasoningEffort: String(env.DEEPSEEK_REASONING_EFFORT ?? '').trim().toLowerCase() || undefined,
 
     // 视觉模型（通义千问 DashScope，OpenAI 兼容模式），用于读图/表情包
@@ -313,8 +315,10 @@ export function loadConfig() {
 
     // 回复长度自适应与多行回复（长度跟着对方走；以一行为主，偶尔 2~3 行，逐行分条发送）
     replyLengthMatch: String(env.REPLY_LENGTH_MATCH ?? '1').toLowerCase() !== '0' && String(env.REPLY_LENGTH_MATCH ?? '1').toLowerCase() !== 'false',
-    replyMaxLines: Math.max(1, Math.min(5, Math.floor(num('REPLY_MAX_LINES', 3)))),
-    replyLineMaxChars: Math.max(10, Math.min(200, Math.floor(num('REPLY_LINE_MAX_CHARS', 40)))),
+    // 长回答模式：开启后不再"跟着对方字数"压缩，允许写完整过程（解题/写代码时用）
+    replyLongMode: ['1', 'true'].includes(String(env.REPLY_LONG_MODE ?? '0').trim().toLowerCase()),
+    replyMaxLines: Math.max(1, Math.min(20, Math.floor(num('REPLY_MAX_LINES', 3)))),
+    replyLineMaxChars: Math.max(10, Math.min(1000, Math.floor(num('REPLY_LINE_MAX_CHARS', 40)))),
     // 分条发送之间的间隔（比首次"打字"短：第二条是想接着说的，不该等太久）
     lineGapMinMs: Math.max(0, Math.floor(num('LINE_GAP_MIN_MS', 500))),
     lineGapMaxMs: Math.max(0, Math.floor(num('LINE_GAP_MAX_MS', 1600))),
@@ -326,6 +330,19 @@ export function loadConfig() {
     longMemoryMaxChars: Math.max(300, Math.min(6000, Math.floor(num('LONG_MEMORY_MAX_CHARS', 1500)))),
     longMemoryIntervalMs: Math.max(60000, Math.floor(num('LONG_MEMORY_INTERVAL_MS', 600000))),
 
+    // 表情包库：模型可以在回复里用 [贴纸: 关键词] 让程序发图
+    // 在回复末尾显示本次"思考耗时"（默认关；开了方便直观看到模型快慢）
+    replyTimingEnabled: ['1', 'true'].includes(String(env.REPLY_TIMING_ENABLED ?? '0').trim().toLowerCase()),
+    stickersEnabled: !['0', 'false'].includes(String(env.STICKERS_ENABLED ?? '1').trim().toLowerCase()),
+    // 主动发表情包的概率（百分比）：0 = 只有模型明确要求时才发
+    stickerAutoRate: Math.min(1, Math.max(0, num('STICKER_AUTO_RATE', 0) / 100)),
+    // 从独立指定的群学习表情包，留空不采集，不继承聊天白名单
+    stickerLearnGroups: new Set(String(env.STICKER_LEARN_GROUPS ?? '').split(/[,，\s]+/).filter(x => /^\d+$/.test(x) && Number(x) > 0).map(Number)),
+    stickerLearnEnabled: ['1', 'true'].includes(String(env.STICKER_LEARN_ENABLED ?? '0').trim().toLowerCase()),
+    // 每小时最多学习几张，防止刷屏式采集和 API 花销
+    stickerLearnPerHour: Math.max(0, Math.min(60, Math.floor(num('STICKER_LEARN_PER_HOUR', 6)))),
+    // 单条回复最多发几张，避免刷屏
+    stickerMaxPerReply: Math.max(1, Math.min(3, Math.floor(num('STICKER_MAX_PER_REPLY', 1)))),
     temperature: Math.min(2, Math.max(0, num('TEMPERATURE', 1.2))),
     maxTokens: Math.max(1, Math.floor(num('MAX_TOKENS', 500))),
     timeoutMs: Math.max(5000, Math.floor(num('TIMEOUT_MS', 90000))),

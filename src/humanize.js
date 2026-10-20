@@ -90,6 +90,21 @@ export function limitDecoration(text, keepRate = 0.2) {
  * 但**逐行处理**——不能把多行拼成一个字符串再清洗，否则某行被删空后换行会被压平，
  * 两条消息会粘成一条（表现为「笑死我了 你也太逗了」这种带空格的一行）。
  */
+/**
+ * 判断一行是不是数学/代码：这类内容里的括号、等号、运算符不能被当成颜文字删掉。
+ * 例：(x-2)(x-3)=0、a^2+b^2、x=3、`code`、if (a < b)
+ */
+export function looksLikeCodeOrMath(line) {
+  const s = String(line ?? '')
+  if (!s) return false
+  if (/\`[^\`]+\`/.test(s)) return true
+  if (/[A-Za-z0-9}]\s*[=<>]\s*[-A-Za-z0-9(\[]/.test(s)) return true
+  if (/[A-Za-z0-9)(]\s*[\^+*/]\s*[A-Za-z0-9(]/.test(s)) return true
+  if (/[A-Za-z0-9]\s*-\s*[A-Za-z0-9(]/.test(s) && /[=()\[\]^+*/]/.test(s)) return true
+  if (/[√∑∫≤≥≠≈π]/.test(s)) return true
+  return false
+}
+
 export function limitDecorationLines(lines, keepRate = 0.2) {
   const list = (Array.isArray(lines) ? lines : [lines])
     .map((s) => String(s ?? '').trim())
@@ -98,6 +113,8 @@ export function limitDecorationLines(lines, keepRate = 0.2) {
   if (Math.random() < keepRate) return list
   return list.map((line) => {
     if (!hasDecoration(line)) return line
+    // 数学/代码行原样保留：把 (x-2) 当成颜文字删掉会让解题答案变成乱码
+    if (looksLikeCodeOrMath(line)) return line
     const stripped = stripDecoration(line)
     // 整行只有装饰（例如整条就是个表情）：去掉就空了，保留原样，避免发出空消息
     return stripped.replace(/[\s\p{P}]/gu, '').length === 0 ? line : stripped

@@ -26,8 +26,13 @@ const scripts = [
   'test-self-actions.mjs',
   'test-summary-depth.mjs',
   'test-summary-unrestricted.mjs',
+  'test-model-catalog.mjs',
+  'test-stickers.mjs',
+  'test-sticker-learn.mjs',
   'test-summary-request-recovery.mjs',
   'test-quiet-greetings.mjs',
+  'test-memory-edit.mjs',
+  'test-dev-integration.mjs',
 ]
 for (const file of scripts) {
   const result = spawnSync(process.execPath, [path.join(root, 'scripts', file)], { cwd: root, stdio: 'inherit', windowsHide: true })

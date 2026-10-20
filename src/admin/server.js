@@ -1,8 +1,11 @@
+import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
+import { PROVIDERS, REASONING_LEVELS, detectModels } from '../modelCatalog.js'
+import { STICKER_SCENES } from '../stickers.js'
 import { fileURLToPath } from 'node:url'
 import { keyToGroupId, keyToUserId } from '../chatSettings.js'
 import { activatePersona } from '../personaSwitch.js'
@@ -10,6 +13,7 @@ import { applyConversationSettings, resetConversationMemory } from '../conversat
 import { writeTextAtomic } from '../stateFile.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const stamp = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const UI_FILE = path.join(__dirname, 'ui.html')
 
 /**
@@ -46,7 +50,8 @@ const EDITABLE = [
   { key: 'EMOJI_KEEP_RATE', label: '装饰符号频率', hint: '表情与颜文字出现在多少比例的回复里；种类由人格或私有偏好决定', live: true, type: 'rate' },
   { key: 'HUMAN_DELAY_MIN_MS', label: '打字延迟下限(ms)', live: true, type: 'number' },
   { key: 'HUMAN_DELAY_MAX_MS', label: '打字延迟上限(ms)', live: true, type: 'number' },
-  { key: 'REPLY_LENGTH_MATCH', label: '回复长度自适应', hint: '1=跟着对方长度走 0=固定单行', live: true, type: 'bool' },
+  { key: 'REPLY_LENGTH_MATCH', label: '回复长度自适应', hint: '1=跟着对方长度走；0=固定单行。想要长回答请用工作台的「长回答模式」', live: true, type: 'bool' },
+  { key: 'REPLY_LONG_MODE', label: '长回答模式', hint: '开启：解题/写代码/讲过程时完整输出，不再跟着对方字数压缩；平时闲聊仍按上面两项', live: true, type: 'bool' },
   { key: 'REPLY_MAX_LINES', label: '最多分几行', live: true, type: 'number' },
   { key: 'REPLY_LINE_MAX_CHARS', label: '单行字数上限', live: true, type: 'number' },
   { key: 'LINE_GAP_MIN_MS', label: '分条间隔下限(ms)', live: true, type: 'number' },
@@ -89,9 +94,17 @@ const EDITABLE = [
   { key: 'DAILY_PING_CHAIN_MATCH', label: '链式：成功判据(正则)', hint: '匹配对方回复内容，例：抓到.*猪猪', live: true, type: 'text', wide: true },
   { key: 'DAILY_PING_CHAIN_TEXT', label: '链式：补发内容', hint: '例：/我的猪圈', live: true, type: 'text' },
   { key: 'DAILY_PING_CHAIN_WINDOW_MS', label: '链式：等待窗口(ms)', live: true, type: 'number' },
-  { key: 'DEEPSEEK_MODEL', label: '对话模型', live: false, type: 'text' },
-  { key: 'DEEPSEEK_REASONING_EFFORT', label: 'DeepSeek 思考强度', hint: '统一用于 DeepSeek 对话、指令理解与识图；DeepSeek 总结也沿用此项。千问独立设置。max 可能增加等待与消耗；不会增加会话记忆长度。留空沿用服务端默认。', live: false, type: 'text' },
-  { key: 'DEEPSEEK_API_KEY', label: 'DeepSeek Key', live: false, type: 'secret' },
+  { key: 'MODEL_PROVIDER', label: '模型供应商', hint: 'deepseek / dashscope / openai / moonshot / zhipu / custom；只影响界面预填，实际以接口地址为准', live: true, type: 'text' },
+  { key: 'DEEPSEEK_BASE_URL', label: '接口地址（Base URL）', hint: 'OpenAI 兼容地址，例如 https://api.deepseek.com', live: true, type: 'text', wide: true },
+  { key: 'DEEPSEEK_MODEL', label: '对话模型', hint: '建议先用「自动检测模型」拿到列表再选', live: true, type: 'text' },
+  { key: 'DEEPSEEK_REASONING_EFFORT', label: 'DeepSeek 思考强度', hint: 'none / low / high / max；留空 = 不发送。统一用于对话、指令理解与识图；max 更慢更贵', live: true, type: 'text' },
+  { key: 'REPLY_TIMING_ENABLED', label: '显示思考耗时', hint: '1 开启：每条回复末尾附加「（想了 X.X 秒）」；0 关闭（日志里始终有记录）', live: true, type: 'text' },
+  { key: 'STICKERS_ENABLED', label: '表情包库', hint: '1 开启，0 关闭；开启后模型可用 [贴纸: 名称] 指定发图', live: true, type: 'text' },
+  { key: 'STICKER_LEARN_ENABLED', label: '从群聊学习表情包', hint: '仅从指定学习群采集；DeepSeek Flash初筛、Qwen复核打标签，普通图片不入库', live: true, type: 'text' },
+  { key: 'STICKER_LEARN_GROUPS', label: '表情包学习群', hint: '仅所选群允许采集，可独立于聊天白名单；留空不采集', live: true, type: 'text' },
+  { key: 'STICKER_LEARN_PER_HOUR', label: '每小时最多学习几张', hint: '0 = 不学；建议 3~10，避免刷屏式采集', live: true, type: 'number' },
+  { key: 'STICKER_AUTO_RATE', label: '主动发表情概率(%)', hint: '0 = 只在模型明确要求时发；10 = 大约每十次回复补一张', live: true, type: 'number' },
+  { key: 'DEEPSEEK_API_KEY', label: '模型 Key', live: true, type: 'secret' },
   { key: 'VISION_PROVIDER', label: '识图服务商', hint: '当前选用哪家服务识别图片', live: false, type: 'text' },
   { key: 'VISION_MODEL', label: 'DeepSeek 识图模型', hint: '识图服务商为 DeepSeek 时使用', live: false, type: 'text' },
   { key: 'DASHSCOPE_MODEL', label: 'DashScope 识图模型', hint: '仅识图服务商为 DashScope 时使用；不代表当前生效模型', live: false, type: 'text' },
@@ -185,7 +198,7 @@ function validateGroupConfig(key, value) {
   }
 }
 
-export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, quietGreetings, personaGreetings, bot, customCommands, commandCenter, restartBot }) {
+export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, quietGreetings, personaGreetings, bot, customCommands, commandCenter, llm, stickers, restartBot }) {
   // 本实例自己的 .env（并行跑两个实例时，写死 rootDir\.env 会改到另一个实例的配置上）
   const envFile = config.envFile || path.join(config.rootDir, '.env')
   const logFile = path.join(config.logDir || path.join(config.rootDir, 'logs'), 'bot.log')
@@ -388,6 +401,8 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         lineMaxChars: config.replyLineMaxChars,
         activePersona: config.activePersona || '',
         adminUsers: [...(config.adminUsers || [])],
+        replyLongMode: Boolean(config.replyLongMode),
+        replyTimingEnabled: Boolean(config.replyTimingEnabled),
         summaryTimes: config.summaryTimes,
         summaryFallbackEnabled: config.summaryFallbackEnabled,
         summaryGroups: config.summaryGroups,
@@ -400,6 +415,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
   }
 
   const routes = {
+    'GET /api/ping': async () => ({ ok: true, at: Date.now() }),
     'GET /api/state': async () => buildState(),
     'GET /api/chats': async () => ({ items: await buildChatList() }),
     'GET /api/groups': async () => ({ items: await getGroupList() }),
@@ -422,6 +438,25 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       const items = [...map.values()].sort((a, b) => b.recent + b.longTermChars - (a.recent + a.longTermChars))
       return { persona: config.activePersona || '', items }
     },
+    'GET /api/models': async () => ({
+      providers: PROVIDERS,
+      levels: REASONING_LEVELS,
+      current: {
+        provider: config.modelProvider || 'deepseek',
+        baseUrl: config.deepseekBaseUrl,
+        model: config.deepseekModel,
+        reasoning: config.deepseekReasoningEffort || '',
+        hasKey: Boolean(config.deepseekApiKey),
+      },
+    }),
+    'GET /api/stickers': async () => ({
+      items: stickers ? stickers.list() : [],
+      enabled: Boolean(config.stickersEnabled),
+      learned: stickers && typeof stickers.learned === 'function' ? stickers.learned() : 0,
+      scenes: STICKER_SCENES,
+      learn: { enabled: Boolean(config.stickerLearnEnabled), perHour: config.stickerLearnPerHour, groups: [...(config.stickerLearnGroups || [])] },
+      settings: { enabled: Boolean(config.stickersEnabled), autoRate: Math.round((config.stickerAutoRate || 0) * 100) },
+    }),
     'GET /api/config': async () => {
       const env = readEnvFile(envFile)
       return {
@@ -444,6 +479,14 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       const key = String(query.key || '')
       const list = Array.isArray(mem[key]) ? mem[key] : []
       return { key, items: list.slice(-200) }
+    },
+    'GET /api/memory-detail': async (query) => {
+      const key = String(query.key || '')
+      const mem = readJsonSafe(config.memoryFile, {})
+      const all = memory?.get?.(key) || (Array.isArray(mem[key]) ? mem[key] : [])
+      const recent = all.slice(-200)
+      const d = typeof longMemory?.detail === 'function' ? longMemory.detail(key) : { summary: '', pending: [], updatedAt: 0 }
+      return { key, recent, recentOffset: Math.max(0, all.length - 200), revision: stamp(all), pendingRevision: stamp(d.pending || []), longTerm: d.summary || '', updatedAt: d.updatedAt || 0, pending: d.pending || [], paused: Boolean(d.paused), running: Boolean(d.running) }
     },
     'GET /api/longmemory': async (query) => ({
       key: query.key || null,
@@ -478,6 +521,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     if (key === 'DEEPSEEK_REASONING_EFFORT') return config.deepseekReasoningEffort ?? ''
     const cur = readEnvFile(envFile)[key]
     const map = {
+      STICKER_LEARN_GROUPS: () => [...(config.stickerLearnGroups || [])].join(','),
       WHITELIST_GROUPS: () => [...config.whitelistGroups].join(','),
       MUTED_GROUPS: () => [...(config.mutedGroups ?? new Set())].join(','),
       PROACTIVE_RATE: () => String(config.proactiveRate),
@@ -546,6 +590,56 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
           .map((x) => x.trim())
           .filter(Boolean)
         break
+      case 'DEEPSEEK_BASE_URL': {
+        const v = String(value || '').trim().replace(/\/+$/, '')
+        if (!/^https?:\/\//i.test(v)) throw new Error('接口地址要以 http:// 或 https:// 开头')
+        config.deepseekBaseUrl = v
+        if (llm) llm.baseUrl = v
+        break
+      }
+      case 'DEEPSEEK_MODEL': {
+        const v = String(value || '').trim()
+        if (!v) throw new Error('模型名不能为空')
+        config.deepseekModel = v
+        if (llm) llm.model = v
+        break
+      }
+      case 'DEEPSEEK_API_KEY': {
+        const v = String(value || '').trim()
+        if (!v) return false
+        config.deepseekApiKey = v
+        if (llm) llm.apiKey = v
+        break
+      }
+      case 'MODEL_PROVIDER':
+        config.modelProvider = String(value || '').trim().toLowerCase()
+        break
+      case 'DEEPSEEK_REASONING_EFFORT': {
+        // 上游语义：'' = 不发送；none/low/high/max 才会带上 thinking + reasoning_effort
+        const v = String(value || '').trim().toLowerCase()
+        const level = ['none', 'low', 'high', 'max'].includes(v) ? v : undefined
+        config.deepseekReasoningEffort = level
+        if (llm) llm.reasoningEffort = level
+        break
+      }
+      case 'REPLY_TIMING_ENABLED':
+        config.replyTimingEnabled = ['1', 'true'].includes(String(value ?? '').trim().toLowerCase())
+        break
+      case 'STICKERS_ENABLED':
+        config.stickersEnabled = !['0', 'false'].includes(String(value ?? '').trim().toLowerCase())
+        break
+      case 'STICKER_LEARN_ENABLED':
+        config.stickerLearnEnabled = ['1', 'true'].includes(String(value ?? '').trim().toLowerCase())
+        break
+      case 'STICKER_LEARN_GROUPS':
+        config.stickerLearnGroups = new Set(String(value || '').split(/[,，\s]+/).filter(x => /^\d+$/.test(x) && Number(x) > 0).map(Number))
+        break
+      case 'STICKER_LEARN_PER_HOUR':
+        config.stickerLearnPerHour = Math.max(0, Math.min(60, Math.floor(num(value, 6))))
+        break
+      case 'STICKER_AUTO_RATE':
+        config.stickerAutoRate = Math.min(1, Math.max(0, num(value, 0) / 100))
+        break
       case 'PROACTIVE_RATE':
         config.proactiveRate = Math.min(1, Math.max(0, num(value, config.proactiveRate)))
         break
@@ -584,6 +678,9 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         break
       case 'LINE_GAP_MAX_MS':
         config.lineGapMaxMs = Math.max(0, num(value, config.lineGapMaxMs))
+        break
+      case 'REPLY_LONG_MODE':
+        config.replyLongMode = ['1', 'true'].includes(String(value ?? '').trim().toLowerCase())
         break
       case 'REPLY_MAX_LINES':
         config.replyMaxLines = Math.max(1, Math.min(5, Math.floor(num(value, config.replyMaxLines))))
@@ -835,6 +932,94 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       const st = targetWatch.configure({ enabled: true, groupId: String(gid), userId: uid })
       return { ok: true, ...st }
     },
+    async 'detect-models'(payload) {
+      const baseUrl = String(payload?.baseUrl || '').trim() || config.deepseekBaseUrl
+      const apiKey = String(payload?.apiKey || '').trim() || config.deepseekApiKey
+      const out = await detectModels({ baseUrl, apiKey })
+      logger?.info?.(`[模型检测] ${baseUrl} 返回 ${out.count} 个模型`)
+      return out
+    },
+    async 'sticker-add'(payload) {
+      if (!stickers) throw new Error('表情包库未启用')
+      const out = stickers.add({ name: payload?.name, keywords: payload?.keywords, scenes: payload?.scenes, dataUrl: payload?.dataUrl })
+      return { ok: true, item: out.item, duplicated: out.duplicated, count: stickers.count() }
+    },
+    async 'sticker-update'(payload) {
+      if (!stickers) throw new Error('表情包库未启用')
+      const item = stickers.update(String(payload?.id || ''), { name: payload?.name, keywords: payload?.keywords, scenes: payload?.scenes })
+      if (!item) throw new Error('找不到这张表情包')
+      return { ok: true, item }
+    },
+    async 'sticker-delete'(payload) {
+      if (!stickers) throw new Error('表情包库未启用')
+      const ok = stickers.remove(String(payload?.id || ''))
+      return { ok, count: stickers.count() }
+    },
+    async 'sticker-send'(payload) {
+      if (!stickers) throw new Error('表情包库未启用')
+      const groupId = String(payload?.groupId || '').trim()
+      if (!/^\d{5,12}$/.test(groupId)) throw new Error('请选择要发送到的群')
+      const item = payload?.id ? stickers.get(String(payload.id)) : stickers.find(String(payload?.keyword || '')) || stickers.random()
+      if (!item) throw new Error('表情包库里还没有图')
+      const file = stickers.dataUrlOf(item)
+      if (!file) throw new Error('图片文件读不到，可能已被删除')
+      await onebot.sendGroup(groupId, [{ type: 'image', data: { file, sub_type: 1 } }])
+      logger?.info?.(`[控制台] 测试发送表情包「${item.name}」到群 ${groupId}`)
+      return { ok: true, name: item.name }
+    },
+    async 'memory-update'(payload) {
+      const key = String(payload?.key || '')
+      const index = Number(payload?.index)
+      const content = String(payload?.content ?? '')
+      if (!key) throw new Error('缺少会话 key')
+      if (!Number.isInteger(index)) throw new Error('缺少要修改的条目')
+      if (!content.trim()) throw new Error('内容不能为空')
+      if (payload?.revision !== stamp(memory.get(key))) throw new Error('记忆已更新，请刷新后再编辑')
+      const item = memory.updateEntry(key, index, content)
+      if (!item) throw new Error('这条记忆已经变化，请刷新后再试')
+      logger?.info?.(`[控制台] 修改 ${key} 第 ${index + 1} 条近期记忆`)
+      return { ok: true, item }
+    },
+    async 'memory-delete'(payload) {
+      const key = String(payload?.key || '')
+      const index = Number(payload?.index)
+      if (!key) throw new Error('缺少会话 key')
+      if (!Number.isInteger(index)) throw new Error('缺少要删除的条目')
+      if (payload?.revision !== stamp(memory.get(key))) throw new Error('记忆已更新，请刷新后再删除')
+      const ok = memory.removeEntry(key, index)
+      if (!ok) throw new Error('这条记忆已经变化，请刷新后再试')
+      logger?.info?.(`[控制台] 删除 ${key} 第 ${index + 1} 条近期记忆`)
+      return { ok: true, remain: memory.count(key) }
+    },
+    async 'longmemory-pause'(payload) {
+      const key = String(payload?.key || '')
+      if (!key) throw new Error('缺少会话 key')
+      return { ok: true, ...longMemory.pause(key) }
+    },
+    async 'longmemory-resume'(payload) {
+      const key = String(payload?.key || '')
+      if (!key) throw new Error('缺少会话 key')
+      return { ok: true, ...longMemory.resume(key) }
+    },
+    async 'longmemory-update'(payload) {
+      const key = String(payload?.key || '')
+      if (!key) throw new Error('缺少会话 key')
+      if (typeof longMemory?.setSummary !== 'function') throw new Error('当前版本不支持编辑长期记忆')
+      const out = longMemory.setSummary(key, String(payload?.text ?? ''))
+      logger?.info?.(`[控制台] 改写 ${key} 的长期记忆（${out.chars} 字）`)
+      return { ok: true, ...out }
+    },
+    async 'pending-delete'(payload) {
+      const key = String(payload?.key || '')
+      const index = Number(payload?.index)
+      if (!key) throw new Error('缺少会话 key')
+      if (typeof longMemory?.removePending !== 'function') throw new Error('当前版本不支持删除待整理')
+      if (payload?.revision !== stamp(longMemory.detail(key).pending)) throw new Error('待整理原文已更新，请刷新后再删除')
+      const ok = longMemory.removePending(key, index)
+      if (!ok) throw new Error('这条待整理已经变化，请刷新后再试')
+      logger?.info?.(`[控制台] 丢弃 ${key} 第 ${index + 1} 条待整理原文`)
+      return { ok: true }
+    },
     async 'restart-bot'() {
       logger?.info?.('[控制台] 收到重启机器人指令')
       setTimeout(() => restartBot?.(), 300)
@@ -953,6 +1138,15 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         if (!existsSync(UI_FILE)) return send(500, '控制台界面文件缺失', 'text/plain; charset=utf-8')
         return send(200, readFileSync(UI_FILE), 'text/html; charset=utf-8')
       }
+      // 表情包图片（控制台预览用）
+      if (req.method === 'GET' && url.pathname === '/api/sticker-file') {
+        const id = String(url.searchParams.get('id') || '')
+        const item = stickers ? stickers.get(id) : null
+        if (!item) return send(404, 'not found', 'text/plain; charset=utf-8')
+        const file = path.join(stickers.dir, item.file)
+        if (!existsSync(file)) return send(404, 'missing', 'text/plain; charset=utf-8')
+        return send(200, readFileSync(file), item.mime || 'image/png')
+      }
       if (url.pathname.startsWith('/api/')) {
         const query = Object.fromEntries(url.searchParams.entries())
         if (req.method === 'GET') {
@@ -965,7 +1159,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
             let data = ''
             req.on('data', (c) => {
               data += c
-              if (data.length > 2_000_000) req.destroy()
+              if (data.length > 12_000_000) req.destroy() // 表情包上传走 base64，需要更大上限
             })
             req.on('end', () => {
               try {
@@ -990,6 +1184,11 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       return send(400, JSON.stringify({ error: err.message }))
     }
   })
+
+  // 单个请求最多 15 秒：某个处理卡住时，控制台不会整体像死掉
+  server.requestTimeout = 15000
+  server.headersTimeout = 10000
+  server.keepAliveTimeout = 5000
 
   function start(port = 8787) {
     return new Promise((resolve) => {
