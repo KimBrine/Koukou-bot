@@ -1711,10 +1711,71 @@ async function refreshStateUI() {
     if (page === 'overview') render()
   } finally { refreshingState = false }
 }
-document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshStateUI() })
+// 表情包页：新收录的图自动出现；有未保存的编辑时不打断，只提示一次
+let refreshingStickers = false, stickerPending = false, stickerNotified = false
+function stickerEditsDirty() {
+  const byId = new Map((stickerList || []).map(function (it) { return [String(it.id), it] }))
+  for (const el of document.querySelectorAll('[data-stk-name],[data-stk-kw],[data-stk-desc]')) {
+    const id = el.getAttribute('data-stk-name') || el.getAttribute('data-stk-kw') || el.getAttribute('data-stk-desc')
+    const it = byId.get(String(id)); if (!it) continue
+    const v = String(el.value == null ? '' : el.value)
+    if (el.hasAttribute('data-stk-name') && v !== String(it.name == null ? '' : it.name)) return true
+    if (el.hasAttribute('data-stk-kw') && v !== (it.keywords || []).join(' ')) return true
+    if (el.hasAttribute('data-stk-desc') && v !== String(it.description == null ? '' : it.description)) return true
+  }
+  for (const el of document.querySelectorAll('[data-stk-file]')) if (el.files && el.files.length) return true
+  for (const el of document.querySelectorAll('[data-scene-item]')) {
+    const it = byId.get(String(el.getAttribute('data-scene-item'))); if (!it) continue
+    if (el.checked !== ((it.scenes || []).indexOf(el.value) >= 0)) return true
+  }
+  const file = document.getElementById('stkFile')
+  if (file && file.files && file.files.length) return true
+  for (const id of ['stkSearch', 'stkKw', 'stkSendText', 'stkSendKw']) {
+    const el = document.getElementById(id)
+    if (el && String(el.value || '').trim()) return true
+  }
+  return false
+}
+async function refreshStickersUI() {
+  if (refreshingStickers) return
+  refreshingStickers = true
+  try {
+    const stk = await api('/api/stickers')
+    const sig = list => (list || []).map(function (it) { return it.id + ':' + it.name }).join('|')
+    if (sig(stickerList) + '#' + (stickerLearned || 0) !== sig(stk.items) + '#' + (stk.learned || 0)) stickerPending = true
+    stickerList = stk.items || []
+    stickerBlacklist = stk.blacklist || []
+    stickerScenes = stk.scenes || []
+    stickerLearned = stk.learned || 0
+    stickerLearn = stk.learn || {}
+    stickerSettings = stk.settings || {}
+    if (!stickerPending) return
+    const mainEl = document.getElementById('main')
+    const focused = document.activeElement
+    const typing = focused && mainEl && mainEl.contains(focused) && /^(INPUT|TEXTAREA|SELECT)$/.test(focused.tagName)
+    const dialogOpen = Boolean(document.querySelector('dialog[open]'))
+    if (typing || dialogOpen || stickerEditsDirty()) {
+      if (!stickerNotified) { stickerNotified = true; toast('表情包库有更新，保存当前修改后按 F5 刷新') }
+      return
+    }
+    const oldY = window.scrollY
+    render()
+    window.scrollTo(0, oldY)
+    stickerPending = false
+    stickerNotified = false
+  } catch (e) { /* 机器人重启时静默 */ }
+  finally { refreshingStickers = false }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return
+  refreshStateUI()
+  if (page === 'stickers') refreshStickersUI()
+})
 setInterval(() => {
   if (document.hidden) return
   refreshStateUI()
+  if (page === 'stickers') refreshStickersUI()
   if (page === 'logs' && logAuto) refreshLogs()
 }, 3000)
 </script>
