@@ -372,6 +372,9 @@ process.on('uncaughtException', (err) => logger.error(`未捕获异常：${err?.
 
 logger.info('===== DeepSeek × QQ 机器人启动 =====')
 logger.info(`模型：${config.deepseekModel}｜DeepSeek思考强度：${config.deepseekReasoningEffort ?? '服务端默认'}`)
+if (config.deepseekReasoningEffort && config.deepseekReasoningEffort !== 'none' && config.maxTokens < 800) {
+  logger.warn(`思考强度开启但 MAX_TOKENS=${config.maxTokens} 偏小：思考会占用输出预算，建议 ≥ 1200（否则可能出现空回复）`)
+}
 logger.info(
   visionLLM
     ? `视觉模型已启用：${config.visionProvider === 'deepseek' ? config.visionModel || 'deepseek-flash' : config.dashscopeModel} @ ${

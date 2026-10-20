@@ -70,13 +70,17 @@ export class DeepSeekClient {
       // 偶发空回复（模型把预算花在推理上、或响应被截断）在这里重试一次：
       // 不然这条消息就被静默丢掉了，群里看起来像"机器人没反应"。
       for (let attempt = 0; attempt < 2; attempt++) {
+        // 第一次按配置；如果空回复且开了思考，第二次强制关闭思考——思考吃光 token 预算时能救回来
+        const effortForAttempt = attempt === 0
+          ? undefined
+          : (this.reasoningEffort !== undefined && this.reasoningEffort !== 'none' ? 'none' : undefined)
         const data = await this.#post({
           model: this.model,
           messages: [{ role: 'system', content: systemPrompt }, ...messages],
           temperature: Number.isFinite(temperature)?Math.max(0,Math.min(2,temperature)):this.temperature,
           max_tokens: outputBudget,
           stream: false,
-        }, signal)
+        }, signal, effortForAttempt)
         const finishReason = data?.choices?.[0]?.finish_reason
         if (finishReason === 'content_filter') {
           const err = new Error(`${this.label} 内容检查未通过`)
@@ -91,8 +95,9 @@ export class DeepSeekClient {
         const content = data?.choices?.[0]?.message?.content
         if (typeof content === 'string' && content.trim() !== '') return content.trim()
         lastErr = new Error(`${this.label} 返回内容为空`)
+        this.logger.warn(`[空回复诊断] finish=${finishReason ?? '-'} 输出token=${data?.usage?.completion_tokens ?? '-'} 推理token=${data?.usage?.completion_tokens_details?.reasoning_tokens ?? '-'} max_tokens=${outputBudget ?? '-'} 思考=${effortForAttempt ?? this.reasoningEffort ?? '未发送'}`)
         if (attempt === 0) {
-          this.logger.warn(`${this.label} 返回内容为空，1 秒后重试一次`)
+          this.logger.warn(`${this.label} 返回内容为空，1 秒后关闭思考重试一次`)
           await sleep(1000, signal)
         }
       }
@@ -187,12 +192,14 @@ export class DeepSeekClient {
   }
 
   /** 带重试的底层请求，返回解析后的 JSON */
-  async #post(body, signal) {
+  async #post(body, signal, effortOverride) {
     if (typeof this.enableThinking === 'boolean') body = { ...body, enable_thinking: this.enableThinking }
     // DeepSeek 与千问参数不同；由调用方按服务商显式传入，不能混用。
-    if (this.reasoningEffort !== undefined) body = { ...body,
-      thinking: {type: this.reasoningEffort === 'none' ? 'disabled' : 'enabled'},
-      reasoning_effort: this.reasoningEffort }
+    // effortOverride：undefined = 用实例默认；null = 本次不发送；字符串 = 本次指定
+    const effort = effortOverride === undefined ? this.reasoningEffort : effortOverride
+    if (effort !== undefined && effort !== null) body = { ...body,
+      thinking: {type: effort === 'none' ? 'disabled' : 'enabled'},
+      reasoning_effort: effort }
     let lastError = null
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       signal?.throwIfAborted()
