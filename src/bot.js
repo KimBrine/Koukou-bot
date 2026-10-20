@@ -16,6 +16,7 @@ import { isBotAdmin, hasAdmins, adminHint } from './permissions.js'
 import { renderReply } from './customCommands.js'
 import { extractStickerMarkers } from './stickers.js'
 import { SUMMARY_RE, CLEAR_RE, HELP_RE } from './commandCenter.js'
+import { formatCommandHelp } from './commandHelp.js'
 import { createGroupMute } from './groupMute.js'
 import { createSelfActions } from './selfActions.js'
 import { resetConversationMemory, prepareSessionPersona, sessionPersona, sameSessionPersona } from './conversationSessions.js'
@@ -915,7 +916,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         if(commandCenter){
           const builtin=commandCenter.all().filter(c=>commandCenter.allowed(c,commandContext))
           const custom=(customCommands?.all?.()||[]).filter(c=>commandCenter.allowed(c,commandContext))
-          await sendTo(evt,['📋 当前会话的指令与互动',...builtin.map(c=>c.trigger+'  '+c.name),...custom.slice(0,30).map(c=>(c.event==='poke'?'拍一拍':c.trigger)+'  '+c.name+(c.responseMode==='ai'?'（AI）':'')),'群里的文字请求请@我；管理动作仍核验实际身份与QQ权限。',...(builtin.some(c=>c.id==='question')?['/Q 必须外层@，不能只引用。']:[]),...(builtin.some(c=>c.id==='music')?['点歌默认网易云，可注明QQ音乐；ID/链接直接跟在“点歌”后。']:[])].join('\n'))
+          await sendTo(evt,formatCommandHelp({builtins:builtin,custom,isPrivate}))
           return
         }
         const isAdmin = isBotAdmin(evt.user_id, config.adminUsers)
