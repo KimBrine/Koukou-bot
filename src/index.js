@@ -146,10 +146,11 @@ const visionProviders = createVisionProviders({
   logger,
   legacy: { baseUrl: config.visionCustomBaseUrl, apiKey: config.visionCustomApiKey, model: config.visionCustomModel },
 })
+if(config.visionProvider==='custom'&&visionProviders.list()[0])config.visionProvider='custom:'+visionProviders.list()[0].id
 // 识图客户端：可在 DeepSeek 与通义千问之间热切换（不需要重启）
 function customEndpoint(id) {
   const vp = id ? visionProviders.get(id) : null
-  if (!vp || !vp.baseUrl || !vp.apiKey) return null
+  if (!vp || !vp.baseUrl || !vp.apiKey || !vp.model) return null
   return { provider: 'custom:' + vp.id, key: vp.apiKey, baseUrl: vp.baseUrl, model: vp.model || '', label: (vp.name || '自定义') + ' 识图', reasoningEffort: undefined, enableThinking: undefined }
 }
 function visionEndpoint(provider) {
@@ -201,6 +202,7 @@ rebuildVision()
 // 对外始终是同一个对象，调用时才取当前生效的客户端，所以切换后立即生效
 const visionLLM = new Proxy({}, {
   get(_t, prop) {
+    if (prop === 'snapshot') return () => visionActive
     if (prop === 'provider') return config.visionProvider
     const target = visionActive
     if (!target) return undefined
@@ -285,6 +287,7 @@ function rebuildStickerTag() {
 rebuildStickerTag()
 const stickerTagLLM = new Proxy({}, {
   get(_t, prop) {
+    if (prop === 'snapshot') return () => tagActive
     const target = tagActive
     if (!target) return undefined
     const value = target[prop]
@@ -300,15 +303,10 @@ const commandCenter = createCommandCenter({file:path.join(config.dataDir,'comman
 const webSearchState = { enabled: config.webSearchEnabled !== false, model: config.webSearchModel, provider: config.webSearchProvider }
 let webSearchImpl = null
 function resolveSearchProvider(configured, model) {
-  const forced = String(configured || 'auto').toLowerCase()
-  if (forced === 'off' || forced === 'baidu' || forced === 'bing') return forced
-  const m = String(model || '').toLowerCase()
-  if (m === 'deepseek' || m.startsWith('deepseek-')) return 'deepseek'
-  if (m === 'bing') return 'bing'
-  return 'dashscope'
+  return String(configured || 'auto').toLowerCase()
 }
 function rebuildWebSearch() {
-  webSearchImpl = createWebSearch({
+  try{webSearchImpl = createWebSearch({
     apiKey: config.baiduApiKey,
     dashscopeApiKey: config.dashscopeApiKey,
     deepseekApiKey: config.deepseekApiKey,
@@ -316,7 +314,7 @@ function rebuildWebSearch() {
     provider: webSearchState.enabled ? resolveSearchProvider(webSearchState.provider, webSearchState.model) : 'off',
     timeoutMs: 20000,
     logger,
-  })
+  })}catch(error){webSearchImpl=null;logger.warn('联网搜索暂不可用：'+error.message)}
 }
 rebuildWebSearch()
 const webSearch = async (query) => {
@@ -327,6 +325,7 @@ const webSearch = async (query) => {
 Object.defineProperty(webSearch, 'isEnabled', { get: () => Boolean(webSearchState.enabled && webSearchImpl) })
 Object.defineProperty(webSearch, 'providerName', { get: () => (webSearchImpl && webSearchImpl.providerName) || 'off' })
 webSearch.setOptions = (patch) => {
+  if (patch && patch.provider) webSearchState.provider = patch.provider
   if (patch && 'enabled' in patch) webSearchState.enabled = Boolean(patch.enabled)
   if (patch && patch.model) webSearchState.model = String(patch.model).trim() || webSearchState.model
   rebuildWebSearch()

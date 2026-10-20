@@ -27,6 +27,8 @@ const fakeDash = async (url, init) => {
   dashCalls++
   const body = JSON.parse(init.body)
   assert.equal(body.parameters.enable_search, true, '必须带联网搜索参数')
+  assert.equal(body.parameters.search_options.enable_source,true)
+  assert.equal(body.parameters.search_options.search_strategy,'turbo')
   return { ok: true, status: 200, json: async () => ({ output: { choices: [{ message: { content: '通义联网答案' } }] } }) }
 }
 const dash = createWebSearch({ dashscopeApiKey: 'd', provider: 'dashscope', fetchImpl: fakeDash })
@@ -64,5 +66,8 @@ assert.equal(rds.refs.length, 1)
 assert.ok(rds.summary.includes('DeepSeek 摘要'))
 assert.equal(ds.providerName, 'deepseek')
 assert.equal(dsCalls, 1)
+assert.throws(()=>createWebSearch({provider:'dashscope'}),/Key/)
+assert.throws(()=>createWebSearch({provider:'deepseek'}),/Key/)
+assert.equal(createWebSearch({provider:'auto',deepseekApiKey:'unit-key'}).providerName,'deepseek')
 
 console.log('联网搜索检查通过：DeepSeek 搜索 / 通义 API / 千帆兼容 / 必应兜底 / 缓存 / 关闭开关')

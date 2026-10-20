@@ -3,7 +3,7 @@
  * - 通义千问联网搜索：DashScope 原生接口 + enable_search（用现有 DASHSCOPE_API_KEY）
  * - 百度千帆 AI Search：配置 BAIDU_QIANFAN_API_KEY 时可用
  * - 必应网页：没有上面两个 Key 时的兜底（解析 b_algo）
- * provider：auto（千帆 > 通义 > 必应）/ dashscope / baidu / bing / off
+ * provider：auto（千帆 > DeepSeek > 通义 > 必应）/ deepseek / dashscope / baidu / bing / off
  */
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
 const CACHE_TTL_MS = 10 * 60 * 1000
@@ -96,7 +96,7 @@ export function createWebSearch(options) {
           input: { messages: [{ role: 'user', content: String(query).slice(0, 400) }] },
           parameters: {
             enable_search: true,
-            search_options: { forced_search: true, search_strategy: 'pro', enable_citation: true },
+            search_options: { forced_search: true, search_strategy: 'turbo', enable_source: true, enable_citation: true },
             result_format: 'message',
             max_tokens: 800,
           },
@@ -111,7 +111,8 @@ export function createWebSearch(options) {
       const choices = data && data.output && data.output.choices
       const text = String((choices && choices[0] && choices[0].message && choices[0].message.content) || '').trim()
       if (!text) throw new Error('通义搜索没有返回内容')
-      return { summary: text, refs: [], provider: 'dashscope' }
+      const refs=(data.output?.search_info?.search_results||[]).slice(0,6).filter(r=>/^https?:\/\//i.test(r.url||'')).map(r=>({title:r.title||'',url:r.url,date:r.date||'',snippet:r.snippet||''}))
+      return { summary: text+(refs.length?'\n\n搜索来源：\n'+refsSummary(refs):''), refs, provider: 'dashscope' }
     } catch (err) {
       if (err && err.name === 'AbortError') throw new Error('通义搜索超时')
       throw err
@@ -222,16 +223,19 @@ export function createWebSearch(options) {
   let runner
   let providerName
   if (mode === 'deepseek') {
-    providerName = hasDeepseek ? 'deepseek' : (hasBaidu ? 'baidu' : (hasDashscope ? 'dashscope' : 'bing'))
+    if(!hasDeepseek)throw Error('DeepSeek 搜索尚未配置 Key')
+    providerName = 'deepseek'
   } else if (mode === 'baidu') {
-    providerName = hasBaidu ? 'baidu' : (hasDashscope ? 'dashscope' : 'bing')
+    if(!hasBaidu)throw Error('千帆搜索尚未配置 Key')
+    providerName = 'baidu'
   } else if (mode === 'dashscope') {
-    providerName = hasDashscope ? 'dashscope' : (hasBaidu ? 'baidu' : 'bing')
+    if(!hasDashscope)throw Error('通义搜索尚未配置 Key')
+    providerName = 'dashscope'
   } else if (mode === 'bing') {
     providerName = 'bing'
-  } else {
+  } else if(mode==='auto') {
     providerName = hasBaidu ? 'baidu' : (hasDeepseek ? 'deepseek' : (hasDashscope ? 'dashscope' : 'bing'))
-  }
+  } else throw Error('联网搜索服务商无效')
   runner = providerName === 'baidu' ? searchBaidu
     : (providerName === 'dashscope' ? searchDashscope
     : (providerName === 'deepseek' ? searchDeepseek : searchBing))

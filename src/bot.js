@@ -302,8 +302,6 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
     logger,
   }) : null)
   // 只缓存客观画面；模型或识图提示词改变后使用新描述，不缓存聊天口吻。
-  const visionCacheScope = JSON.stringify([visionLLM?.baseUrl, visionLLM?.model, VISION_DESCRIBE_PROMPT, VISION_DESCRIBE_ASK,
-    ...(visionLLM?.knowledgeVersion ? [visionLLM.knowledgeVersion] : [])])
   const stickerSend = createStickerSendPolicy({config,stickers,rand})
   const failedRecently = new Map() // 私聊报错提示限频：key -> 上次提示时间戳
   const lastProactive = new Map() // 白名单群主动搭话冷却：groupId -> 上次时间戳
@@ -537,12 +535,14 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
     if (first.toolCalls && first.toolCalls.length > 0) {
       // 模型可能一次要搜多个词：每个 tool_call 都必须有一条对应的 tool 消息，
       // 否则 DeepSeek 会以 400 拒绝（tool_calls 后面缺 tool 回复）。最多处理 2 个。
-      const calls = first.toolCalls.slice(0, 2)
+      const calls = first.toolCalls
       const answers = []
       for (const call of calls) {
+        if(answers.length>=2){answers.push({id:call.id,text:'本轮搜索次数已达上限，请根据已有结果作答。'});continue}
         let query = ''
         try {
-          query = JSON.parse(call.function?.arguments || '{}').query || ''
+          const value=JSON.parse(call.function?.arguments || '{}').query
+          query = typeof value==='string'?value.trim().slice(0,400):''
         } catch {
           query = ''
         }
@@ -559,7 +559,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
           answers.push({ id: call.id, text: `搜索失败：${err.message}` })
         }
       }
-      msgs.push({ role: 'assistant', content: first.content || '', tool_calls: calls })
+      msgs.push({ role: 'assistant', content: first.content || '', tool_calls: calls,...(first.reasoningContent!==undefined?{reasoning_content:first.reasoningContent}:{}) })
       for (const item of answers) msgs.push({ role: 'tool', tool_call_id: item.id, content: item.text })
       try {
         const second = await llm.chatRaw(msgs)
@@ -1028,15 +1028,17 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       }
 
       // 点歌：明确要歌就直接搜一首发音乐名片，再让模型自然接一句
+      const canContinue = () => samePersona() && sameSessionPersona(config, chatSettings, key, sessionPersonaText) &&
+        replyStillCurrent(onebot, evt, { latestOnly: !directReply }) && !autoPlusOne.wasTriggered(repetition)
       let musicNote = ''
       try {
-        const songQuery = parseSongRequest(parsed.text, quoted?.text || '')
+        const songQuery = directReply && !questionMode ? parseSongRequest(parsed.text, quoted?.text || '') : ''
         if (songQuery) {
           const song = await searchSong(songQuery)
-          if (song) {
+          if (song && canContinue()) {
             const card = [{ type: 'music', data: { type: '163', id: song.id } }]
-            if (isPrivate) await onebot.sendPrivate(evt.user_id, card)
-            else await onebot.sendGroup(groupId, card)
+            const receipt=isPrivate ? await onebot.sendPrivate(evt.user_id, card) : await onebot.sendGroup(groupId, card)
+            if(receipt?.message_id==null&&receipt?.data?.message_id==null)throw new Error('音乐名片未收到成功回执')
             logger.info(`[点歌] 已发送《${song.name}》- ${song.artist || '未知歌手'}（搜索：${songQuery}）`)
             musicNote = `\n（系统提示：刚刚已经发出《${song.name}》的音乐名片，别再声称发不了，用一句话自然回应即可。）`
           } else {
@@ -1046,7 +1048,9 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       } catch (err) { logger.warn(`[点歌] 失败：${err.message}`) }
 
       const allImages = [...parsed.images, ...(quoted?.images ?? []), ...(forwarded?.images ?? []), ...(quotedForward?.images ?? [])]
-      const hasImages = visionLLM && allImages.length > 0
+      const activeVision=typeof visionLLM?.snapshot==='function'?visionLLM.snapshot():visionLLM
+      const hasImages = typeof activeVision?.describeImages==='function' && allImages.length > 0
+      const visionCacheScope = JSON.stringify([activeVision?.baseUrl, activeVision?.model, VISION_DESCRIBE_PROMPT, VISION_DESCRIBE_ASK, activeVision?.knowledgeVersion || ''])
       const enableTools = webSearch && webSearch.isEnabled !== false && !hasImages && directReply
       logger.info(`[回复]（${decision.reason}）${isPrivate ? '私聊' : `群${groupId}`} ${senderName}：${parsed.text.slice(0, 50)}${quotedTag ? '（含引用）' : ''}${hasImages ? `（含 ${allImages.length} 张图，走视觉模型）` : ''}${enableTools ? '（可联网搜索）' : ''}`)
 
@@ -1121,8 +1125,6 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         imageNote +
         (questionMode ? QUESTION_MODE_HINT : shapeHint(plan)) +
         decorationHint(allowDecoration, decoKind, decorationPreset) + focus.hint + stickerHint
-      const canContinue = () => samePersona() && sameSessionPersona(config, chatSettings, key, sessionPersonaText) &&
-        replyStillCurrent(onebot, evt, { latestOnly: !directReply }) && !autoPlusOne.wasTriggered(repetition)
       if (!canContinue()) return
       try {
         // 计时：模型生成耗时（含识图 / 联网 / 纯文本与重试）
@@ -1136,7 +1138,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
           const imgSizes = imageParts.map((p) => String(p.image_url?.url?.length ?? 0))
           let desc = ''
           const readDescription = async () => {
-            const raw = await visionLLM.describeImages(
+            const raw = await activeVision.describeImages(
               questionMode ? QUESTION_IMAGE_PROMPT : VISION_DESCRIBE_PROMPT,
               questionMode ? '请完整读取题目。' : VISION_DESCRIBE_ASK,
               imageParts,
@@ -1195,7 +1197,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
           reply = stripInternalReplyMetadata(await llm.chat(replyPrompt + REPLY_REPAIR_HINT, [...baseHistory, { role: 'user', content: replyContent }]))
           if (!reply) { logger.warn('[回复清理] 重生成仍无有效正文，取消发送'); return }
         }
-        if (hasImages && visionLLM?.guardReply) reply = visionLLM.guardReply(reply, imageDescription)
+        if (hasImages && activeVision?.guardReply) reply = activeVision.guardReply(reply, imageDescription)
         // Markdown/分析文体残留清理（`**加粗**`、`### 标题`、`1. 编号`）——所有回复都过，
         // 因为发到群里它们就是字面的星号和井号，很难看
         if (!questionMode) reply = stripReportScaffold(reply)

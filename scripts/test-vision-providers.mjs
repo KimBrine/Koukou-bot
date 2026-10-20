@@ -42,6 +42,20 @@ try {
   const migrated = createVisionProviders({ file: file2, logger: null, legacy: { baseUrl: 'https://legacy/v1', apiKey: 'sk-legacy', model: 'vl-1' } })
   assert.equal(migrated.list().length, 1, '旧的单个自定义配置要迁移成一条')
   assert.equal(migrated.list()[0].model, 'vl-1')
+  let fail=false
+  const stable=createVisionProviders({file:path.join(dir,'fail.json'),write:()=>{if(fail)throw Error('disk full')}})
+  const original=stable.add({baseUrl:'https://example.test/v1',apiKey:'unit-key',model:'vision-a'})
+  fail=true
+  assert.throws(()=>stable.update(original.id,{model:'vision-b'}),/disk full/)
+  assert.equal(stable.get(original.id).model,'vision-a','写盘失败不改内存')
+  assert.throws(()=>stable.remove(original.id),/disk full/)
+  assert.equal(stable.count(),1)
+  assert.throws(()=>stable.add({baseUrl:'https://example.test',apiKey:'new'}),/disk full/)
+  assert.equal(stable.count(),1)
+  const copied=stable.get(original.id);copied.model='bad';assert.equal(stable.get(original.id).model,'vision-a')
+  migrated.remove(migrated.list()[0].id)
+  const noResurrect=createVisionProviders({file:file2,legacy:{baseUrl:'https://legacy/v1',apiKey:'unit-key',model:'vl-1'}})
+  assert.equal(noResurrect.count(),0,'手动清空后不能重新迁移旧条目')
 
   console.log('自定义识图存储检查通过：新增 / 校验 / 更新 / 删除 / 持久化 / 迁移 / Key 打码。')
 } finally {

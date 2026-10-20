@@ -1,13 +1,15 @@
 // 离线检查控制台编辑冲突与非白名单学习，不连接QQ或模型。
 import assert from 'node:assert/strict'
 import vm from 'node:vm'
-import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { MemoryStore } from '../src/memory.js'
 import { createLongMemory } from '../src/longMemory.js'
 import { createAdminServer } from '../src/admin/server.js'
 import { createStickers } from '../src/stickers.js'
+import { createVisionProviders } from '../src/visionProviders.js'
+import { createChatSettings } from '../src/chatSettings.js'
 const root = mkdtempSync(path.join(os.tmpdir(), 'koukou-dev-integration-'))
 const logger = { info(){}, warn(){}, error(){}, debug(){} }
 const memory = new MemoryStore({ file:path.join(root,'memory.json'), limit:500, logger })
@@ -15,7 +17,25 @@ try {
   const longMemory = createLongMemory({ file:path.join(root,'long.json'), logger, llm:{chat:async()=> '摘要'} })
   const config = { rootDir:root, dataDir:root, memoryFile:memory.file, stickerLearnGroups:new Set([12345]) }
   const stickers=createStickers({dir:path.join(root,'stickers'),logger})
-  const admin = createAdminServer({ config, memory, longMemory, logger, stickers })
+  let rebuilt=0
+  const visionProviders=createVisionProviders({file:path.join(root,'vision-providers.json')})
+  const chatSettings=createChatSettings({file:path.join(root,'chats.json'),logger})
+  const admin = createAdminServer({ config, memory, longMemory, logger, stickers,visionProviders,chatSettings,switchVision:()=>{rebuilt++} })
+  config.deepseekApiKey='unit-key';config.visionProvider='deepseek'
+  await admin.actions['set-config-batch']({patch:{VISION_MODEL:'vision-b',VISION_PROVIDER:'deepseek',STICKER_TAG_PROVIDER:'auto'}})
+  assert.equal(config.visionModel,'vision-b');assert.equal(rebuilt,1,'批量保存后只重建一次')
+  const envBefore=readFileSync(path.join(root,'.env'),'utf8')
+  await assert.rejects(admin.actions['set-config']({key:'VISION_PROVIDER',value:'custom:missing'}),/完整/)
+  assert.equal(readFileSync(path.join(root,'.env'),'utf8'),envBefore,'验证失败不能污染持久配置')
+  const vp=visionProviders.add({baseUrl:'https://example.test/v1',apiKey:'unit-key',model:'vision-custom'})
+  await admin.actions['set-config']({key:'VISION_PROVIDER',value:'custom:'+vp.id})
+  await assert.rejects(admin.actions['vision-provider-delete']({id:vp.id}),/先切换/)
+  await admin.actions['set-config']({key:'VISION_PROVIDER',value:'deepseek'})
+  await admin.actions['vision-provider-delete']({id:vp.id})
+  await admin.actions['set-websearch']({enabled:true,provider:'deepseek',model:'qwen-plus'})
+  assert.equal(config.webSearchProvider,'deepseek')
+  await assert.rejects(admin.actions['set-websearch']({enabled:true,provider:'dashscope'}),/Key/)
+  assert.equal(config.webSearchProvider,'deepseek','搜索验证失败不更改配置')
   const sample=stickers.add({name:'黑名单示例',dataUrl:'data:image/png;base64,eA=='}).item
   await admin.actions['sticker-blacklist']({id:sample.id})
   assert.equal((await admin.routes['GET /api/stickers']()).blacklist[0].hash,sample.hash)
@@ -64,5 +84,24 @@ try {
   assert.match(editor,/data-stk-block="sample"/)
   const blockPage=vm.runInContext(`stickerBlacklist=[{hash:'b'.repeat(64),name:'<img onerror=bad>'}];pageStickers()`,context)
   assert.match(blockPage,/data-stk-unblock=/);assert.ok(blockPage.includes('&lt;img onerror=bad&gt;'))
+  const refreshChunk=js.slice(js.indexOf('// 表情包页：'),js.indexOf("document.addEventListener('visibilitychange'"))
+  Object.assign(context,{document:{hidden:false,activeElement:null,getElementById:()=>null,querySelectorAll:()=>[],querySelector:()=>null},window:{scrollY:0,scrollTo(){}},api:async()=>({items:[{id:'new',name:'新图片'}],learn:{},settings:{}})})
+  context.fetch=async()=>({ok:true,json:async()=>({items:[{id:'new',name:'新图片'}],learn:{},settings:{}})})
+  vm.runInContext(refreshChunk,context)
+  vm.runInContext("page='stickers';stickerControlsDirty=true;render=()=>{};toast=()=>{}",context)
+  await vm.runInContext('refreshStickersUI()',context)
+  assert.equal(vm.runInContext('stickerList[0].id',context),'sample','设置编辑时不替换内存基线或刷新表单')
+  vm.runInContext('stickerControlsDirty=false',context)
+  await vm.runInContext('refreshStickersUI()',context)
+  assert.equal(vm.runInContext('stickerList[0].id',context),'new')
+  config.whitelistGroups=new Set([12345])
+  memory.push('g12346','user','保留原文');chatSettings.set('g12346',{customPrompt:'测试设置'})
+  mkdirSync(path.join(root,'daily','12346'),{recursive:true})
+  writeFileSync(path.join(root,'daily','12346','test.json'),'日报原文')
+  const cleaned=await admin.actions['cleanup-groups']()
+  assert.ok(cleaned.removed.includes('g12346'))
+  assert.equal(readFileSync(path.join(cleaned.backup,'daily','12346','test.json'),'utf8'),'日报原文')
+  assert.equal(existsSync(path.join(root,'daily','12346')),false)
+  assert.match(readFileSync(path.join(cleaned.backup,'sessions.json'),'utf8'),/测试设置/)
   console.log('控制台集成通过：200条偏移、并发编辑保护、暂停恢复、非白名单群多选和页面渲染。')
 } finally { memory.flush(); rmSync(root,{recursive:true,force:true}) }

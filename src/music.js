@@ -8,7 +8,7 @@ export function parseSongRequest(text, quotedText) {
   if (!raw) return ''
   const quoted = String(quotedText || '').replace(/\s+/g, ' ').trim()
   // "我想听这个，发给我" —— 用被引用的那条消息当歌名
-  if (/^(?:我)?(?:想听|要听|听)(?:这个|这首)|发给我|放给我/.test(raw) && quoted) return quoted.slice(0, 40)
+  if (/^(?:我)?(?:想听|要听|听)(?:这个|这首)(?:[，, ]*(?:发给我|放给我))?[。！!~～]?\s*$/.test(raw) && quoted) return quoted.slice(0, 40)
   let q = ''
   const m = raw.match(SONG_PREFIX)
   if (m) q = raw.slice(m[0].length).trim()

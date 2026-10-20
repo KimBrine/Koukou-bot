@@ -1,7 +1,7 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { execFile } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, cpSync } from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
 import { PROVIDERS, REASONING_LEVELS, detectModels } from '../modelCatalog.js'
@@ -11,6 +11,7 @@ import { keyToGroupId, keyToUserId } from '../chatSettings.js'
 import { activatePersona } from '../personaSwitch.js'
 import { applyConversationSettings, resetConversationMemory } from '../conversationSessions.js'
 import { writeTextAtomic } from '../stateFile.js'
+import { createWebSearch } from '../search.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const stamp = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
@@ -51,7 +52,7 @@ const EDITABLE = [
   { key: 'HUMAN_DELAY_MIN_MS', label: '打字延迟下限(ms)', live: true, type: 'number' },
   { key: 'HUMAN_DELAY_MAX_MS', label: '打字延迟上限(ms)', live: true, type: 'number' },
   { key: 'REPLY_LENGTH_MATCH', label: '回复长度自适应', hint: '1=跟着对方长度走；0=固定单行。想要长回答请用 /Q', live: true, type: 'bool' },
-  { key: 'REPLY_MIN_BUDGET', label: '最小回复字数（预算）', hint: '回复的字数下限。0 = 完全跟随对方长度；20 只够一条短句；想要说得长一些可填 60～120（配合「最多分几行」=3）。解题请用 /Q', live: true, type: 'number' },
+  { key: 'REPLY_MIN_BUDGET', label: '最小回复字数（预算）', hint: '回复可用空间，不强制输出字数；0跟随对方长度。可填60～120并配合分条；仍受最多行数和单行上限约束，解题请用/Q', live: true, type: 'number' },
   { key: 'REPLY_MAX_LINES', label: '最多分几行', live: true, type: 'number' },
   { key: 'REPLY_LINE_MAX_CHARS', label: '单行字数上限', live: true, type: 'number' },
   { key: 'LINE_GAP_MIN_MS', label: '分条间隔下限(ms)', live: true, type: 'number' },
@@ -111,16 +112,16 @@ const EDITABLE = [
   { key: 'STICKER_PICK_MODE', label: '表情包选图方式', hint: 'context / model / random', live: true, type: 'text' },
   { key: 'STICKER_COOLDOWN_SECONDS', label: '同一会话配图间隔（秒）', hint: '0不额外限制', live: true, type: 'number' },
   { key: 'DEEPSEEK_API_KEY', label: '模型 Key', live: true, type: 'secret' },
-  { key: 'VISION_PROVIDER', label: '识图服务商', hint: '当前选用哪家服务识别图片', live: false, type: 'text' },
-  { key: 'VISION_MODEL', label: 'DeepSeek 识图模型', hint: '识图服务商为 DeepSeek 时使用', live: false, type: 'text' },
+  { key: 'VISION_PROVIDER', label: '识图服务商', hint: '当前选用哪家服务识别图片', live: true, type: 'text' },
+  { key: 'VISION_MODEL', label: 'DeepSeek 识图模型', hint: '识图服务商为 DeepSeek 时使用', live: true, type: 'text' },
   { key: 'STICKER_TAG_PROVIDER', label: '表情包打标模型', hint: 'auto = 有通义用通义，否则 DeepSeek，再否则自定义；也可指定 deepseek / dashscope / custom', live: true, type: 'text' },
   { key: 'VISION_CUSTOM_BASE_URL', label: '自定义识图接口地址', hint: 'OpenAI 兼容的多模态接口，例如 https://xxx/v1', live: true, type: 'text', wide: true },
   { key: 'VISION_CUSTOM_API_KEY', label: '自定义识图 Key', live: true, type: 'secret' },
   { key: 'VISION_CUSTOM_MODEL', label: '自定义识图模型名', hint: '例如 gpt-4o-mini / glm-4v-plus / qwen3-vl-plus', live: true, type: 'text' },
-  { key: 'DASHSCOPE_MODEL', label: 'DashScope 识图模型', hint: '仅识图服务商为 DashScope 时使用；不代表当前生效模型', live: false, type: 'text' },
-  { key: 'DASHSCOPE_API_KEY', label: 'DashScope Key', live: false, type: 'secret' },
+  { key: 'DASHSCOPE_MODEL', label: 'DashScope 识图模型', hint: '仅识图服务商为 DashScope 时使用；不代表当前生效模型', live: true, type: 'text' },
+  { key: 'DASHSCOPE_API_KEY', label: 'DashScope Key', live: true, type: 'secret' },
   { key: 'BAIDU_QIANFAN_API_KEY', label: '百度千帆 Key', live: false, type: 'secret' },
-  { key: 'WEB_SEARCH_PROVIDER', label: '联网搜索方式', hint: 'auto = 千帆 Key > 通义 API > 必应兜底；也可强制 dashscope / baidu / bing；off 关闭。改完需重启', live: false, type: 'text' },
+  { key: 'WEB_SEARCH_PROVIDER', label: '联网搜索方式', hint: 'auto = 千帆 > DeepSeek > 通义 > 必应；独立配置改完需重启，建议使用上方联网搜索卡片即时保存', live: false, type: 'text' },
   { key: 'WEB_SEARCH_MODEL', label: '联网搜索模型', hint: '通义联网搜索用的模型，默认 qwen-plus；改完需重启', live: false, type: 'text' },
   { key: 'TEMPERATURE', label: '采样温度', hint: '越高越随性', live: false, type: 'number' },
   { key: 'MAX_TOKENS', label: '单次回复 token 上限', live: false, type: 'number' },
@@ -216,6 +217,25 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
   const logFile = path.join(config.logDir || path.join(config.rootDir, 'logs'), 'bot.log')
   const personaDir = config.personaDir || path.join(config.dataDir, 'personas')
   const dailyDir = path.join(config.dataDir, 'daily')
+  let batchingConfig=false,visionNeedsRebuild=false
+  function refreshVision(){if(batchingConfig)visionNeedsRebuild=true;else switchVision?.()}
+  function validateVisionPatch(patch){
+    const url=v=>{try{if(!['http:','https:'].includes(new URL(v).protocol))throw Error()}catch{throw Error('接口地址必须是完整的 http(s) URL')}}
+    for(const key of ['VISION_MODEL','DASHSCOPE_MODEL','VISION_CUSTOM_MODEL'])if(key in patch&&!String(patch[key]).trim())throw Error('识图模型名不能为空')
+    for(const key of ['VISION_CUSTOM_BASE_URL','DEEPSEEK_BASE_URL'])if(key in patch)url(patch[key])
+    if('STICKER_TAG_PROVIDER' in patch&&!['auto','deepseek','dashscope','custom'].includes(patch.STICKER_TAG_PROVIDER))throw Error('表情包打标服务商无效')
+    if(!('VISION_PROVIDER' in patch))return
+    const p=String(patch.VISION_PROVIDER).toLowerCase()
+    if(!['deepseek','dashscope','custom'].includes(p)&&!/^custom:[\w-]+$/.test(p))throw Error('识图服务商取值不合法')
+    if(p==='deepseek'&&!String(patch.DEEPSEEK_API_KEY||config.deepseekApiKey||'').trim())throw Error('DeepSeek 尚未配置 Key')
+    if(p==='dashscope'&&!String(patch.DASHSCOPE_API_KEY||config.dashscopeApiKey||'').trim())throw Error('通义尚未配置 Key')
+    if(p.startsWith('custom')){
+      const id=p.startsWith('custom:')?p.slice(7):visionProviders?.list?.()[0]?.id
+      const item=id&&visionProviders?.get?.(id)
+      if(!item?.apiKey||!item.model||!item.baseUrl)throw Error('自定义识图需要先配置完整地址、Key 和模型')
+      url(item.baseUrl)
+    }
+  }
 
   let groupListCache = { at: 0, items: [] }
   let friendListCache = { at: 0, items: [] }
@@ -390,7 +410,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
           if (isCustom) {
             const id = provider.startsWith('custom:') ? provider.slice(7) : ''
             const vp = id && typeof visionProviders?.get === 'function' ? visionProviders.get(id) : null
-            if (!vp && !config.visionCustomApiKey) return null
+            if (!vp?.apiKey || !vp?.model || !vp?.baseUrl) return null
             const model = (vp && vp.model) || config.visionCustomModel || '未填模型'
             const name = (vp && vp.name) || '自定义'
             return model + '（' + name + '）'
@@ -488,6 +508,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       enabled: Boolean(config.webSearchEnabled),
       model: config.webSearchModel || 'qwen-plus',
       provider: webSearch && webSearch.providerName ? webSearch.providerName : 'off',
+      configuredProvider: config.webSearchProvider || 'auto',
     }),
     'GET /api/stickers': async () => ({
       items: stickers ? stickers.list() : [],
@@ -574,6 +595,8 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       PROACTIVE_RATE_PER_GROUP: () => [...(config.proactiveRatePerGroup ?? new Map())].map(([g, r]) => `${g}:${r}`).join(','),
       VISION_PROVIDER: () => String(config.visionProvider),
       VISION_MODEL: () => String(config.visionModel),
+      REPLY_MIN_BUDGET: () => String(config.replyMinBudget??0),
+      VISION_CUSTOM_BASE_URL: () => String(config.visionCustomBaseUrl||''),
       DASHSCOPE_MODEL: () => String(config.dashscopeModel),
       SUMMARY_PROVIDER: () => String(config.summaryProvider),
       SUMMARY_MODEL: () => String(config.summaryModel),
@@ -641,6 +664,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         if (!/^https?:\/\//i.test(v)) throw new Error('接口地址要以 http:// 或 https:// 开头')
         config.deepseekBaseUrl = v
         if (llm) llm.baseUrl = v
+        refreshVision()
         break
       }
       case 'DEEPSEEK_MODEL': {
@@ -655,26 +679,30 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         if (!v) return false
         config.deepseekApiKey = v
         if (llm) llm.apiKey = v
+        refreshVision()
         break
       }
+      case 'VISION_MODEL': config.visionModel=String(value).trim();refreshVision();break
+      case 'DASHSCOPE_MODEL': config.dashscopeModel=String(value).trim();refreshVision();break
+      case 'DASHSCOPE_API_KEY': if(!String(value).trim())return false;config.dashscopeApiKey=String(value).trim();refreshVision();break
       case 'VISION_CUSTOM_BASE_URL':
         config.visionCustomBaseUrl = String(value || '').trim().replace(/\/+$/, '')
-        try { switchVision?.() } catch (err) { logger?.warn?.('[控制台] 重建识图失败：' + err.message) }
+        refreshVision()
         break
       case 'VISION_CUSTOM_API_KEY': {
         const v = String(value || '').trim()
         if (!v) return false
         config.visionCustomApiKey = v
-        try { switchVision?.() } catch (err) { logger?.warn?.('[控制台] 重建识图失败：' + err.message) }
+        refreshVision()
         break
       }
       case 'VISION_CUSTOM_MODEL':
         config.visionCustomModel = String(value || '').trim()
-        try { switchVision?.() } catch (err) { logger?.warn?.('[控制台] 重建识图失败：' + err.message) }
+        refreshVision()
         break
       case 'STICKER_TAG_PROVIDER':
         config.stickerTagProvider = String(value || 'auto').trim().toLowerCase()
-        try { switchVision?.() } catch (err) { logger?.warn?.('[控制台] 重建打标模型失败：' + err.message) }
+        refreshVision()
         break
       case 'MODEL_PROVIDER':
         config.modelProvider = String(value || '').trim().toLowerCase()
@@ -684,7 +712,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         if (!['deepseek', 'dashscope', 'custom'].includes(v) && !/^custom:[\w-]+$/.test(v)) throw new Error('识图服务商取值不合法')
         config.visionProvider = v
         // 即时重建识图客户端；失败只记录，不影响其它配置
-        try { switchVision?.() } catch (err) { logger?.warn?.('[控制台] 切换识图模型失败：' + err.message) }
+        refreshVision()
         break
       }
       case 'DEEPSEEK_REASONING_EFFORT': {
@@ -693,6 +721,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         const level = ['none', 'low', 'high', 'max'].includes(v) ? v : undefined
         config.deepseekReasoningEffort = level
         if (llm) llm.reasoningEffort = level
+        refreshVision()
         break
       }
       case 'REPLY_TIMING_ENABLED':
@@ -847,12 +876,16 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         }
         clean[key] = value
       }
+      validateVisionPatch(clean)
       writeEnvFile(envFile, clean)
       let live = 0
+      batchingConfig=true
+      try{
       for (const [key, value] of Object.entries(clean)) {
         if (applyLive(key, value)) live++
         logger?.info?.(`[控制台] 修改配置 ${key}=${EDITABLE.find((f) => f.key === key)?.type === 'secret' ? '[已更新]' : value.slice(0, 40)}`)
       }
+      }finally{batchingConfig=false;if(visionNeedsRebuild){visionNeedsRebuild=false;refreshVision()}}
       return { ok: true, changed: entries.length, live, needRestart: live < entries.length }
     },
     async 'set-config'(payload) {
@@ -860,6 +893,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       const field = EDITABLE.find((f) => f.key === key)
       if (!field) throw new Error(`不认识的配置项：${key}`)
       validateGroupConfig(key, String(value ?? ''))
+      validateVisionPatch({[key]:String(value??'')})
       writeEnvFile(envFile, { [key]: String(value ?? '') })
       const live = applyLive(key, value)
       logger?.info?.(`[控制台] 修改配置 ${key}=${field.type === 'secret' ? '[已更新]' : String(value).slice(0, 40)}${live ? '（已即时生效）' : '（需重启生效）'}`)
@@ -1047,11 +1081,10 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       if (!visionProviders) throw new Error('当前版本不支持多自定义识图')
       const id = String(payload?.id || '')
       const active = String(config.visionProvider || '')
+      const selected=active==='custom:'+id||(active==='custom'&&visionProviders.list()[0]?.id===id)
+      if(selected)throw Error('请先切换到另一可用的识图服务，再删除当前接口')
       const ok = visionProviders.remove(id)
-      if (ok && active === 'custom:' + id) {
-        config.visionProvider = 'deepseek'
-        try { switchVision?.() } catch (err) { logger?.warn?.('[控制台] 重建识图失败：' + err.message) }
-      }
+      if(ok)refreshVision()
       return { ok }
     },
     async 'detect-vision-models'(payload) {
@@ -1173,31 +1206,45 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     },
     async 'cleanup-groups'() {
       const mem = readJsonSafe(config.memoryFile, {})
-      const keys = new Set([...Object.keys(mem), ...chatSettings.keys()])
+      const keys = new Set([...Object.keys(mem),...Object.keys(memory?.snapshot?.()?.chats||{}),...Object.keys(longMemory?.snapshot?.()?.chats||{}), ...chatSettings.keys(),...(existsSync(dailyDir)?readdirSync(dailyDir).filter(x=>/^\d+$/.test(x)).map(x=>'g'+x):[])])
       const removed = []
-      for (const key of keys) {
+      const targets=[...keys].filter(key=>keyToGroupId(key)!==null&&!config.whitelistGroups.has(keyToGroupId(key)))
+      const backup=path.join(config.dataDir,'config-backups','group-cleanup-'+Date.now()+'-'+randomUUID())
+      if(targets.length){
+        mkdirSync(backup,{recursive:true})
+        writeTextAtomic(path.join(backup,'sessions.json'),JSON.stringify({at:Date.now(),keys:targets,settings:targets.map(key=>({key,settings:chatSettings.raw(key)})),recent:memory?.snapshot?.(),long:longMemory?.snapshot?.()},null,2))
+        for(const key of targets){const source=path.join(dailyDir,String(keyToGroupId(key)));if(existsSync(source))cpSync(source,path.join(backup,'daily',String(keyToGroupId(key))),{recursive:true})}
+      }
+      for (const key of targets) {
         const gid = keyToGroupId(key)
         if (gid === null || config.whitelistGroups.has(gid)) continue
         resetConversationMemory({ config, memory, longMemory, targetWatch, key, reason: '清理非白名单群' })
-        try { chatSettings.remove(key) } catch {}
-        try { rmSync(path.join(dailyDir, String(gid)), { recursive: true, force: true }) } catch {}
+        chatSettings.remove(key)
+        const reportPath=path.resolve(dailyDir,String(gid))
+        if(path.dirname(reportPath)!==path.resolve(dailyDir))throw Error('日报清理路径无效')
+        rmSync(reportPath, { recursive: true, force: true })
         removed.push(key)
       }
       if (removed.length) logger?.info?.('[控制台] 已清理非白名单群：' + removed.join('、'))
-      return { ok: true, removed }
+      return { ok: true, removed, backup:targets.length?backup:null }
     },
     async 'set-websearch'(payload) {
       const enabled = payload?.enabled !== false
-      const model = String(payload?.model || '').trim()
+      let model = String(payload?.model || config.webSearchModel || 'qwen-plus').trim()
+      const provider=String(payload?.provider || (model==='deepseek'||model==='bing'?model:config.webSearchProvider||'auto')).toLowerCase()
+      if(model==='deepseek'||model==='bing')model='qwen-plus'
+      if(!['auto','deepseek','dashscope','baidu','bing','off'].includes(provider))throw Error('联网搜索服务商无效')
       if (model && !/^[A-Za-z0-9._:-]{1,64}$/.test(model)) throw new Error('模型名不合法')
-      config.webSearchEnabled = enabled
-      if (model) config.webSearchModel = model
-      const patch = { WEB_SEARCH_ENABLED: enabled ? '1' : '0' }
+      createWebSearch({provider:enabled?provider:'off',apiKey:config.baiduApiKey,deepseekApiKey:config.deepseekApiKey,dashscopeApiKey:config.dashscopeApiKey,dashscopeModel:model})
+      const patch = { WEB_SEARCH_ENABLED: enabled ? '1' : '0', WEB_SEARCH_PROVIDER:provider }
       if (model) patch.WEB_SEARCH_MODEL = model
       writeEnvFile(envFile, patch, { atomic: true })
-      const state = switchWebSearch?.({ enabled, model }) || { enabled, model }
+      config.webSearchEnabled = enabled
+      config.webSearchModel = model
+      config.webSearchProvider = provider
+      const state = switchWebSearch?.({ enabled, model, provider }) || { enabled, model, provider }
       logger?.info?.(`[控制台] 联网搜索${enabled ? '开启' : '关闭'}${model ? '，模型 ' + model : ''}`)
-      return { ok: true, ...state }
+      return { ok: true, ...state, configuredProvider:provider }
     },
     async 'restart-bot'() {
       logger?.info?.('[控制台] 收到重启机器人指令')

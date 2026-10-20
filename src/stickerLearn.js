@@ -17,8 +17,6 @@ export function createStickerLearner({ config, logger, onebot, stickers, filterL
     if (key.startsWith('g')) return config.stickerLearnGroups?.has(Number(key.slice(1))) && Number(key.slice(1)) > 0
     return false
   }
-  const scope = JSON.stringify(['sticker-v2', filterLLM?.baseUrl, filterLLM?.model,
-    tagLLM?.baseUrl, tagLLM?.model, RULE, STICKER_SCENES])
 
   async function resolveImage(image) {
     let url = String(image?.url || '').trim()
@@ -53,6 +51,9 @@ export function createStickerLearner({ config, logger, onebot, stickers, filterL
 
   async function learn({ images, chatKey, senderName, text }) {
     if (!allowed(chatKey)) return null
+    const tagClient=typeof tagLLM?.snapshot==='function'?tagLLM.snapshot():tagLLM
+    if(typeof tagClient?.describeImages!=='function')return null
+    const scope=JSON.stringify(['sticker-v2',filterLLM?.baseUrl,filterLLM?.model,tagClient.baseUrl,tagClient.model,RULE,STICKER_SCENES])
     for (const image of images.slice(0, 4)) {
       if (!allowed(chatKey)) return null
       const loaded = imageCache ? await imageCache.load(image, () => resolveImage(image)) : { part: await resolveImage(image) }
@@ -68,7 +69,7 @@ export function createStickerLearner({ config, logger, onebot, stickers, filterL
           `${RULE} 只输出JSON：{"isSticker":true或false}。`, '先排除普通图片。', [loaded.part], { maxTokens: 0 }))
         if (!allowed(chatKey)) throw new Error('学习范围已经改变')
         if (initial?.isSticker !== true) return JSON.stringify({ isSticker: false })
-        const tag = json(await tagLLM.describeImages(
+        const tag = json(await tagClient.describeImages(
           `${RULE} 独立复核，不沿用初筛结论。只输出JSON：{"isSticker":true或false,"name":"简短名称","keywords":["关键词"],"scenes":["场景id"]}。scenes只允许：${STICKER_SCENES.map(s => s.id).join(',')}。`,
           '确认是表情包后，按画面和情绪标注适用场景。', [loaded.part], { maxTokens: 0 }))
         if (!tag || tag.isSticker !== true || !String(tag.name || '').trim()) return JSON.stringify({ isSticker: false })

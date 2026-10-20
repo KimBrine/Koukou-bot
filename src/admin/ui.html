@@ -314,9 +314,9 @@ function pageOverview(){
     '<div style="display:flex;align-items:center;gap:12px;margin:10px 0">',
     '<div><b>识图模型</b><div class="mut" style="font-size:12px">聊天里发图片时用哪个模型看</div></div>',
     '<select id="quickVision" style="margin-left:auto">',
-    '<option value="deepseek"' + (state?.config?.visionProvider === 'dashscope' ? '' : ' selected') + '>DeepSeek（快）</option>',
+    '<option value="deepseek"' + (state?.config?.visionProvider === 'deepseek' ? ' selected' : '') + '>DeepSeek</option>',
     '<option value="dashscope"' + (state?.config?.visionProvider === 'dashscope' ? ' selected' : '') + '>通义千问（准）</option>',
-    '<option value="custom"' + (state?.config?.visionProvider === 'custom' ? ' selected' : '') + '>自定义</option>',
+    (state?.config?.visionProviders||[]).map(x=>'<option value="custom:'+esc(x.id)+'"'+(state?.config?.visionProvider==='custom:'+x.id?' selected':'')+'>'+esc(x.name)+'</option>').join(''),
     '</select>',
     '</div>',
     '<div class="mut" style="margin-top:8px;font-size:12px">开关状态实时显示，改完立刻生效，不用重启</div>',
@@ -644,7 +644,8 @@ function webSearchCard(){
   const label = { deepseek: 'DeepSeek 搜索（自带引擎）', bing: '必应网页（免密钥兜底）' }
   const opts = presets.map(function(m){ return '<option value="' + esc(m) + '"' + (m === cur ? ' selected' : '') + '>' + esc(label[m] || m) + '</option>' }).join('')
   return '<section class="card"><h2>联网搜索</h2>'
-    + '<div class="note">开着的时候由机器人自己判断这句话要不要搜，闲聊不会调用。搜索走通义千问联网 API（用 DashScope Key）。</div>'
+    + '<div class="note">在允许工具调用的问答中由模型判断是否搜索。自动模式按已配置 Key 选择：千帆 → DeepSeek → 通义 → 必应；明确指定渠道时缺少 Key 会报错。</div>'
+    + '<label>搜索渠道<select id="wsProvider">'+[['auto','自动'],['deepseek','DeepSeek'],['dashscope','通义千问'],['baidu','百度千帆'],['bing','必应网页'],['off','关闭']].map(x=>'<option value="'+x[0]+'"'+((info.configuredProvider||'auto')===x[0]?' selected':'')+'>'+x[1]+'</option>').join('')+'</select></label>'
     + '<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:10px 0"><input type="checkbox" id="wsEnabled"' + (info.enabled ? ' checked' : '') + '> 允许联网搜索</label>'
     + '<div class="frow"><label>搜索模型</label><div><select id="wsModel">' + opts + '</select>'
     + '<div class="mut" style="font-size:12px;margin-top:3px">当前实际：' + esc(info.provider || '—') + ' · ' + esc(cur) + '</div></div></div>'
@@ -928,9 +929,13 @@ function render(){
 }
 
 async function bind(){
+  if(page==='stickers'){
+    stickerControlsDirty=false
+    document.querySelectorAll('#stkEnabled,#stkAutoRange,#stkAutoRate,#stkMax,#stkPickMode,#stkSendScope,#stkCooldown,#stkLearnToggle,#stkLearnPrivate,#stkLearnPerHour,[data-stk-send-group],[data-stk-learn-group]').forEach(el=>el.addEventListener('input',()=>{stickerControlsDirty=true}))
+  }
   const cleanGroups = document.getElementById('cleanGroups')
   if (cleanGroups) cleanGroups.onclick = async function(){
-    if (!await ask('清理非白名单群？', '会把不在白名单里的群从会话列表移除，并清空它们的记忆、会话设置和日报文件（记忆有备份）。', '清理')) return
+    if (!await ask('清理非白名单群？', '会把不在白名单里的群从会话列表移除，并清空它们的记忆、会话设置和日报文件；执行前完整备份，备份失败则停止。', '清理')) return
     cleanGroups.disabled = true
     try {
       const r = await api('/api/action/cleanup-groups', {})
@@ -944,7 +949,8 @@ async function bind(){
   if (wsSave) wsSave.onclick = async function(){
     wsSave.disabled = true
     try {
-      const r = await api('/api/action/set-websearch', { enabled: document.getElementById('wsEnabled').checked, model: document.getElementById('wsModel').value })
+      const chosen=document.getElementById('wsModel').value
+      const r = await api('/api/action/set-websearch', { enabled: document.getElementById('wsEnabled').checked, model: chosen, provider: ['deepseek','bing'].includes(chosen)?chosen:document.getElementById('wsProvider').value })
       webSearchInfo = { enabled: r.enabled, model: r.model, provider: r.provider }
       toast('已保存：' + (r.enabled ? '允许联网' : '关闭联网') + '，模型 ' + r.model)
       await load()
@@ -1091,7 +1097,7 @@ async function bind(){
       const ids = (r.models || []).map(function(m){ return m.id })
       visionModelCache[provider] = ids
       fillVisionModels(ids, vcModel.value || modelOf(provider))
-      if (vcDetectHint) vcDetectHint.textContent = '检测到 ' + r.count + ' 个型号，直接在下拉里选'
+      if (vcDetectHint) vcDetectHint.textContent = '检测到 ' + r.count + ' 个型号；列表不保证识图能力，请选多模态型号'
     } catch (e) {
       if (vcDetectHint) vcDetectHint.textContent = '检测失败：' + e.message
       toast('检测失败：' + e.message, true)
@@ -1105,15 +1111,15 @@ async function bind(){
     const model = vcModel.value.trim()
     vcSave.disabled = true
     try {
+      const patch={VISION_PROVIDER:provider,STICKER_TAG_PROVIDER:document.getElementById('vcTag').value}
       if (String(provider).startsWith('custom:')) {
         const id = String(provider).slice(7)
         if (model) await api('/api/action/vision-provider-update', { id: id, model: model })
       } else if (model) {
         const key = provider === 'deepseek' ? 'VISION_MODEL' : 'DASHSCOPE_MODEL'
-        await api('/api/action/set-config', { key: key, value: model })
+        patch[key]=model
       }
-      await api('/api/action/set-config', { key: 'VISION_PROVIDER', value: provider })
-      await api('/api/action/set-config', { key: 'STICKER_TAG_PROVIDER', value: document.getElementById('vcTag').value })
+      await api('/api/action/set-config-batch', {patch})
       await load()
       if (hint) hint.textContent = '已保存并生效'
       toast('识图设置已保存')
@@ -1152,7 +1158,7 @@ async function bind(){
     try {
       await api('/api/action/set-config', { key: 'VISION_PROVIDER', value: target })
       await load()
-      const label = target === 'dashscope' ? '通义千问' : target === 'custom' ? '自定义识图' : 'DeepSeek'
+      const label = target === 'dashscope' ? '通义千问' : target.startsWith('custom') ? '自定义识图' : 'DeepSeek'
       toast('识图已切换到 ' + label)
     } catch (e) {
       quickVision.value = prev
@@ -1751,8 +1757,9 @@ async function refreshStateUI() {
   } finally { refreshingState = false }
 }
 // 表情包页：新收录的图自动出现；有未保存的编辑时不打断，只提示一次
-let refreshingStickers = false, stickerPending = false, stickerNotified = false
+let refreshingStickers = false, stickerPending = false, stickerNotified = false, stickerControlsDirty=false
 function stickerEditsDirty() {
+  if(stickerControlsDirty)return true
   const byId = new Map((stickerList || []).map(function (it) { return [String(it.id), it] }))
   for (const el of document.querySelectorAll('[data-stk-name],[data-stk-kw],[data-stk-desc]')) {
     const id = el.getAttribute('data-stk-name') || el.getAttribute('data-stk-kw') || el.getAttribute('data-stk-desc')
@@ -1780,15 +1787,8 @@ async function refreshStickersUI() {
   refreshingStickers = true
   try {
     const stk = await api('/api/stickers')
-    const sig = list => (list || []).map(function (it) { return it.id + ':' + it.name }).join('|')
-    if (sig(stickerList) + '#' + (stickerLearned || 0) !== sig(stk.items) + '#' + (stk.learned || 0)) stickerPending = true
-    stickerList = stk.items || []
-    stickerBlacklist = stk.blacklist || []
-    stickerScenes = stk.scenes || []
-    stickerLearned = stk.learned || 0
-    stickerLearn = stk.learn || {}
-    stickerSettings = stk.settings || {}
-    webSearchInfo = await api('/api/websearch').catch(function(){ return {} })
+    if(page!=='stickers'||document.hidden)return
+    if(JSON.stringify([stickerList,stickerBlacklist,stickerLearn,stickerSettings])!==JSON.stringify([stk.items||[],stk.blacklist||[],stk.learn||{},stk.settings||{}]))stickerPending=true
     if (!stickerPending) return
     const mainEl = document.getElementById('main')
     const focused = document.activeElement
@@ -1798,6 +1798,12 @@ async function refreshStickersUI() {
       if (!stickerNotified) { stickerNotified = true; toast('表情包库有更新，保存当前修改后按 F5 刷新') }
       return
     }
+    stickerList = stk.items || []
+    stickerBlacklist = stk.blacklist || []
+    stickerScenes = stk.scenes || []
+    stickerLearned = stk.learned || 0
+    stickerLearn = stk.learn || {}
+    stickerSettings = stk.settings || {}
     const oldY = window.scrollY
     render()
     window.scrollTo(0, oldY)

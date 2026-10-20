@@ -166,6 +166,7 @@ export class DeepSeekClient {
       return {
         content: typeof m.content === 'string' ? m.content.trim() : '',
         toolCalls: Array.isArray(m.tool_calls) && m.tool_calls.length > 0 ? m.tool_calls : null,
+        reasoningContent: typeof m.reasoning_content==='string'?m.reasoning_content:undefined,
       }
     } finally {
       this.#release()

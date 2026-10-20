@@ -63,6 +63,11 @@ try {
   assert.equal(await off.learnFromMessage(msg('empty')), null, '默认空范围不采集')
   const noVision = createStickerLearner({ config, stickers: lib, filterLLM, tagLLM: null, fetchImpl })
   assert.equal(await noVision.learnFromMessage(msg('missing-model')), null, '缺少复核模型不收藏占位图')
+  const beforePrivate=downloads
+  assert.equal(await learner.learnFromMessage({...msg('private-image'),chatKey:'p99999'}),null)
+  assert.equal(downloads,beforePrivate,'默认不从私聊采集')
+  config.stickerLearnPrivate=true
+  assert.ok(await learner.learnFromMessage({...msg('private-image'),chatKey:'p99999'}))
   config.stickerLearnPerHour = 0
   assert.equal(await learner.learnFromMessage(msg('limit')), null)
   config.stickerLearnPerHour = 20; config.stickerLearnEnabled = false
