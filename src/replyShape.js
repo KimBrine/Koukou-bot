@@ -101,6 +101,7 @@ export function planReply({
   lineMaxChars = 40,
   matchEnabled = true,
   longMode = false,
+  minBudget = 0,
   backlogWeight = 0.35,
   rand = Math.random,
 } = {}) {
@@ -113,7 +114,7 @@ export function planReply({
   const lines = matchEnabled ? pickLineCount(target, { maxLines, lineMaxChars, rand }) : 1
   // 预算：跟着对方长度走，再给几个字余量；下限 8 字（避免出现"嗯"这种没有信息的回复），
   // 上限 = 行数 × 单行上限（多行不代表可以无限长）
-  const budget = Math.max(8, Math.min(lines * lineMaxChars, Math.round(target * 1.15) + 8))
+  const budget = Math.max(Math.max(0, minBudget), Math.max(8, Math.min(lines * lineMaxChars, Math.round(target * 1.15) + 8)))
   const perLineCap = Math.max(8, Math.min(lineMaxChars, Math.ceil(budget / lines) + 6))
   return { targetLen: target, lines, budget, perLineCap, lineMaxChars }
 }
@@ -168,7 +169,8 @@ export function trimTo(text, limit) {
   const bySentence = head.match(/^[\s\S]*[。！？!?～~…]/)
   if (bySentence && bySentence[0].trim().length >= 4) return completeDecoration(bySentence[0].trim(), s, limit)
   const byComma = head.match(/^[\s\S]*[，,、]/)
-  if (byComma && byComma[0].trim().length >= 6) {
+  // 仅当断点够长才采用：否则会在第一个逗号就把长句砍成很短一句（"你是谁" 只回 15 字）
+  if (byComma && byComma[0].trim().length >= Math.max(6, Math.floor(limit * 0.6))) {
     return completeDecoration(byComma[0].trim().replace(/[，,、]$/, ''), s, limit)
   }
   return completeDecoration(`${head.slice(0, Math.max(1, limit - 1)).trim()}…`, s, limit)

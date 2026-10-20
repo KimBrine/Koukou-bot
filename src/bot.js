@@ -1065,6 +1065,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         lineMaxChars: eff?.lineMaxChars ?? config.replyLineMaxChars,
         matchEnabled: config.replyLengthMatch,
         longMode: questionMode,
+        minBudget: config.replyMinBudget,
         rand, // 可注入的随机源（生产为 Math.random，测试可固定以保证确定性）
       })
       logger.debug(`[形态] 对方 ${incomingLen} 字 → 目标 ${plan.targetLen} 字｜${plan.lines} 行｜预算 ${plan.budget} 字`)

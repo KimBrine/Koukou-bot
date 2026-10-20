@@ -1,0 +1,29 @@
+import assert from 'node:assert/strict'
+import { planReply, shapeReply } from '../src/replyShape.js'
+
+// 默认：完全跟随对方长度（上游行为）
+const short = planReply({ incomingLen: 3, maxLines: 3, lineMaxChars: 40, rand: () => 0.5 })
+assert.equal(short.budget, 11, '3 字问题 → 11 字预算（上游默认）')
+
+// 最小预算：短问题也给足空间
+const floored = planReply({ incomingLen: 3, maxLines: 8, lineMaxChars: 300, minBudget: 30, rand: () => 0.5 })
+assert.equal(floored.budget, 30, '设了最小预算就按最小预算')
+
+// 不设最小预算时，长消息仍按对方长度
+const long = planReply({ incomingLen: 100, maxLines: 8, lineMaxChars: 300, rand: () => 0.5 })
+assert.ok(long.budget > 100 && long.budget <= 8 * 300, '长消息预算跟随并受上限约束')
+
+// 最小预算不会突破单行上限太多（perLineCap 仍受 lineMaxChars 约束）
+const capped = planReply({ incomingLen: 3, maxLines: 1, lineMaxChars: 40, minBudget: 300, rand: () => 0.5 })
+assert.equal(capped.perLineCap <= 40, true, '单行上限仍然生效')
+
+// 解题模式
+const q = planReply({ incomingLen: 3, maxLines: 8, lineMaxChars: 300, longMode: true, rand: () => 0.5 })
+assert.equal(q.budget, 2400, '解题模式用满预算')
+
+// 实际裁剪：12 字回复在 11 字预算下会被截断；最小预算 30 时保留完整
+const text = '夜璃呀，希希你连我都不认识了吗'
+assert.ok(shapeReply(text, short).join('').includes('…'), '默认预算下会被截断')
+assert.equal(shapeReply(text, floored).join('').includes('…'), false, '最小预算下保留完整')
+
+console.log('回复预算检查通过：默认跟随 / 最小预算 / 单行上限 / 解题模式 / 实际裁剪。')

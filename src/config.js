@@ -317,6 +317,8 @@ export function loadConfig() {
     replyLengthMatch: String(env.REPLY_LENGTH_MATCH ?? '1').toLowerCase() !== '0' && String(env.REPLY_LENGTH_MATCH ?? '1').toLowerCase() !== 'false',
     // 长回答模式：开启后不再"跟着对方字数"压缩，允许写完整过程（解题/写代码时用）
     replyLongMode: false, // 兼容旧配置字段；解题只由当前消息/Q触发
+    // 最小回复预算（字）：0 = 完全跟随对方长度（上游默认）；大于 0 时短问题也至少给这么多字数
+    replyMinBudget: Math.max(0, Math.min(300, Math.floor(num('REPLY_MIN_BUDGET', 0)))),
     replyMaxLines: Math.max(1, Math.min(20, Math.floor(num('REPLY_MAX_LINES', 3)))),
     replyLineMaxChars: Math.max(10, Math.min(1000, Math.floor(num('REPLY_LINE_MAX_CHARS', 40)))),
     // 分条发送之间的间隔（比首次"打字"短：第二条是想接着说的，不该等太久）
