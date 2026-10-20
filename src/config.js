@@ -361,7 +361,8 @@ export function loadConfig() {
     stickerCooldownSeconds: Math.max(0, Math.min(86400, num('STICKER_COOLDOWN_SECONDS', 0))),
     stickerMaxPerReply: Math.max(1, Math.min(3, Math.floor(num('STICKER_MAX_PER_REPLY', 1)))),
     temperature: Math.min(2, Math.max(0, num('TEMPERATURE', 1.2))),
-    maxTokens: Math.max(1, Math.floor(num('MAX_TOKENS', 500))),
+    // 默认给足空间：思考强度开启时 500 会被推理吃光，导致回复被截断/空回复
+    maxTokens: Math.max(256, Math.floor(num('MAX_TOKENS', 4096))),
     timeoutMs: Math.max(5000, Math.floor(num('TIMEOUT_MS', 90000))),
     maxRetries: Math.max(0, Math.min(5, Math.floor(num('MAX_RETRIES', 2)))),
     maxConcurrency: Math.max(1, Math.min(8, Math.floor(num('MAX_CONCURRENCY', 2)))),
