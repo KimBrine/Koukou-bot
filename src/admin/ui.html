@@ -303,13 +303,10 @@ function pageOverview(){
   }).join('')
   const quickCard = [
     '<section class="card" style="margin-bottom:18px"><h2>常用开关</h2>',
-    '<div style="display:flex;align-items:center;gap:12px;margin:10px 0">',
-      '<label class="switch"><input type="checkbox" id="quickLong"' + (configFlag('REPLY_LONG_MODE') ? ' checked' : '') + '><i></i></label>',
-      '<div><b>长回答（解题模式）</b><div class="mut" style="font-size:12px">完整写过程，不按对方字数压缩</div></div>',
-    '</div>',
+    '<div class="note"><b>/Q 解题模式（单次启用）</b><br>私聊发送 /Q 问题，或在群里 @机器人并带 /Q。认真讲解过程，支持题目图片；下一条未带 /Q 的消息恢复普通聊天。</div>',
     '<div style="display:flex;align-items:center;gap:12px;margin:10px 0">',
       '<label class="switch"><input type="checkbox" id="quickTiming"' + (configFlag('REPLY_TIMING_ENABLED') ? ' checked' : '') + '><i></i></label>',
-      '<div><b>显示思考耗时</b><div class="mut" style="font-size:12px">回复末尾附「（想了 X.X 秒）」</div></div>',
+      '<div><b>显示思考耗时</b><div class="mut" style="font-size:12px">仅 /Q 解题回复末尾附「（想了 X.X 秒）」；普通聊天不显示</div></div>',
     '</div>',
     '<div class="mut" style="margin-top:8px;font-size:12px">开关状态实时显示，改完立刻生效，不用重启</div>',
     '</section>'
@@ -725,7 +722,6 @@ function pageMemory(){
 function configFlag(key){
   const s = state?.config
   if (s) {
-    if (key === 'REPLY_LONG_MODE' && typeof s.replyLongMode === 'boolean') return s.replyLongMode
     if (key === 'REPLY_TIMING_ENABLED' && typeof s.replyTimingEnabled === 'boolean') return s.replyTimingEnabled
   }
   const it = (configItems || []).find(function(x){ return x.key === key })
@@ -946,14 +942,6 @@ async function bind(){
   }
   if(page === 'commands') CommandCenterUI.bind({api,toast,load,render,ask})
   // 工作台快捷开关
-  const quickLong = document.getElementById('quickLong')
-  if (quickLong) quickLong.onchange = async () => {
-    try {
-      await api('/api/action/set-config', { key: 'REPLY_LONG_MODE', value: quickLong.checked ? '1' : '0' })
-      await load()
-      toast(quickLong.checked ? '已开启长回答模式' : '已关闭长回答模式')
-    } catch (e) { toast('保存失败：' + e.message, true) }
-  }
   const quickTiming = document.getElementById('quickTiming')
   if (quickTiming) quickTiming.onchange = async () => {
     try {

@@ -51,7 +51,6 @@ const EDITABLE = [
   { key: 'HUMAN_DELAY_MIN_MS', label: '打字延迟下限(ms)', live: true, type: 'number' },
   { key: 'HUMAN_DELAY_MAX_MS', label: '打字延迟上限(ms)', live: true, type: 'number' },
   { key: 'REPLY_LENGTH_MATCH', label: '回复长度自适应', hint: '1=跟着对方长度走；0=固定单行。想要长回答请用工作台的「长回答模式」', live: true, type: 'bool' },
-  { key: 'REPLY_LONG_MODE', label: '长回答模式', hint: '开启：解题/写代码/讲过程时完整输出，不再跟着对方字数压缩；平时闲聊仍按上面两项', live: true, type: 'bool' },
   { key: 'REPLY_MAX_LINES', label: '最多分几行', live: true, type: 'number' },
   { key: 'REPLY_LINE_MAX_CHARS', label: '单行字数上限', live: true, type: 'number' },
   { key: 'LINE_GAP_MIN_MS', label: '分条间隔下限(ms)', live: true, type: 'number' },
@@ -98,7 +97,7 @@ const EDITABLE = [
   { key: 'DEEPSEEK_BASE_URL', label: '接口地址（Base URL）', hint: 'OpenAI 兼容地址，例如 https://api.deepseek.com', live: true, type: 'text', wide: true },
   { key: 'DEEPSEEK_MODEL', label: '对话模型', hint: '建议先用「自动检测模型」拿到列表再选', live: true, type: 'text' },
   { key: 'DEEPSEEK_REASONING_EFFORT', label: 'DeepSeek 思考强度', hint: 'none / low / high / max；留空 = 不发送。统一用于对话、指令理解与识图；max 更慢更贵', live: true, type: 'text' },
-  { key: 'REPLY_TIMING_ENABLED', label: '显示思考耗时', hint: '1 开启：每条回复末尾附加「（想了 X.X 秒）」；0 关闭（日志里始终有记录）', live: true, type: 'text' },
+  { key: 'REPLY_TIMING_ENABLED', label: '显示思考耗时', hint: '1 开启：仅/Q解题回复末尾附加「（想了 X.X 秒）」；0 关闭（日志里始终有记录）', live: true, type: 'text' },
   { key: 'STICKERS_ENABLED', label: '表情包库', hint: '1 开启，0 关闭；开启后模型可用 [贴纸: 名称] 指定发图', live: true, type: 'text' },
   { key: 'STICKER_LEARN_ENABLED', label: '从群聊学习表情包', hint: '仅从指定学习群采集；DeepSeek Flash初筛、Qwen复核打标签，普通图片不入库', live: true, type: 'text' },
   { key: 'STICKER_LEARN_GROUPS', label: '表情包学习群', hint: '仅所选群允许采集，可独立于聊天白名单；留空不采集', live: true, type: 'text' },
@@ -401,7 +400,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         lineMaxChars: config.replyLineMaxChars,
         activePersona: config.activePersona || '',
         adminUsers: [...(config.adminUsers || [])],
-        replyLongMode: Boolean(config.replyLongMode),
+        questionModeTrigger: '/Q',
         replyTimingEnabled: Boolean(config.replyTimingEnabled),
         summaryTimes: config.summaryTimes,
         summaryFallbackEnabled: config.summaryFallbackEnabled,
@@ -680,7 +679,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         config.lineGapMaxMs = Math.max(0, num(value, config.lineGapMaxMs))
         break
       case 'REPLY_LONG_MODE':
-        config.replyLongMode = ['1', 'true'].includes(String(value ?? '').trim().toLowerCase())
+        throw new Error('长回答改为私聊或群内@时使用/Q，仅当前问答生效')
         break
       case 'REPLY_MAX_LINES':
         config.replyMaxLines = Math.max(1, Math.min(5, Math.floor(num(value, config.replyMaxLines))))

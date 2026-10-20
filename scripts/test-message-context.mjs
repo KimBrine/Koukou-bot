@@ -1,3 +1,4 @@
+import { isQuestionMode } from '../src/questionMode.js'
 // 模拟 OneBot、模型与图片；不连接 QQ、不下载图片、不调用付费模型。
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -44,6 +45,42 @@ function setup({config={},getMsg,forwards={},chat,chatSettings,rateLimiter,visio
 const lastUser=t=>t.requests.at(-1)[1].at(-1).content
 const shape=t=>t.requests.at(-1)[0].match(/【本次回复的形态要求[^]*?(?=\n\n【|$)/)?.[0]
 try {
+  await test('/Q仅私聊或当前外层@触发，标记有边界且不改变全局模式', async()=>{
+    assert.equal(isQuestionMode('/Q 推导',{isPrivate:true}),true)
+    assert.equal(isQuestionMode('请 /q解题',{atBot:true}),true)
+    assert.equal(isQuestionMode('/Q1+1等于几',{isPrivate:true}),true)
+    assert.equal(isQuestionMode('帮我/Q（看这题）',{atBot:true}),true)
+    assert.equal(isQuestionMode('/Q 推导',{atBot:false}),false)
+    for(const text of ['/Query','https://example.com/Q','abc/Q']) assert.equal(isQuestionMode(text,{isPrivate:true}),false)
+    const solution='1. 建立方程\n\n令 f(x) = (x + 1) * (x - 1)，得到 x² - 1。'.repeat(8)+'\n```python\ndef solve(x):\n    return (x + 1) * (x - 1)\n```'
+    const t=setup({config:{replyLongMode:true,replyTimingEnabled:true},chat:async()=>{await new Promise(r=>setTimeout(r,5));return solution}})
+    await t.bot.handleMessage(t.event([at(),text('/Q 请讲过程')]))
+    assert.match(t.requests[0][0],/本轮 \/Q 解题模式/)
+    assert.equal(t.sent.length,1)
+    assert.ok(t.sent[0].includes(solution),'完整保留公式、代码、分段和长正文')
+    assert.match(t.sent[0],/想了 [\d.]+ 秒/)
+    await t.bot.handleMessage(t.event([at(),text('好呀')]))
+    assert.doesNotMatch(t.requests.at(-1)[0],/【本轮 \/Q 解题模式】/)
+    assert.doesNotMatch(t.sent.at(-1),/想了 [\d.]+ 秒/)
+    assert.ok(t.sent.at(-1).length<solution.length,'下一轮恢复聊天长度，即使有旧全局开关')
+    assert.equal(t.cfg.replyLongMode,true,'请求不修改共享配置')
+    const p=setup({config:{replyTimingEnabled:false},chat:()=>solution})
+    await p.bot.handleMessage(p.event('/Q 推导',{message_type:'private'}))
+    assert.ok(p.sent[0].includes(solution));assert.doesNotMatch(p.sent[0],/想了 [\d.]+ 秒/)
+  })
+  await test('/Q不由群里引用或转发的旧标记触发，解题图片读完整题干',async()=>{
+    const q=setup({config:{proactiveRate:1},getMsg:()=>({message_id:'99',group_id:group,user_id:selfId,message:[text('/Q 旧问题')]}),chat:()=> '收到'})
+    await q.bot.handleMessage(q.event([quote('99'),text('/Q 问题')]))
+    assert.doesNotMatch(q.requests[0][0],/【本轮 \/Q 解题模式】/)
+    let visionPrompt='', options, desc='题目全文与图表条件'.repeat(40)
+    const t=setup({visionLLM:{async describeImages(prompt,ask,parts,opts){visionPrompt=prompt;options=opts;return desc}},
+      imageCache:{async load(){return {part:{type:'image_url',image_url:{url:'data:image/png;base64,eA=='}},hash:'test'}},async describe(hashes,scope,read){assert.match(scope,/question-v1/);return read()}},chat:()=> '1. 解法\n```python\nprint(1)\n```'})
+    await t.bot.handleMessage(t.event([at(),text('/Q 解这道题'),{type:'image',data:{file:'x'}}]))
+    assert.match(visionPrompt,/完整转录/);assert.equal(options.maxTokens,0)
+    assert.ok(t.requests[0][1].at(-1).content.includes(desc),'题干不压成160字图片短描述')
+    assert.match(t.sent[0],/```python/)
+    assert.equal(t.requests.length,1,'解题正文不被图片分析报告拦截器重试')
+  })
   await test('连续短句和动作保留完整问答，多人明确引用可以接入前文',async()=>{
     const replies=['也分你一块饼干呀','张嘴，啊——','咬一小口，慢慢吃呀']
     const t=setup({chat:()=>replies.shift()})
