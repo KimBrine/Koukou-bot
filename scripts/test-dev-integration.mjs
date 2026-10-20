@@ -63,7 +63,7 @@ try {
   const html = readUiSource()
   const js=readUiScript()
   const prefix=js.slice(0,js.search(/\r?\nrenderNav\(\)\r?\nload\(\)/))
-  const context=vm.createContext({location:{hash:''},console})
+  const context=vm.createContext({location:{hash:''},console,window:{}})
   vm.runInContext(prefix,context)
   const stickerPage=vm.runInContext(`joinedGroups=[{id:'12345',name:'非白名单群'}]; chats=[]; stickerLearn={groups:[12345]}; pageStickers()`,context)
   assert.match(stickerPage,/data-stk-learn-group="12345" checked/)
