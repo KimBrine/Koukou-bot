@@ -734,7 +734,11 @@ function pageStickers(){
     '<input id="stkSendKw" placeholder="留空 = 随机一张" style="flex:1;min-width:160px">',
     '<button class="btn" id="stkSend">发送</button>',
     '</div></section>',
-    '<section class="card"><h2>表情包黑名单 <span class="pill">' + stickerBlacklist.length + ' 条</span></h2><div class="note">按图片 SHA-256 阻止再次收录；仅删除的图片仍可能重新学习。重新压缩、裁剪或修改后的图片哈希不同，不属于同一条黑名单。解除后允许重新学习，不会自动恢复已删除图片。</div><details><summary>查看与管理黑名单</summary>' + (stickerBlacklist.length ? stickerBlacklist.map(s=>'<div style="margin:12px 0"><strong>'+esc(s.name)+'</strong><input readonly aria-label="黑名单哈希" value="'+esc(s.hash)+'" style="font-family:monospace;margin:8px 0"><button class="btn" data-stk-unblock="'+esc(s.hash)+'">解除黑名单</button></div>').join('') : '<div class="mut">暂无黑名单</div>') + '</details></section>',
+    '<section class="card"><h2>表情包黑名单 <span class="pill">' + stickerBlacklist.length + ' 张</span></h2><div class="note">这些图片不会被学习或发送。解除后允许重新学习或上传，不会自动放回表情包库。按原图哈希识别；重新压缩或裁剪后的图片不视为同一张。</div><input id="stkBlockedSearch" placeholder="搜索黑名单名称、标签、描述或哈希" aria-label="搜索表情包黑名单" style="width:100%;margin-bottom:16px">' + (stickerBlacklist.length ? '<div style="display:flex;flex-wrap:wrap;gap:12px">'+stickerBlacklist.map(s=>'<article data-stk-blocked-card="'+esc(s.hash)+'" style="border:1px solid var(--line,#ddd);border-radius:14px;padding:16px;flex:1 1 300px;min-width:260px;max-width:420px">'+
+      (s.hasPreview?'<button class="btn" data-stk-blocked-preview="'+esc(s.hash)+'" style="width:100%;padding:0" aria-label="预览黑名单 '+esc(s.name)+'"><img loading="lazy" src="/api/sticker-blacklist-file?hash='+encodeURIComponent(s.hash)+'" alt="'+esc(s.name)+'" style="width:100%;height:180px;object-fit:contain;border-radius:10px;background:#0002"></button>':'<div style="height:180px;display:grid;place-content:center;text-align:center;border-radius:10px;background:#0002"><strong>暂无图片预览</strong><span class="mut">旧版图片已删除，黑名单仍然有效</span></div>')+
+      '<div style="margin:10px 0"><span class="pill">已屏蔽</span> <span class="mut">'+(s.blockedAt?esc(new Date(s.blockedAt).toLocaleString()):'记录时间未知')+'</span></div><h3>'+esc(s.name||'未命名表情包')+'</h3>'+
+      ((s.keywords||[]).length?'<div class="mut">标签：'+esc(s.keywords.join(' · '))+'</div>':'')+(s.description?'<p>'+esc(s.description)+'</p>':'')+
+      '<details style="margin:12px 0"><summary>查看 SHA-256</summary><input readonly aria-label="黑名单哈希" value="'+esc(s.hash)+'" style="width:100%;font-family:monospace;font-size:12px;margin:8px 0"></details><div class="flexbar"><button class="btn primary" data-stk-unblock="'+esc(s.hash)+'">解除黑名单</button><button class="btn" data-stk-blocked-copy="'+esc(s.hash)+'">复制哈希</button></div></article>').join('')+'</div><div id="stkBlockedEmpty" class="mut" hidden>没有匹配的黑名单图片</div>' : '<div class="mut">暂无黑名单</div>') + '</section>',
     '<section class="card"><h2>表情包库 <span class="pill">' + items.length + ' 张</span></h2><input id="stkSearch" placeholder="搜索名称、标签、描述或哈希" style="width:100%;margin-bottom:16px">',
     items.length ? ('<div style="display:flex;flex-wrap:wrap;gap:12px">' + cards + '</div>') : '<div class="mut">还没有表情包，先上传几张，或者打开上面的群聊学习。</div>',
     '</section>',
@@ -1100,6 +1104,10 @@ async function bind(){
   }
   const stkSearch=document.getElementById('stkSearch')
   if(stkSearch)stkSearch.oninput=()=>{const q=stkSearch.value.trim().toLowerCase();document.querySelectorAll('[data-stk-card]').forEach(el=>{const s=stickerList.find(s=>s.id===el.dataset.stkCard);el.hidden=![s?.name,...(s?.keywords || []),s?.description,s?.hash].join(' ').toLowerCase().includes(q)})}
+  const blockedSearch=document.getElementById('stkBlockedSearch')
+  if(blockedSearch)blockedSearch.oninput=()=>{const q=blockedSearch.value.trim().toLowerCase();let count=0;document.querySelectorAll('[data-stk-blocked-card]').forEach(el=>{const s=stickerBlacklist.find(s=>s.hash===el.dataset.stkBlockedCard);el.hidden=![s?.name,...(s?.keywords||[]),s?.description,s?.hash].join(' ').toLowerCase().includes(q);if(!el.hidden)count++});const empty=document.getElementById('stkBlockedEmpty');if(empty)empty.hidden=count>0}
+  document.querySelectorAll('[data-stk-blocked-preview]').forEach(el=>el.onclick=()=>{const s=stickerBlacklist.find(s=>s.hash===el.dataset.stkBlockedPreview);document.getElementById('stkPreviewTitle').textContent='黑名单 · '+s.name;document.getElementById('stkPreviewImage').src='/api/sticker-blacklist-file?hash='+encodeURIComponent(s.hash);document.getElementById('stkPreviewDialog').showModal()})
+  document.querySelectorAll('[data-stk-blocked-copy]').forEach(el=>el.onclick=async()=>{try{await navigator.clipboard.writeText(el.dataset.stkBlockedCopy);toast('哈希已复制')}catch{toast('可展开哈希手动复制',true)}})
   document.querySelectorAll('[data-stk-preview]').forEach(el=>el.onclick=()=>{const s=stickerList.find(s=>s.id===el.dataset.stkPreview);document.getElementById('stkPreviewTitle').textContent=s.name;document.getElementById('stkPreviewImage').src='/api/sticker-file?id='+encodeURIComponent(s.id)+'&hash='+encodeURIComponent(s.hash || '');document.getElementById('stkPreviewDialog').showModal()})
   const previewClose=document.getElementById('stkPreviewClose');if(previewClose)previewClose.onclick=()=>document.getElementById('stkPreviewDialog').close()
   document.querySelectorAll('[data-stk-copy]').forEach(el=>el.onclick=async()=>{try{await navigator.clipboard.writeText(stickerList.find(s=>s.id===el.dataset.stkCopy).hash);toast('哈希已复制')}catch(e){toast('可在哈希输入框中手动复制',true)}})
@@ -1145,7 +1153,7 @@ async function bind(){
     catch (e) { toast('删除失败：' + e.message, true) }
   })
   document.querySelectorAll('[data-stk-block]').forEach(el=>el.onclick=async()=>{
-    if(!await ask('拉入黑名单并删除？','会记录图片哈希并删除库中图片，以后自动学习和上传都不会再次收录；可在黑名单中解除。','拉入黑名单'))return
+    if(!await ask('拉入黑名单并删除？','会从可用库移除，保留图片供黑名单预览。以后自动学习和上传都不会再次收录；可在黑名单中解除。','拉入黑名单'))return
     el.disabled=true
     try{await api('/api/action/sticker-blacklist',{id:el.dataset.stkBlock});await load();toast('已加入黑名单并删除')}
     catch(e){toast('操作失败：'+e.message,true)}finally{el.disabled=false}
@@ -1609,7 +1617,7 @@ function stickerEditsDirty() {
   }
   const file = document.getElementById('stkFile')
   if (file && file.files && file.files.length) return true
-  for (const id of ['stkSearch', 'stkKw', 'stkSendText', 'stkSendKw']) {
+  for (const id of ['stkSearch', 'stkBlockedSearch', 'stkKw', 'stkSendText', 'stkSendKw']) {
     const el = document.getElementById(id)
     if (el && String(el.value || '').trim()) return true
   }

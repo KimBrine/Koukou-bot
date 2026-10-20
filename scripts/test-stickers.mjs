@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, existsSync, rmSync, readdirSync } from 'node:fs'
+import { mkdtempSync, existsSync, rmSync, readdirSync, mkdirSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { createStickers, extractStickerMarkers, parseDataUrl } from '../src/stickers.js'
@@ -77,6 +77,10 @@ try {
   assert.equal(lib.count(),0)
   assert.equal(existsSync(path.join(lib.dir,blockItem.file)),false)
   assert.equal(lib.dataUrlOf(blockItem),null,'在途发送也不能读取被拉黑图片')
+  assert.deepEqual(lib.blacklistImage(blockItem.hash).buffer,parseDataUrl(PNG).buffer,'归档图片可供黑名单预览')
+  assert.equal(lib.blacklistEntries()[0].hasPreview,true)
+  assert.equal(lib.blacklistImage('../stickers.json'),null,'不能绕过哈希校验读取文件')
+  assert.equal(lib.find('不再收录'),null,'归档不进入选图')
   assert.throws(()=>lib.add({dataUrl:PNG}),/黑名单/)
   const blockedReboot=createStickers({dir:lib.dir,logger})
   assert.equal(blockedReboot.isBlocked(blockItem.hash),true)
@@ -85,7 +89,24 @@ try {
   const editable=blockedReboot.add({dataUrl:replacement}).item
   assert.throws(()=>blockedReboot.update(editable.id,{dataUrl:PNG}),/黑名单/)
   assert.equal(blockedReboot.unblock(blockItem.hash),true)
+  assert.equal(blockedReboot.blacklistImage(blockItem.hash),null,'解除后不再提供预览')
+  assert.equal(existsSync(path.join(lib.dir,'blacklist-images',blockItem.hash)),false)
+  assert.equal(blockedReboot.count(),1,'解除黑名单不自动恢复活动库')
   assert.equal(blockedReboot.add({dataUrl:PNG}).duplicated,false)
+
+  const legacyDir=path.join(root,'legacy','stickers'),cacheDir=path.join(root,'legacy','image-cache')
+  mkdirSync(legacyDir,{recursive:true});mkdirSync(cacheDir,{recursive:true})
+  const absent='a'.repeat(64)
+  writeFileSync(path.join(legacyDir,'blacklist.json'),JSON.stringify([{hash:blockItem.hash,name:'旧图',blockedAt:1},{hash:absent,name:'无缓存旧图'}]))
+  writeFileSync(path.join(cacheDir,blockItem.hash+'.bin'),parseDataUrl(PNG).buffer)
+  writeFileSync(path.join(cacheDir,absent+'.bin'),parseDataUrl(PNG).buffer)
+  const legacy=createStickers({dir:legacyDir,logger})
+  assert.deepEqual(legacy.blacklistImage(blockItem.hash).buffer,parseDataUrl(PNG).buffer,'旧记录可按完整哈希找回缓存')
+  assert.equal(legacy.blacklistImage(absent),null,'哈希不符的缓存不能充当预览')
+  assert.equal(legacy.count(),0,'找回预览不会恢复发送或学习')
+  assert.equal(legacy.isBlocked(absent),true,'无预览仍阻止学习')
+  writeFileSync(path.join(legacyDir,'blacklist-images',blockItem.hash),'tampered')
+  assert.equal(legacy.blacklistImage(blockItem.hash),null,'篡改的归档不对外提供')
 
   // 标记解析
   const r1 = extractStickerMarkers('走啦\n[贴纸: 猫猫]\n明天见')

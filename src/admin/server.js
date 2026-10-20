@@ -1373,6 +1373,13 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         return send(200, readFileSync(UI_FILE), 'text/html; charset=utf-8')
       }
       // 表情包图片（控制台预览用）
+      if (req.method === 'GET' && url.pathname === '/api/sticker-blacklist-file') {
+        const image = stickers?.blacklistImage?.(String(url.searchParams.get('hash') || ''))
+        if(!image)return send(404,'not found','text/plain; charset=utf-8')
+        res.setHeader('Cache-Control','no-store')
+        res.setHeader('X-Content-Type-Options','nosniff')
+        return send(200,image.buffer,image.mime)
+      }
       if (req.method === 'GET' && url.pathname === '/api/sticker-file') {
         const id = String(url.searchParams.get('id') || '')
         const item = stickers ? stickers.get(id) : null

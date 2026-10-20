@@ -39,6 +39,8 @@ export function createStickers({ dir, logger, now = () => Date.now() }) {
   mkdirSync(dir, { recursive: true })
   const indexFile = path.join(dir, 'stickers.json')
   const blacklistFile = path.join(dir, 'blacklist.json')
+  const blockedDir = path.join(dir, 'blacklist-images')
+  const blockedFile = hash => path.join(blockedDir, hash)
   // 读取失败时停止初始化，不能把损坏的黑名单当成空名单重新采集。
   let blocked = existsSync(blacklistFile) ? JSON.parse(readFileSync(blacklistFile, 'utf8')) : []
   if (!Array.isArray(blocked) || blocked.some(x => !/^[a-f0-9]{64}$/.test(x?.hash))) throw new Error('表情包黑名单格式错误，请恢复备份')
@@ -116,10 +118,15 @@ export function createStickers({ dir, logger, now = () => Date.now() }) {
   function blacklist(id) {
     const item = get(id)
     if (!item) return false
-    const next = [...blocked.filter(x => x.hash !== item.hash), {hash:item.hash, name:item.name, blockedAt:now()}]
+    // 独立归档仅供控制台预览；不进入选图、模型清单或发送接口。
+    const buffer = readFileSync(fileOf(item))
+    if (createHash('sha256').update(buffer).digest('hex') !== item.hash) throw new Error('图片哈希不一致，未加入黑名单')
+    mkdirSync(blockedDir, {recursive:true})
+    writeFileSync(blockedFile(item.hash), buffer)
+    const next = [...blocked.filter(x => x.hash !== item.hash), {hash:item.hash, name:item.name, keywords:item.keywords, description:item.description, mime:item.mime, size:buffer.length, blockedAt:now()}]
     writeJsonAtomic(blacklistFile, next)
     blocked = next
-    // 先保存黑名单，再移除索引和图片；重启及正在进行的学习都不能重新收录。
+    // 先保存黑名单，再移除活动库索引和图片；重启及在途学习不能重新收录。
     remove(id)
     return true
   }
@@ -128,7 +135,32 @@ export function createStickers({ dir, logger, now = () => Date.now() }) {
     if (next.length === blocked.length) return false
     writeJsonAtomic(blacklistFile, next)
     blocked = next
+    try { unlinkSync(blockedFile(hash)) } catch { /* 旧记录可能没有预览 */ }
     return true
+  }
+
+  function blacklistImage(hash) {
+    if (!/^[a-f0-9]{64}$/.test(String(hash)) || !isBlocked(hash)) return null
+    const entry=blocked.find(x=>x.hash===hash)
+    try {
+      const buffer=readFileSync(blockedFile(hash))
+      if(createHash('sha256').update(buffer).digest('hex')!==hash)return null
+      return {buffer,mime:ALLOWED[entry.mime]?entry.mime:'application/octet-stream'}
+    } catch { return null }
+  }
+
+  // 旧版只保留哈希：按完整 SHA-256 从已有图片缓存找回预览，不下载、不重新入库。
+  for (const entry of blocked) {
+    if(existsSync(blockedFile(entry.hash)))continue
+    try {
+      const buffer=readFileSync(path.join(dir,'..','image-cache',entry.hash+'.bin'))
+      if(buffer.length>STICKER_MAX_BYTES||createHash('sha256').update(buffer).digest('hex')!==entry.hash)continue
+      const mime=buffer.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))?'image/png':buffer[0]===255&&buffer[1]===216?'image/jpeg':buffer.subarray(0,3).toString()==='GIF'?'image/gif':buffer.subarray(0,4).toString()==='RIFF'&&buffer.subarray(8,12).toString()==='WEBP'?'image/webp':null
+      if(!mime)continue
+      mkdirSync(blockedDir,{recursive:true});writeFileSync(blockedFile(entry.hash),buffer)
+      Object.assign(entry,{mime,size:buffer.length})
+      writeJsonAtomic(blacklistFile,blocked)
+    } catch { /* 缓存已过期则保留黑名单并显示无预览 */ }
   }
 
   function update(id, { name, keywords, scenes, description, dataUrl } = {}) {
@@ -246,8 +278,8 @@ export function createStickers({ dir, logger, now = () => Date.now() }) {
     } catch { return null }
   }
 
-  return { dir, list, get, add, remove, update, find, pick, random, noteUsage, summary, dataUrlOf, blacklist, unblock, isBlocked,
-    blacklistEntries: () => blocked.map(x=>({...x})).sort((a,b)=>b.blockedAt-a.blockedAt), count: () => items.length,
+  return { dir, list, get, add, remove, update, find, pick, random, noteUsage, summary, dataUrlOf, blacklist, unblock, isBlocked, blacklistImage,
+    blacklistEntries: () => blocked.map(x=>({...x,hasPreview:existsSync(blockedFile(x.hash))})).sort((a,b)=>b.blockedAt-a.blockedAt), count: () => items.length,
     learned: () => items.filter((x) => x.origin === 'learned').length }
 }
 
