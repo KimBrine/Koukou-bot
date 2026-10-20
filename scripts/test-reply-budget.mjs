@@ -23,7 +23,8 @@ assert.equal(q.budget, 2400, '解题模式用满预算')
 
 // 实际裁剪：12 字回复在 11 字预算下会被截断；最小预算 30 时保留完整
 const text = '夜璃呀，希希你连我都不认识了吗'
-assert.ok(shapeReply(text, short).join('').includes('…'), '默认预算下会被截断')
+assert.ok(shapeReply('这是一句非常非常长的回复'.repeat(6), short).join('').includes('…'), '超过单行上限才会截断')
+assert.equal(shapeReply(text, short).join('').includes('…'), false, '单行不再被最小预算二次截断')
 assert.equal(shapeReply(text, floored).join('').includes('…'), false, '120 字预算下 33 字回复完整保留')
 
 // 最小预算下允许最多 maxLines 条，模型自己的分段会保留

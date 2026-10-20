@@ -115,7 +115,9 @@ export function planReply({
   if (minBudget > 0) {
     const lines = Math.max(1, Math.min(maxLines, Math.max(1, Math.floor(minBudget / 20))))
     const budget = Math.max(minBudget, Math.min(lines * lineMaxChars, Math.round(target * 1.15) + 8))
-    const perLineCap = Math.max(20, Math.min(lineMaxChars, Math.ceil(budget / lines) + 6))
+    // 最小预算的语义是“至少给这么多”，不是“最多只能这么多”：
+    // 单行仍可写到单行上限，否则模型刚说到一半就被 … 截断。
+    const perLineCap = Math.max(20, lineMaxChars)
     return { targetLen: target, lines, budget, perLineCap, lineMaxChars }
   }
   const lines = matchEnabled ? pickLineCount(target, { maxLines, lineMaxChars, rand }) : 1
@@ -174,6 +176,8 @@ export function trimTo(text, limit) {
   const s = String(text ?? '').trim()
   if (!s) return ''
   if (s.length <= limit) return s
+  // 只超出一点点时宁可完整发出，也别为了凑数加个 …
+  if (limit >= 30 && s.length <= limit + 15) return s
   // 断点如果落在链接里，就把整条链接保留下来，别发半截地址
   const links = s.match(LINK_RE) || []
   for (const link of links) {
@@ -266,9 +270,10 @@ export function shapeReply(raw, plan) {
   lines = lines.map((s) => trimTo(s, lineCap + decorationChars(s))).filter((s) => s.length > 0)
   if (lines.length === 0) return fallback()
 
-  // 总预算同样只算正文，装饰符号白送（否则短回复里 🍥/颜文字永远第一个被丢掉）
+  // 总预算只用来约束“多行合并起来的体量”；单行不再按预算二次裁剪，
+  // 否则「最小预算 20」会把一句完整的话砍在半截（用户看到的 …）。
   let total = contentLength(lines.join(''))
-  for (let i = lines.length - 1; i >= 0 && total > budget; i--) {
+  for (let i = lines.length - 1; lines.length > 1 && i >= 0 && total > budget; i--) {
     const allow = Math.max(4, budget - (total - contentLength(lines[i])))
     lines[i] = trimTo(lines[i], allow + decorationChars(lines[i]))
     total = contentLength(lines.join(''))
