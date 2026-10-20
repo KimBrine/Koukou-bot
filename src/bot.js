@@ -535,25 +535,37 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
     const msgs = [{ role: 'system', content: systemPrompt }, ...history, { role: 'user', content }]
     const first = await llm.chatRaw(msgs, SEARCH_TOOLS)
     if (first.toolCalls && first.toolCalls.length > 0) {
-      const call = first.toolCalls[0]
-      let query = ''
-      try {
-        query = JSON.parse(call.function?.arguments || '{}').query || ''
-      } catch {
-        query = ''
-      }
-      if (query) {
+      // 模型可能一次要搜多个词：每个 tool_call 都必须有一条对应的 tool 消息，
+      // 否则 DeepSeek 会以 400 拒绝（tool_calls 后面缺 tool 回复）。最多处理 2 个。
+      const calls = first.toolCalls.slice(0, 2)
+      const answers = []
+      for (const call of calls) {
+        let query = ''
+        try {
+          query = JSON.parse(call.function?.arguments || '{}').query || ''
+        } catch {
+          query = ''
+        }
+        if (!query) {
+          answers.push({ id: call.id, text: '（这次调用没有给搜索关键词）' })
+          continue
+        }
         try {
           const { summary } = await webSearch(query)
           logger.info(`[联网搜索] ${query.slice(0, 60)}`)
-          msgs.push({ role: 'assistant', content: first.content || '', tool_calls: first.toolCalls })
-          msgs.push({ role: 'tool', tool_call_id: call.id, content: String(summary).slice(0, 3000) })
-          const second = await llm.chatRaw(msgs)
-          if (second.content) return second.content
+          answers.push({ id: call.id, text: String(summary).slice(0, 3000) })
         } catch (err) {
-          logger.warn(`联网搜索失败，退回普通回复：${err.message}`)
-          return llm.chat(systemPrompt, [...history, { role: 'user', content }])
+          logger.warn(`联网搜索失败（${query.slice(0, 40)}）：${err.message}`)
+          answers.push({ id: call.id, text: `搜索失败：${err.message}` })
         }
+      }
+      msgs.push({ role: 'assistant', content: first.content || '', tool_calls: calls })
+      for (const item of answers) msgs.push({ role: 'tool', tool_call_id: item.id, content: item.text })
+      try {
+        const second = await llm.chatRaw(msgs)
+        if (second.content) return second.content
+      } catch (err) {
+        logger.warn(`联网搜索后生成失败，退回普通回复：${err.message}`)
       }
     }
     if (first.content) return first.content
