@@ -21,7 +21,7 @@ const node=(name, content)=>({sender:{nickname:name,user_id:200000020},time:1,me
 const dir=mkdtempSync(path.join(os.tmpdir(),'koukou-context-')),stores=[]
 let files=0,ids=1000,passed=0
 async function test(name,fn){await fn();passed++;console.log(`PASS ${name}`)}
-function setup({config={},getMsg,forwards={},chat,chatSettings,rateLimiter,visionLLM,imageCache,webSearch,chatRaw,stickers,summaryGroups=[group]}={}) {
+function setup({config={},getMsg,forwards={},chat,chatSettings,rateLimiter,visionLLM,imageCache,webSearch,chatRaw,stickers,musicSearch,summaryGroups=[group]}={}) {
   let time=Math.floor(Date.now()/1000)*1000
   const timeline=new MessageTimeline({now:()=>time});timeline.begin()
   const memory=new MemoryStore({file:path.join(dir,`${++files}.json`),limit:99,logger});stores.push(memory)
@@ -35,7 +35,7 @@ function setup({config={},getMsg,forwards={},chat,chatSettings,rateLimiter,visio
     quietHours:'',contextRememberAll:true,autoPlusOneEnabled:false,replyMaxLines:3,replyLineMaxChars:40,
     humanDelayMinMs:0,humanDelayMaxMs:0,lineGapMinMs:0,lineGapMaxMs:0,emojiKeepRate:0,replyLengthMatch:true,
     visionMaxImages:2,rateLimitAtPerHour:45,...config}
-  const bot=createBot({config:cfg,logger,onebot,memory,chatSettings,rateLimiter,visionLLM,imageCache,webSearch,stickers,rand:()=>0.5,
+  const bot=createBot({config:cfg,logger,onebot,memory,chatSettings,rateLimiter,visionLLM,imageCache,webSearch,stickers,musicSearch,rand:()=>0.5,
     buildSystemPrompt:createChatPromptBuilder({config:{persona:'群聊人设'},longMemory:{}}),llm:{async chat(...args){requests.push(args);return chat?chat(...args):'明白了，继续聊呀'},async chatRaw(messages,tools){requests.push([messages[0].content,messages.slice(1)]);return chatRaw?chatRaw(messages,tools):{content:'这是本轮回答',toolCalls:null}}},
     dailySummary:{capture(evt){captured.push(evt.message_id)},summaryGroups:()=>summaryGroups}})
   function event(message,extra={}){time=Math.max(time,Math.floor(Date.now()/1000)*1000);const evt={post_type:'message',message_type:'group',user_id:user,group_id:group,
@@ -46,6 +46,18 @@ function setup({config={},getMsg,forwards={},chat,chatSettings,rateLimiter,visio
 const lastUser=t=>t.requests.at(-1)[1].at(-1).content
 const shape=t=>t.requests.at(-1)[0].match(/【本次回复的形态要求[^]*?(?=\n\n【|$)/)?.[0]
 try {
+  await test('结构化点歌按平台发卡片，找不到或登录失效不误报成功',async()=>{
+    const t=setup({musicSearch:async r=>{assert.equal(r.platform,'qq');assert.equal(r.id,'97773');return {id:'97773',name:'晴天',artist:'周杰伦',platform:'qq'}}})
+    await t.bot.handleMessage(t.event([at(),text('点歌 QQ音乐 97773')]))
+    assert.equal(t.sent[0][0].type,'music');assert.equal(t.sent[0][0].data.type,'qq');assert.equal(t.sent[0][0].data.id,'97773')
+    assert.match(t.requests[0][1].at(-1).content,/QQ音乐《晴天》/)
+    const missing=setup({musicSearch:async()=>null})
+    await missing.bot.handleMessage(missing.event([at(),text('点歌 浮光 周深')]))
+    assert.equal(missing.sent.length,1);assert.match(missing.sent[0],/没找到.*浮光.*周深/);assert.equal(missing.requests.length,0)
+    const stale=setup({musicSearch:async()=>{stale.timeline.begin();return {id:'1',name:'测试',platform:'163'}}})
+    await stale.bot.handleMessage(stale.event([at(),text('点歌 12345')]))
+    assert.equal(stale.sent.length,0)
+  })
   await test('多搜索调用保留所有工具回执与思考内容，实际最多执行两次',async()=>{
     let round=0,searches=0
     const calls=[1,2,3].map(i=>({id:'call'+i,type:'function',function:{name:'web_search',arguments:JSON.stringify({query:'测试'+i})}}))
