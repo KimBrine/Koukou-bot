@@ -19,7 +19,7 @@ const node=(name, content)=>({sender:{nickname:name,user_id:200000020},time:1,me
 const dir=mkdtempSync(path.join(os.tmpdir(),'koukou-context-')),stores=[]
 let files=0,ids=1000,passed=0
 async function test(name,fn){await fn();passed++;console.log(`PASS ${name}`)}
-function setup({config={},getMsg,forwards={},chat,chatSettings,rateLimiter,visionLLM,summaryGroups=[group]}={}) {
+function setup({config={},getMsg,forwards={},chat,chatSettings,rateLimiter,visionLLM,imageCache,webSearch,chatRaw,summaryGroups=[group]}={}) {
   let time=Math.floor(Date.now()/1000)*1000
   const timeline=new MessageTimeline({now:()=>time});timeline.begin()
   const memory=new MemoryStore({file:path.join(dir,`${++files}.json`),limit:99,logger});stores.push(memory)
@@ -33,8 +33,8 @@ function setup({config={},getMsg,forwards={},chat,chatSettings,rateLimiter,visio
     quietHours:'',contextRememberAll:true,autoPlusOneEnabled:false,replyMaxLines:3,replyLineMaxChars:40,
     humanDelayMinMs:0,humanDelayMaxMs:0,lineGapMinMs:0,lineGapMaxMs:0,emojiKeepRate:0,replyLengthMatch:true,
     visionMaxImages:2,rateLimitAtPerHour:45,...config}
-  const bot=createBot({config:cfg,logger,onebot,memory,chatSettings,rateLimiter,visionLLM,rand:()=>0.5,
-    buildSystemPrompt:()=> '群聊人设',llm:{async chat(...args){requests.push(args);return chat?chat(...args):'明白了，继续聊呀'}},
+  const bot=createBot({config:cfg,logger,onebot,memory,chatSettings,rateLimiter,visionLLM,imageCache,webSearch,rand:()=>0.5,
+    buildSystemPrompt:()=> '群聊人设',llm:{async chat(...args){requests.push(args);return chat?chat(...args):'明白了，继续聊呀'},async chatRaw(messages,tools){requests.push([messages[0].content,messages.slice(1)]);return chatRaw?chatRaw(messages,tools):{content:'这是本轮回答',toolCalls:null}}},
     dailySummary:{capture(evt){captured.push(evt.message_id)},summaryGroups:()=>summaryGroups}})
   function event(message,extra={}){time=Math.max(time,Math.floor(Date.now()/1000)*1000);const evt={post_type:'message',message_type:'group',user_id:user,group_id:group,
     message_id:++ids,time:time/1000,sender:{nickname:'群友甲'},message:typeof message==='string'?[text(message)]:message,...extra}
@@ -82,6 +82,41 @@ try {
     assert.match(messages.at(-1).content,/那几点/)
     assert.equal(t.memory.get(`g${group}`)[1].replyToMessageId,String(first.message_id))
     assert.match(t.requests.at(-1)[0],/不能把其他人的经历或承诺算到当前发言者身上/)
+  })
+  await test('引用自己的前轮建议后，旁人问句保留背景但不替换当前回复对象',async()=>{
+    const t=setup({chat:()=> '先看预算，别急着买呀'})
+    await t.bot.handleMessage(t.event([at(),text('我想买画板')]))
+    const ownReceipt=ids
+    await t.bot.handleMessage(t.event('谁来组队',{user_id:user+1,sender:{nickname:'群友乙'}}))
+    const current=t.event([quote(ownReceipt),at(),text('可是好贵')]);await t.bot.handleMessage(current)
+    const [prompt,messages]=t.requests.at(-1),last=messages.at(-1).content
+    const focus=JSON.parse(last.match(/本轮定位数据 ([\s\S]*)】$/)[1])
+    assert.equal(focus.messageId,String(current.message_id));assert.equal(focus.userId,String(user));assert.equal(focus.text,'可是好贵')
+    assert.equal(focus.quote.author,'你此前的回复');assert.match(focus.quote.text,/预算/)
+    assert.ok(focus.precedingDialogueWithThisSender.some(m=>m.text.includes('画板')))
+    assert.ok(focus.precedingDialogueWithThisSender.every(m=>!m.text.includes('组队')))
+    assert.ok(messages.slice(0,-1).some(m=>m.content.includes('谁来组队')));assert.match(prompt,/不能替换本轮回复目标/)
+    assert.equal(t.memory.get(`g${group}`).at(-1).replyToMessageId,String(current.message_id))
+    assert.ok(t.memory.get(`g${group}`).every(m=>!m.content.includes('本轮定位数据')))
+  })
+  await test('引用读取期间后到插话不混入本轮快照，但原话仍进入群记忆',async()=>{
+    let release;const t=setup({getMsg:()=>new Promise(resolve=>{release=resolve})})
+    const current=t.event([quote(42),at(),text('接着说这个')]);const pending=t.bot.handleMessage(current)
+    await new Promise(setImmediate);assert.ok(release)
+    await t.bot.handleMessage(t.event('后到的另一件事',{user_id:user+1,sender:{nickname:'群友乙'}}))
+    release({message_id:42,group_id:group,user_id:selfId,message:[text('原先的话题')]});await pending
+    assert.equal(t.requests.length,1);assert.doesNotMatch(JSON.stringify(t.requests[0]),/后到的另一件事/)
+    assert.ok(t.memory.get(`g${group}`).some(m=>m.content.includes('后到的另一件事')))
+    assert.match(lastUser(t),/接着说这个/);assert.match(lastUser(t),/原先的话题/)
+  })
+  await test('开启搜索的直接回复与识图后的回复都保留同一目标定位',async()=>{
+    const a=setup({webSearch:async()=>{throw Error('不应搜索')},chatRaw:()=>({content:'这是针对当前发言的回答',toolCalls:null})})
+    const first=a.event([at(),text('当前这句')]);await a.bot.handleMessage(first)
+    assert.match(lastUser(a),/本轮定位数据/);assert.match(lastUser(a),new RegExp(`messageId.*${first.message_id}`))
+    const b=setup({visionLLM:{async describeImages(){return '一张画板的照片'}},imageCache:{async load(){return {part:{type:'image_url',image_url:{url:'data:image/png;base64,dummy'}}}},async describe(hashes,scope,read){return read()}}})
+    const second=b.event([at(),text('这张图呢'),{type:'image',data:{file:'fixture'}}]);await b.bot.handleMessage(second)
+    assert.equal(b.sent.length,1);assert.match(lastUser(b),/本轮定位数据/);assert.match(lastUser(b),new RegExp(`messageId.*${second.message_id}`))
+    assert.match(b.requests.at(-1)[0],/画板/)
   })
   await test('发言和回复归属重启后保留，旧记录不猜对象且不改变字数预算',async()=>{
     const t=setup();await t.bot.handleMessage(t.event([at(),text('你好呀')]))
