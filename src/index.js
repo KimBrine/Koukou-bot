@@ -117,6 +117,19 @@ try {
 
 const memory = new MemoryStore({ file: config.memoryFile, limit: config.historyLimit, logger })
 memory.load()
+// 启动自愈：清掉历史遗留的“空壳群”键（不在白名单、也没有任何消息）。
+// 以前 memory.get 会顺手创建空数组，没加白名单的群就会一直挂在会话列表里。
+try {
+  const allowed = new Set([...(config.whitelistGroups || [])].map(Number))
+  for (const id of String(config.summaryGroups || '').split(/[,，\s]+/).filter(Boolean)) allowed.add(Number(id))
+  let purged = 0
+  for (const key of memory.keys()) {
+    if (!/^g\d{1,24}$/.test(key)) continue
+    if (allowed.has(Number(key.slice(1)))) continue
+    if (memory.count(key) === 0) { memory.clearKey(key); purged++ }
+  }
+  if (purged) logger.info(`已清理 ${purged} 个空壳群会话`)
+} catch (err) { logger.warn(`清理空壳群失败：${err.message}`) }
 
 const llm = new DeepSeekClient({
   apiKey: config.deepseekApiKey,

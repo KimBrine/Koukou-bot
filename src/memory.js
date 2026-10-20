@@ -96,19 +96,18 @@ export class MemoryStore {
     }
   }
 
+  /** 只读：不存在就返回空数组，绝不因为"读一下"而创建会话键。
+   *  以前这里会 set(key, [])，于是任何一次 get 都会在 memory.json 里留下
+   *  一个空壳群，控制台会话列表就冒出没加白名单的群。 */
   get(key) {
-    let list = this.chats.get(key)
-    if (!list) {
-      list = []
-      this.chats.set(key, list)
-    }
-    return list
+    return this.chats.get(key) || []
   }
 
   push(key, role, content, meta = {}) {
     const time = meta.time === null ? null : validTime(meta.time) ? meta.time : Date.now()
     if (this.cutoff(key) && (!validTime(time) || time < this.cutoff(key))) return false
-    const list = this.get(key)
+    let list = this.chats.get(key)
+    if (!list) { list = []; this.chats.set(key, list) }
     const messageId = meta.messageId == null ? '' : String(meta.messageId)
     if (messageId && list.some(m => m.role === role && m.messageId === messageId)) return false
     list.push({ role, content, time, ...(meta.historical ? { historical: true } : {}),
