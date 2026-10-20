@@ -102,7 +102,12 @@ const EDITABLE = [
   { key: 'STICKER_LEARN_ENABLED', label: '从群聊学习表情包', hint: '仅从指定学习群采集；DeepSeek Flash初筛、Qwen复核打标签，普通图片不入库', live: true, type: 'text' },
   { key: 'STICKER_LEARN_GROUPS', label: '表情包学习群', hint: '仅所选群允许采集，可独立于聊天白名单；留空不采集', live: true, type: 'text' },
   { key: 'STICKER_LEARN_PER_HOUR', label: '每小时最多学习几张', hint: '0 = 不学；建议 3~10，避免刷屏式采集', live: true, type: 'number' },
-  { key: 'STICKER_AUTO_RATE', label: '主动发表情概率(%)', hint: '0 = 只在模型明确要求时发；10 = 大约每十次回复补一张', live: true, type: 'number' },
+  { key: 'STICKER_AUTO_RATE', label: '文字回复配图概率(%)', hint: '默认35%；0不配图，100每次尝试配图。模型点名同样遵守概率，必须先有文字', live: true, type: 'number' },
+  { key: 'STICKER_MAX_PER_REPLY', label: '每次最多表情包数', live: true, type: 'number' },
+  { key: 'STICKER_SEND_SCOPE', label: '表情包发送范围', hint: 'all / whitelist / selected / private', live: true, type: 'text' },
+  { key: 'STICKER_SEND_GROUPS', label: '表情包指定发送群', live: true, type: 'text' },
+  { key: 'STICKER_PICK_MODE', label: '表情包选图方式', hint: 'context / model / random', live: true, type: 'text' },
+  { key: 'STICKER_COOLDOWN_SECONDS', label: '同一会话配图间隔（秒）', hint: '0不额外限制', live: true, type: 'number' },
   { key: 'DEEPSEEK_API_KEY', label: '模型 Key', live: true, type: 'secret' },
   { key: 'VISION_PROVIDER', label: '识图服务商', hint: '当前选用哪家服务识别图片', live: false, type: 'text' },
   { key: 'VISION_MODEL', label: 'DeepSeek 识图模型', hint: '识图服务商为 DeepSeek 时使用', live: false, type: 'text' },
@@ -454,7 +459,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       learned: stickers && typeof stickers.learned === 'function' ? stickers.learned() : 0,
       scenes: STICKER_SCENES,
       learn: { enabled: Boolean(config.stickerLearnEnabled), perHour: config.stickerLearnPerHour, groups: [...(config.stickerLearnGroups || [])] },
-      settings: { enabled: Boolean(config.stickersEnabled), autoRate: Math.round((config.stickerAutoRate || 0) * 100) },
+      settings: { enabled: Boolean(config.stickersEnabled), autoRate: Math.round((config.stickerAutoRate ?? .35) * 100), maxPerReply: config.stickerMaxPerReply || 1, scope: config.stickerSendScope || 'all', groups: [...(config.stickerSendGroups || [])], pickMode: config.stickerPickMode || 'context', cooldownSeconds: config.stickerCooldownSeconds || 0 },
     }),
     'GET /api/config': async () => {
       const env = readEnvFile(envFile)
@@ -520,6 +525,11 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     if (key === 'DEEPSEEK_REASONING_EFFORT') return config.deepseekReasoningEffort ?? ''
     const cur = readEnvFile(envFile)[key]
     const map = {
+      STICKER_MAX_PER_REPLY: () => String(config.stickerMaxPerReply || 1),
+      STICKER_SEND_SCOPE: () => config.stickerSendScope || 'all',
+      STICKER_SEND_GROUPS: () => [...(config.stickerSendGroups || [])].join(','),
+      STICKER_PICK_MODE: () => config.stickerPickMode || 'context',
+      STICKER_COOLDOWN_SECONDS: () => String(config.stickerCooldownSeconds || 0),
       STICKER_LEARN_GROUPS: () => [...(config.stickerLearnGroups || [])].join(','),
       WHITELIST_GROUPS: () => [...config.whitelistGroups].join(','),
       MUTED_GROUPS: () => [...(config.mutedGroups ?? new Set())].join(','),
@@ -636,6 +646,21 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       case 'STICKER_LEARN_PER_HOUR':
         config.stickerLearnPerHour = Math.max(0, Math.min(60, Math.floor(num(value, 6))))
         break
+      case 'STICKER_MAX_PER_REPLY':
+        config.stickerMaxPerReply = Math.max(1,Math.min(3,Math.floor(num(value,1))))
+        break
+      case 'STICKER_SEND_SCOPE':
+        config.stickerSendScope = value
+        break
+      case 'STICKER_SEND_GROUPS':
+        config.stickerSendGroups = new Set(String(value || '').split(/[,，\s]+/).filter(x=>/^\d+$/.test(x)&&Number(x)>0).map(Number))
+        break
+      case 'STICKER_PICK_MODE':
+        config.stickerPickMode = value
+        break
+      case 'STICKER_COOLDOWN_SECONDS':
+        config.stickerCooldownSeconds = Math.max(0,Math.min(86400,num(value,0)))
+        break
       case 'STICKER_AUTO_RATE':
         config.stickerAutoRate = Math.min(1, Math.max(0, num(value, 0) / 100))
         break
@@ -737,6 +762,11 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
           throw new Error(`${field.label} 应在 0～1 之间`)
         }
         if (field.type === 'number' && !Number.isFinite(Number(value))) throw new Error(`${field.label} 需要填写数字`)
+        if (key==='STICKER_SEND_SCOPE'&&!['all','whitelist','selected','private'].includes(value))throw new Error('配图范围无效')
+        if (key==='STICKER_PICK_MODE'&&!['context','model','random'].includes(value))throw new Error('选图方式无效')
+        if (key==='STICKER_MAX_PER_REPLY'&&(!Number.isInteger(Number(value))||Number(value)<1||Number(value)>3))throw new Error('每次最多1到3张')
+        if (key==='STICKER_AUTO_RATE'&&(Number(value)<0||Number(value)>100))throw new Error('配图概率应为0到100')
+        if (key==='STICKER_COOLDOWN_SECONDS'&&(Number(value)<0||Number(value)>86400))throw new Error('配图间隔应为0到86400秒')
         if (key === 'SUMMARY_MAX_TOKENS' && (!Number.isInteger(Number(value)) || Number(value) < 500 || Number(value) > 16000)) throw new Error('总结输出 token 上限应为 500～16000 的整数')
         if (key === 'SUMMARY_REQUEST_TIMEOUT_SECONDS' && (!Number.isInteger(Number(value)) || Number(value) < 60 || Number(value) > 3600)) throw new Error('单次模型等待应为60～3600秒的整数')
         if (key === 'SUMMARY_CONCURRENCY' && (!Number.isInteger(Number(value)) || Number(value) < 1 || Number(value) > 3)) throw new Error('同时生成的群数应为 1～3 的整数')
@@ -940,12 +970,12 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     },
     async 'sticker-add'(payload) {
       if (!stickers) throw new Error('表情包库未启用')
-      const out = stickers.add({ name: payload?.name, keywords: payload?.keywords, scenes: payload?.scenes, dataUrl: payload?.dataUrl })
+      const out = stickers.add({ name: payload?.name, keywords: payload?.keywords, scenes: payload?.scenes, dataUrl: payload?.dataUrl, description: payload?.description })
       return { ok: true, item: out.item, duplicated: out.duplicated, count: stickers.count() }
     },
     async 'sticker-update'(payload) {
       if (!stickers) throw new Error('表情包库未启用')
-      const item = stickers.update(String(payload?.id || ''), { name: payload?.name, keywords: payload?.keywords, scenes: payload?.scenes })
+      const item = stickers.update(String(payload?.id || ''), { name: payload?.name, keywords: payload?.keywords, scenes: payload?.scenes, description: payload?.description, dataUrl: payload?.dataUrl })
       if (!item) throw new Error('找不到这张表情包')
       return { ok: true, item }
     },
@@ -962,6 +992,10 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       if (!item) throw new Error('表情包库里还没有图')
       const file = stickers.dataUrlOf(item)
       if (!file) throw new Error('图片文件读不到，可能已被删除')
+      const text=String(payload?.text || '').trim()
+      if(!text||text.length>1000)throw new Error('请填写1到1000字的伴随文字，不能只发图片')
+      const receipt=await onebot.sendGroup(groupId,text)
+      if(!receipt?.message_id&&!receipt?.data?.message_id)throw new Error('文字发送未确认，未继续发送图片')
       await onebot.sendGroup(groupId, [{ type: 'image', data: { file, sub_type: 1 } }])
       logger?.info?.(`[控制台] 测试发送表情包「${item.name}」到群 ${groupId}`)
       return { ok: true, name: item.name }

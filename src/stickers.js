@@ -53,6 +53,7 @@ export function createStickers({ dir, logger, now = () => Date.now() }) {
   function normalizeItem(raw) {
     const item = { ...raw }
     item.scenes = Array.isArray(raw.scenes) ? raw.scenes.filter((s) => STICKER_SCENES.some((x) => x.id === s)) : []
+    item.description = String(raw.description || '').slice(0,1000)
     item.origin = raw.origin === 'learned' ? 'learned' : 'manual'
     item.usage = Number.isFinite(raw.usage) ? raw.usage : 0
     item.lastContexts = Array.isArray(raw.lastContexts) ? raw.lastContexts.slice(0, 8) : []
@@ -63,7 +64,7 @@ export function createStickers({ dir, logger, now = () => Date.now() }) {
   const get = (id) => items.find((x) => x.id === id) || null
   const fileOf = (item) => path.join(dir, item.file)
 
-  function add({ name, keywords, scenes, dataUrl, origin, source } = {}) {
+  function add({ name, keywords, scenes, dataUrl, origin, source, description } = {}) {
     const { mime, buffer } = parseDataUrl(dataUrl)
     const hash = createHash('sha256').update(buffer).digest('hex')
     const exists = items.find((x) => x.hash === hash)
@@ -77,6 +78,7 @@ export function createStickers({ dir, logger, now = () => Date.now() }) {
     writeFileSync(path.join(dir, file), buffer)
     const item = {
       id: randomUUID().slice(0, 8),
+      description: String(description || '').trim().slice(0,1000),
       name: label || `表情${items.length + 1}`,
       keywords: String(keywords || '').split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean).slice(0, 12),
       scenes: Array.isArray(scenes) ? scenes.filter((s) => STICKER_SCENES.some((x) => x.id === s)) : [],
@@ -105,18 +107,26 @@ export function createStickers({ dir, logger, now = () => Date.now() }) {
     return true
   }
 
-  function update(id, { name, keywords, scenes } = {}) {
+  function update(id, { name, keywords, scenes, description, dataUrl } = {}) {
     const item = get(id)
     if (!item) return null
-    if (name !== undefined) item.name = String(name).trim().slice(0, 40) || item.name
-    if (keywords !== undefined) {
-      item.keywords = String(keywords).split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean).slice(0, 12)
+    const next={...item}
+    if(name!==undefined)next.name=String(name).trim().slice(0,40)||item.name
+    if(keywords!==undefined)next.keywords=String(keywords).split(/[,，\s]+/).filter(Boolean).slice(0,12)
+    if(scenes!==undefined)next.scenes=(Array.isArray(scenes)?scenes:[]).filter(s=>STICKER_SCENES.some(x=>x.id===s))
+    if(description!==undefined)next.description=String(description).trim().slice(0,1000)
+    let newFile=null
+    if(dataUrl){
+      const {mime,buffer}=parseDataUrl(dataUrl),hash=createHash('sha256').update(buffer).digest('hex')
+      if(items.some(x=>x.id!==id&&x.hash===hash))throw new Error('这张图片已存在于另一条表情包，请编辑已有条目')
+      newFile=`${hash.slice(0,16)}.${ALLOWED[mime]}`
+      if(newFile!==item.file)writeFileSync(path.join(dir,newFile),buffer)
+      Object.assign(next,{file:newFile,hash,mime,size:buffer.length})
     }
-    if (scenes !== undefined) {
-      item.scenes = (Array.isArray(scenes) ? scenes : []).filter((s) => STICKER_SCENES.some((x) => x.id === s))
-    }
-    save()
-    return item
+    const index=items.indexOf(item);items[index]=next
+    try{save()}catch(error){items[index]=item;if(newFile&&newFile!==item.file)try{unlinkSync(path.join(dir,newFile))}catch{};throw error}
+    if(newFile&&newFile!==item.file)try{unlinkSync(fileOf(item))}catch{}
+    return next
   }
 
   /** 按名称/关键词匹配；都匹配不到返回 null（不猜） */
@@ -200,7 +210,7 @@ export function createStickers({ dir, logger, now = () => Date.now() }) {
   /** 给模型看的一句话清单（太多会撑提示词，只取前 20 个） */
   function summary(limit = 20) {
     if (items.length === 0) return ''
-    return items.slice(0, limit).map((x) => x.name + ((x.keywords || []).length ? `(${x.keywords.slice(0, 3).join('/')})` : '')).join('、')
+    return items.slice(0, limit).map((x) => x.name + ((x.keywords || []).length ? `(${x.keywords.slice(0, 3).join('/')})` : '') + (x.description ? `：${x.description.slice(0,80)}` : '')).join('、')
   }
 
   function dataUrlOf(item) {

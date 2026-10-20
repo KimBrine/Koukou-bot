@@ -42,6 +42,19 @@ try {
   assert.equal(lib.find('橘猫').name, '大橘')
   assert.equal(lib.update('不存在', { name: 'x' }), null)
 
+  const oldHash=lib.get(a.item.id).hash,oldFile=lib.get(a.item.id).file
+  const replacement='data:image/png;base64,'+Buffer.concat([Buffer.from(PNG.split(',')[1],'base64'),Buffer.from('new-image')]).toString('base64')
+  const edited=lib.update(a.item.id,{description:'适合安慰朋友',dataUrl:replacement})
+  assert.equal(edited.id,a.item.id);assert.equal(edited.description,'适合安慰朋友')
+  assert.notEqual(edited.hash,oldHash);assert.equal(edited.hash.length,64)
+  assert.equal(existsSync(path.join(lib.dir,oldFile)),false)
+  assert.equal(existsSync(path.join(lib.dir,edited.file)),true)
+  const other=lib.add({name:'另一张',dataUrl:PNG})
+  assert.throws(()=>lib.update(a.item.id,{dataUrl:PNG,name:'不能覆盖'}),/已存在/)
+  assert.equal(lib.get(a.item.id).name,'大橘');lib.remove(other.item.id)
+  const reboot=createStickers({dir:lib.dir,logger})
+  assert.equal(reboot.get(a.item.id).hash,edited.hash);assert.equal(reboot.get(a.item.id).description,'适合安慰朋友')
+
   // 摘要（给模型看）
   assert.match(lib.summary(), /大橘/)
   assert.match(lib.summary(), /橘猫/)
@@ -53,7 +66,7 @@ try {
   assert.equal(lib.random().id, a.item.id)
 
   // 删除：文件和索引都要清掉
-  const fileName = a.item.file
+  const fileName = lib.get(a.item.id).file
   assert.equal(lib.remove(a.item.id), true)
   assert.equal(lib.remove(a.item.id), false)
   assert.equal(lib.count(), 0)

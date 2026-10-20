@@ -1,3 +1,4 @@
+import { createChatPromptBuilder } from '../src/chatPrompt.js'
 import { isQuestionMode } from '../src/questionMode.js'
 // 模拟 OneBot、模型与图片；不连接 QQ、不下载图片、不调用付费模型。
 import assert from 'node:assert/strict'
@@ -20,7 +21,7 @@ const node=(name, content)=>({sender:{nickname:name,user_id:200000020},time:1,me
 const dir=mkdtempSync(path.join(os.tmpdir(),'koukou-context-')),stores=[]
 let files=0,ids=1000,passed=0
 async function test(name,fn){await fn();passed++;console.log(`PASS ${name}`)}
-function setup({config={},getMsg,forwards={},chat,chatSettings,rateLimiter,visionLLM,imageCache,webSearch,chatRaw,summaryGroups=[group]}={}) {
+function setup({config={},getMsg,forwards={},chat,chatSettings,rateLimiter,visionLLM,imageCache,webSearch,chatRaw,stickers,summaryGroups=[group]}={}) {
   let time=Math.floor(Date.now()/1000)*1000
   const timeline=new MessageTimeline({now:()=>time});timeline.begin()
   const memory=new MemoryStore({file:path.join(dir,`${++files}.json`),limit:99,logger});stores.push(memory)
@@ -34,8 +35,8 @@ function setup({config={},getMsg,forwards={},chat,chatSettings,rateLimiter,visio
     quietHours:'',contextRememberAll:true,autoPlusOneEnabled:false,replyMaxLines:3,replyLineMaxChars:40,
     humanDelayMinMs:0,humanDelayMaxMs:0,lineGapMinMs:0,lineGapMaxMs:0,emojiKeepRate:0,replyLengthMatch:true,
     visionMaxImages:2,rateLimitAtPerHour:45,...config}
-  const bot=createBot({config:cfg,logger,onebot,memory,chatSettings,rateLimiter,visionLLM,imageCache,webSearch,rand:()=>0.5,
-    buildSystemPrompt:()=> '群聊人设',llm:{async chat(...args){requests.push(args);return chat?chat(...args):'明白了，继续聊呀'},async chatRaw(messages,tools){requests.push([messages[0].content,messages.slice(1)]);return chatRaw?chatRaw(messages,tools):{content:'这是本轮回答',toolCalls:null}}},
+  const bot=createBot({config:cfg,logger,onebot,memory,chatSettings,rateLimiter,visionLLM,imageCache,webSearch,stickers,rand:()=>0.5,
+    buildSystemPrompt:createChatPromptBuilder({config:{persona:'群聊人设'},longMemory:{}}),llm:{async chat(...args){requests.push(args);return chat?chat(...args):'明白了，继续聊呀'},async chatRaw(messages,tools){requests.push([messages[0].content,messages.slice(1)]);return chatRaw?chatRaw(messages,tools):{content:'这是本轮回答',toolCalls:null}}},
     dailySummary:{capture(evt){captured.push(evt.message_id)},summaryGroups:()=>summaryGroups}})
   function event(message,extra={}){time=Math.max(time,Math.floor(Date.now()/1000)*1000);const evt={post_type:'message',message_type:'group',user_id:user,group_id:group,
     message_id:++ids,time:time/1000,sender:{nickname:'群友甲'},message:typeof message==='string'?[text(message)]:message,...extra}
@@ -45,6 +46,28 @@ function setup({config={},getMsg,forwards={},chat,chatSettings,rateLimiter,visio
 const lastUser=t=>t.requests.at(-1)[1].at(-1).content
 const shape=t=>t.requests.at(-1)[0].match(/【本次回复的形态要求[^]*?(?=\n\n【|$)/)?.[0]
 try {
+  await test('表情包必须配文字，模型选图不能绕过0概率；只有标记时先修正文案',async()=>{
+    const item={id:'sticker',name:'猫猫问号'}
+    const stickers={count:()=>1,summary:()=>item.name,find:q=>q===item.name?item:null,pick:()=>item,dataUrlOf:()=> 'base64://eA=='}
+    let calls=0
+    const t=setup({stickers,config:{stickersEnabled:true,stickerMaxPerReply:1,stickerAutoRate:1},chat:()=> ++calls===1?'[贴纸: 猫猫问号]':'有点疑惑呀 [贴纸: 猫猫问号]'})
+    await t.bot.handleMessage(t.event([at(),text('啊？')]))
+    assert.equal(t.sent.length,2);assert.equal(typeof t.sent[0],'string');assert.equal(t.sent[1][0].type,'image');assert.equal(t.sent[1][0].data.sub_type,1)
+    assert.doesNotMatch(t.sent[0],/贴纸/)
+    const prompt=t.requests[0][0]
+    assert.match(prompt,/明确例外/);assert.ok(prompt.lastIndexOf('【表情包发送规则】')>prompt.lastIndexOf('【本条回复的装饰】'))
+    assert.match(t.memory.get('g'+group).at(-1).content,/有点疑惑.*\n\[表情包\]/)
+    const n=setup({stickers,config:{stickersEnabled:true,stickerMaxPerReply:1,stickerAutoRate:0},chat:()=> '正常聊呀 [贴纸: 猫猫问号]'})
+    await n.bot.handleMessage(n.event([at(),text('你好')]))
+    assert.equal(n.sent.length,1);assert.equal(typeof n.sent[0],'string','显式标签也不能绕过0概率')
+    const bad=setup({stickers,config:{stickersEnabled:true,stickerAutoRate:1},chat:()=> '[贴纸: 猫猫问号]'})
+    await bad.bot.handleMessage(bad.event([at(),text('啊？')]))
+    assert.equal(bad.sent.length,0,'模型修正后仍无文字，不能单独发图片')
+    const unconfirmed=setup({stickers,config:{stickersEnabled:true,stickerAutoRate:1},chat:()=> '你好呀 [贴纸: 猫猫问号]'})
+    unconfirmed.onebot.sendGroup=async(g,msg)=>{unconfirmed.sent.push(msg);return {}}
+    await unconfirmed.bot.handleMessage(unconfirmed.event([at(),text('你好')]))
+    assert.equal(unconfirmed.sent.length,1,'文字发送未收到消息编号时，不能继续发图片')
+  })
   await test('/Q仅私聊或当前外层@触发，标记有边界且不改变全局模式', async()=>{
     assert.equal(isQuestionMode('/Q 推导',{isPrivate:true}),true)
     assert.equal(isQuestionMode('请 /q解题',{atBot:true}),true)
