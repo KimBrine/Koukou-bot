@@ -100,6 +100,7 @@ const EDITABLE = [
   { key: 'DEEPSEEK_REASONING_EFFORT', label: 'DeepSeek 思考强度', hint: 'none / low / high / max；留空 = 不发送。统一用于对话、指令理解与识图；max 更慢更贵', live: true, type: 'text' },
   { key: 'REPLY_TIMING_ENABLED', label: '显示思考耗时', hint: '1 开启：仅/Q解题回复末尾附加「（想了 X.X 秒）」；0 关闭（日志里始终有记录）', live: true, type: 'text' },
   { key: 'STICKERS_ENABLED', label: '表情包库', hint: '1 开启，0 关闭；开启后模型可用 [贴纸: 名称] 指定发图', live: true, type: 'text' },
+  { key: 'STICKER_LEARN_PRIVATE', label: '私聊也学习表情包', hint: '1 开启：私聊里发来的图片也会被收藏（仍受每小时上限约束）', live: true, type: 'bool' },
   { key: 'STICKER_LEARN_ENABLED', label: '从群聊学习表情包', hint: '仅从指定学习群采集；DeepSeek Flash初筛、Qwen复核打标签，普通图片不入库', live: true, type: 'text' },
   { key: 'STICKER_LEARN_GROUPS', label: '表情包学习群', hint: '仅所选群允许采集，可独立于聊天白名单；留空不采集', live: true, type: 'text' },
   { key: 'STICKER_LEARN_PER_HOUR', label: '每小时最多学习几张', hint: '0 = 不学；建议 3~10，避免刷屏式采集', live: true, type: 'number' },
@@ -487,7 +488,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       enabled: Boolean(config.stickersEnabled),
       learned: stickers && typeof stickers.learned === 'function' ? stickers.learned() : 0,
       scenes: STICKER_SCENES,
-      learn: { enabled: Boolean(config.stickerLearnEnabled), perHour: config.stickerLearnPerHour, groups: [...(config.stickerLearnGroups || [])] },
+      learn: { enabled: Boolean(config.stickerLearnEnabled), private: Boolean(config.stickerLearnPrivate), perHour: config.stickerLearnPerHour, groups: [...(config.stickerLearnGroups || [])] },
       settings: { enabled: Boolean(config.stickersEnabled), autoRate: Math.round((config.stickerAutoRate ?? .35) * 100), maxPerReply: config.stickerMaxPerReply || 1, scope: config.stickerSendScope || 'all', groups: [...(config.stickerSendGroups || [])], pickMode: config.stickerPickMode || 'context', cooldownSeconds: config.stickerCooldownSeconds || 0 },
     }),
     'GET /api/config': async () => {
@@ -692,6 +693,9 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         break
       case 'STICKERS_ENABLED':
         config.stickersEnabled = !['0', 'false'].includes(String(value ?? '').trim().toLowerCase())
+        break
+      case 'STICKER_LEARN_PRIVATE':
+        config.stickerLearnPrivate = bool(value)
         break
       case 'STICKER_LEARN_ENABLED':
         config.stickerLearnEnabled = ['1', 'true'].includes(String(value ?? '').trim().toLowerCase())

@@ -9,8 +9,14 @@ const RULE = '判断是否是用于聊天表达情绪、反应或玩梗的表情
 export function createStickerLearner({ config, logger, onebot, stickers, filterLLM, tagLLM,
   imageCache, fetchImpl = fetch, now = () => Date.now() }) {
   let windowStart = now(), used = 0, queue = Promise.resolve()
-  const allowed = groupId => config.stickerLearnEnabled &&
-    config.stickerLearnGroups?.has(Number(groupId)) && Number(groupId) > 0
+  // 学习范围：g<群号> 走群白名单，p<QQ号> 走「私聊也学」开关
+  const allowed = chatKey => {
+    if (!config.stickerLearnEnabled) return false
+    const key = String(chatKey || '')
+    if (key.startsWith('p')) return Boolean(config.stickerLearnPrivate) && Number(key.slice(1)) > 0
+    if (key.startsWith('g')) return config.stickerLearnGroups?.has(Number(key.slice(1))) && Number(key.slice(1)) > 0
+    return false
+  }
   const scope = JSON.stringify(['sticker-v2', filterLLM?.baseUrl, filterLLM?.model,
     tagLLM?.baseUrl, tagLLM?.model, RULE, STICKER_SCENES])
 
@@ -45,22 +51,22 @@ export function createStickerLearner({ config, logger, onebot, stickers, filterL
     } catch { return null } finally { clearTimeout(timer) }
   }
 
-  async function learn({ images, groupId, senderName, text }) {
-    if (!allowed(groupId)) return null
+  async function learn({ images, chatKey, senderName, text }) {
+    if (!allowed(chatKey)) return null
     for (const image of images.slice(0, 4)) {
-      if (!allowed(groupId)) return null
+      if (!allowed(chatKey)) return null
       const loaded = imageCache ? await imageCache.load(image, () => resolveImage(image)) : { part: await resolveImage(image) }
-      if (!loaded?.part || !allowed(groupId)) continue
+      if (!loaded?.part || !allowed(chatKey)) continue
       const dataUrl = loaded.part.image_url.url
       const hash = loaded.hash || createHash('sha256').update(Buffer.from(dataUrl.split(',')[1], 'base64')).digest('hex')
       if (stickers.isBlocked?.(hash)) continue
       const existing = stickers.list().find(item => item.hash === hash)
       if (existing) return existing
       const describe = async () => {
-        if (!allowed(groupId)) throw new Error('学习范围已经改变')
+        if (!allowed(chatKey)) throw new Error('学习范围已经改变')
         const initial = json(await filterLLM.describeImages(
           `${RULE} 只输出JSON：{"isSticker":true或false}。`, '先排除普通图片。', [loaded.part], { maxTokens: 0 }))
-        if (!allowed(groupId)) throw new Error('学习范围已经改变')
+        if (!allowed(chatKey)) throw new Error('学习范围已经改变')
         if (initial?.isSticker !== true) return JSON.stringify({ isSticker: false })
         const tag = json(await tagLLM.describeImages(
           `${RULE} 独立复核，不沿用初筛结论。只输出JSON：{"isSticker":true或false,"name":"简短名称","keywords":["关键词"],"scenes":["场景id"]}。scenes只允许：${STICKER_SCENES.map(s => s.id).join(',')}。`,
@@ -69,19 +75,19 @@ export function createStickerLearner({ config, logger, onebot, stickers, filterL
         return JSON.stringify(tag)
       }
       const tag = json(imageCache && loaded.hash ? await imageCache.describe([loaded.hash], scope, describe) : await describe())
-      if (!allowed(groupId) || stickers.isBlocked?.(hash) || tag?.isSticker !== true) continue
+      if (!allowed(chatKey) || stickers.isBlocked?.(hash) || tag?.isSticker !== true) continue
       const out = stickers.add({ name: String(tag.name).slice(0, 20),
         keywords: Array.isArray(tag.keywords) ? tag.keywords.join(' ') : String(tag.keywords || ''),
         scenes: Array.isArray(tag.scenes) ? tag.scenes : [], dataUrl, origin: 'learned',
-        source: `群${groupId} ${senderName || ''} ${String(text || '').slice(0, 20)}`.trim() })
+        source: `${String(chatKey).startsWith('p') ? '私聊' : '群' + String(chatKey).slice(1)} ${senderName || ''} ${String(text || '').slice(0, 20)}`.trim() })
       if (out?.item) { logger?.info?.(`[表情包学习] 两阶段确认并收录「${out.item.name}」`); return out.item }
     }
     return null
   }
 
   function learnFromMessage(message = {}) {
-    const { images, groupId } = message
-    if (!allowed(groupId) || !stickers || !filterLLM?.describeImages || !tagLLM?.describeImages || !images?.length) return Promise.resolve(null)
+    const { images, chatKey } = message
+    if (!allowed(chatKey) || !stickers || !filterLLM?.describeImages || !tagLLM?.describeImages || !images?.length) return Promise.resolve(null)
     if (now() - windowStart >= 3600000) { windowStart = now(); used = 0 }
     if (used >= Math.max(0, config.stickerLearnPerHour || 0)) return Promise.resolve(null)
     used++

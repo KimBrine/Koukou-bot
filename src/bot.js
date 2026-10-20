@@ -702,9 +702,9 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
 
       const parsed = parseMessage(evt.message ?? evt.raw_message, onebot.selfId)
       // 表情包学习：独立指定群里别人发的图，按配置自动收录（异步，不影响回复）
-      if (!isPrivate && config.stickerLearnEnabled && stickerLearner && parsed.images.length > 0) {
+      if (config.stickerLearnEnabled && (!isPrivate || config.stickerLearnPrivate) && stickerLearner && parsed.images.length > 0) {
         stickerLearner
-          .learnFromMessage({ images: parsed.images, groupId, senderName: evt.sender?.card || evt.sender?.nickname, text: parsed.text })
+          .learnFromMessage({ images: parsed.images, chatKey: isPrivate ? `p${evt.user_id}` : `g${groupId}`, senderName: evt.sender?.card || evt.sender?.nickname, text: parsed.text })
           .catch((err) => logger.warn(`[表情包学习] ${err.message}`))
       }
 

@@ -346,6 +346,8 @@ export function loadConfig() {
     stickerLearnGroups: new Set(String(env.STICKER_LEARN_GROUPS ?? '').split(/[,，\s]+/).filter(x => /^\d+$/.test(x) && Number(x) > 0).map(Number)),
     // 表情包打标（二次审核）用哪个模型：auto = 有通义用通义，否则 DeepSeek，再否则自定义
     stickerTagProvider: String(env.STICKER_TAG_PROVIDER ?? 'auto').trim().toLowerCase(),
+    // 私聊也学习表情包（默认关闭，只在开启后生效）
+    stickerLearnPrivate: ['1', 'true'].includes(String(env.STICKER_LEARN_PRIVATE ?? '0').trim().toLowerCase()),
     stickerLearnEnabled: ['1', 'true'].includes(String(env.STICKER_LEARN_ENABLED ?? '0').trim().toLowerCase()),
     // 每小时最多学习几张，防止刷屏式采集和 API 花销
     stickerLearnPerHour: Math.max(0, Math.min(60, Math.floor(num('STICKER_LEARN_PER_HOUR', 6)))),

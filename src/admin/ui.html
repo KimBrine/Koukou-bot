@@ -860,6 +860,7 @@ function pageStickers(){
     '<button class="btn primary" id="stkRulesSave">保存发送规则</button>',
     '<div style="height:1px;background:var(--line,#e5e5e5);margin:10px 0"></div>',
     '<label style="display:flex;align-items:center;gap:8px;font-size:14px"><input type="checkbox" id="stkLearnToggle"' + (learn.enabled ? ' checked' : '') + '> 自动收藏群里别人发的表情包</label>',
+    '<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin-top:6px"><input type="checkbox" id="stkLearnPrivate"' + (learn.private ? ' checked' : '') + '> 私聊里发来的图片也收藏</label>',
     '<div class="mut" style="margin-top:6px">只学习下方选中的群，可选择非白名单群；不改变聊天回复范围。DeepSeek Flash初筛，Qwen复核并打标签；无法确认的图不收录。已学习 ' + (stickerLearned || 0) + ' 张 / 共 ' + items.length + ' 张。</div>',
     '<div class="note">学习群（可多选；留空不学习）</div>',
     (groups || []).map(function(g) { return '<label style="display:block;margin:8px 0"><input type="checkbox" data-stk-learn-group="' + esc(g.id) + '"' + ((learn.groups || []).map(String).includes(String(g.id)) ? ' checked' : '') + '> ' + esc(g.name || g.id) + ' (' + esc(g.id) + ')</label>' }).join(''),
@@ -1215,6 +1216,7 @@ async function bind(){
   if(stkLearnSave)stkLearnSave.onclick=async()=>{
     stkLearnSave.disabled=true
     try{
+      await api('/api/action/set-config', { key: 'STICKER_LEARN_PRIVATE', value: (document.getElementById('stkLearnPrivate')?.checked ? '1' : '0') })
       await api('/api/action/set-config-batch',{patch:{STICKER_LEARN_ENABLED:document.getElementById('stkLearnToggle').checked?'1':'0',STICKER_LEARN_GROUPS:Array.from(document.querySelectorAll('[data-stk-learn-group]:checked')).map(x=>x.dataset.stkLearnGroup).join(','),STICKER_LEARN_PER_HOUR:document.getElementById('stkLearnPerHour').value}})
       await load();toast('学习设置已保存，立即生效')
     }catch(e){toast('保存失败：'+e.message,true)}finally{stkLearnSave.disabled=false}
