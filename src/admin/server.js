@@ -449,6 +449,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     'GET /api/state': async () => buildState(),
     'GET /api/chats': async () => ({ items: await buildChatList() }),
     'GET /api/groups': async () => ({ items: await getGroupList() }),
+    'GET /api/friends': async () => ({ items: await getFriendList() }),
     'GET /api/custom-commands': async () => ({ items: typeof customCommands?.all === 'function' ? customCommands.all() : [],builtinItems:commandCenter?.all()||[],poke:commandCenter?.diagnostics()||{} }),
     'GET /api/personas': async () => ({ items: listPersonas(), active: config.activePersona || '', dir: personaDir }),
     'GET /api/memory-overview': async () => {

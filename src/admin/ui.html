@@ -190,6 +190,7 @@ let openChats = new Set()
 let logAuto = true
 let logFilter = ''
 let joinedGroups = []
+let friendList = []
 let memoryOverview = []
 let memoryDetail = null
 let customCommands = []
@@ -441,7 +442,8 @@ function pageChats(){
     </div>
     <div class="toolgroup">
       <select id="newchatType" aria-label="会话类型" style="max-width:120px"><option value="g">群聊</option><option value="p">私聊</option></select>
-      <input id="newchat" type="text" inputmode="numeric" placeholder="输入群号或 QQ 号" style="max-width:250px">
+      <select id="newchatPick" aria-label="选择联系人或群" style="max-width:260px"></select>
+      <input id="newchat" type="text" inputmode="numeric" placeholder="或直接输入号码" style="max-width:160px">
       <button class="btn" id="addchat">添加普通会话</button><span class="note">需要主动搭话的群，请使用上方「添加 / 导入白名单群」。</span>
     </div>
   </div>
@@ -1366,6 +1368,24 @@ async function bind(){
     if (!text) return
     try { await api('/api/action/say', { key: b.dataset.say, text }); toast('已发送') } catch(e){ toast(e.message, true) }
   })
+  // 添加会话：从联系人/群列表里选，不用手打号码
+  const newchatType = document.getElementById('newchatType')
+  const newchatPick = document.getElementById('newchatPick')
+  const newchatInput = document.getElementById('newchat')
+  const fillChatPick = function(){
+    if (!newchatPick) return
+    const type = newchatType ? newchatType.value : 'g'
+    const items = type === 'p' ? (friendList || []) : (joinedGroups || [])
+    newchatPick.innerHTML = '<option value="">' + (type === 'p' ? '从好友里选…' : '从群列表里选…') + '</option>' +
+      items.map(function(x){ return '<option value="' + esc(x.id) + '">' + esc(x.name) + '（' + esc(x.id) + '）</option>' }).join('')
+  }
+  if (newchatType) {
+    newchatType.onchange = function(){ fillChatPick(); if (newchatInput) newchatInput.value = '' }
+    fillChatPick()
+  }
+  if (newchatPick && newchatInput) {
+    newchatPick.onchange = function(){ if (newchatPick.value) newchatInput.value = newchatPick.value }
+  }
   const add = document.getElementById('addchat')
   if (add) add.onclick = async () => {
     const v = document.getElementById('newchat').value.trim()
@@ -1619,9 +1639,10 @@ let personaCache = {}
 let appendixText = ''
 async function load(){
   try {
-    const [s, c, p, cfg, groups, cc, models, stk] = await Promise.all([api('/api/state'), api('/api/chats'), api('/api/personas'), api('/api/config'), api('/api/groups').catch(() => ({items:[]})), api('/api/custom-commands').catch(()=>({items:[]})), api('/api/models').catch(()=>({})), api('/api/stickers').catch(()=>({items:[]}))])
+    const [s, c, p, cfg, groups, friends, cc, models, stk] = await Promise.all([api('/api/state'), api('/api/chats'), api('/api/personas'), api('/api/config'), api('/api/groups').catch(() => ({items:[]})), api('/api/friends').catch(() => ({items:[]})), api('/api/custom-commands').catch(()=>({items:[]})), api('/api/models').catch(()=>({})), api('/api/stickers').catch(()=>({items:[]}))])
     state = s; chats = c.items; personas = p.items; activePersona = p.active; configItems = cfg.items
     joinedGroups = groups.items || []
+    friendList = friends.items || []
     customCommands = cc.items || []
     commandBuiltins = cc.builtinItems || []
     pokeDiagnostics = cc.poke || {}
