@@ -381,12 +381,15 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         // 必须跟着 VISION_PROVIDER 走：只报 dashscopeModel 的话，
         // 明明已经切到 DeepSeek 读图，控制台还显示 qwen，看起来像没生效。
         visionModel: (() => {
-          const ds = String(config.visionProvider ?? 'dashscope').toLowerCase() === 'deepseek'
-          const key = ds ? config.deepseekApiKey : config.dashscopeApiKey
+          const provider = String(config.visionProvider ?? 'dashscope').toLowerCase()
+          const isDeepseek = provider === 'deepseek'
+          const isCustom = provider === 'custom'
+          const key = isCustom ? config.visionCustomApiKey : isDeepseek ? config.deepseekApiKey : config.dashscopeApiKey
           if (!key) return null
-          return custom
-    ? `${config.visionCustomModel || '未填模型'}（自定义）`
-    : ds ? `${config.visionModel || 'deepseek-flash'}（DeepSeek）` : `${config.dashscopeModel}（DashScope）`
+          if (isCustom) return (config.visionCustomModel || '未填模型') + '（自定义）'
+          return isDeepseek
+            ? (config.visionModel || 'deepseek-flash') + '（DeepSeek）'
+            : config.dashscopeModel + '（DashScope）'
         })(),
         webSearch: Boolean(config.baiduApiKey),
         onebotUrl: config.onebotWsUrl,
