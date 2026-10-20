@@ -409,6 +409,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
   }
 
   const routes = {
+    'GET /api/ping': async () => ({ ok: true, at: Date.now() }),
     'GET /api/state': async () => buildState(),
     'GET /api/chats': async () => ({ items: await buildChatList() }),
     'GET /api/groups': async () => ({ items: await getGroupList() }),
@@ -1109,6 +1110,11 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       return send(400, JSON.stringify({ error: err.message }))
     }
   })
+
+  // 单个请求最多 15 秒：某个处理卡住时，控制台不会整体像死掉
+  server.requestTimeout = 15000
+  server.headersTimeout = 10000
+  server.keepAliveTimeout = 5000
 
   function start(port = 8787) {
     return new Promise((resolve) => {

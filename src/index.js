@@ -341,6 +341,17 @@ const customSchedule = createCustomCommandSchedule({
 })
 customSchedule.start()
 
+// 事件循环看门狗：正常每秒最多延迟几十毫秒；超过 1.5 秒说明有同步代码卡住，
+// 恢复后会打一条带时间的告警，方便定位是哪一步（控制台 / 消息处理）把进程卡死。
+let lastTickAt = Date.now()
+const watchdog = setInterval(() => {
+  const now = Date.now()
+  const lag = now - lastTickAt - 1000
+  lastTickAt = now
+  if (lag > 1500) logger.warn(`[看门狗] 事件循环被阻塞约 ${(lag / 1000).toFixed(1)} 秒（${new Date().toLocaleTimeString()}）`)
+}, 1000)
+if (watchdog.unref) watchdog.unref()
+
 onebot.on('message', (evt) => {
   bot.handleMessage(evt).catch((err) => logger.error(`处理消息异常：${err?.stack || err}`))
 })
