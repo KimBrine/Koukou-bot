@@ -60,8 +60,9 @@ export class DeepSeekClient {
   }
 
   /** 纯文本对话：messages 为 [{role, content}] 历史（不含 system） */
-  async chat(systemPrompt, messages, { rejectTruncated = false, signal, maxTokens = this.maxTokens, temperature = this.temperature } = {}) {
-    const configured=Number.isFinite(this.maxTokens)&&this.maxTokens>0?Math.floor(this.maxTokens):undefined
+  async chat(systemPrompt, messages, { rejectTruncated = false, signal, maxTokens, temperature = this.temperature } = {}) {
+    const baseMax = typeof this.maxTokens === 'function' ? this.maxTokens() : this.maxTokens
+    const configured=Number.isFinite(baseMax)&&baseMax>0?Math.floor(baseMax):undefined
     const requested=Number.isFinite(maxTokens)&&maxTokens>0?Math.max(1,Math.floor(maxTokens)):undefined
     const outputBudget=configured===undefined?requested:requested===undefined?configured:Math.min(configured,requested)
     await this.#acquire(signal)
@@ -157,7 +158,7 @@ export class DeepSeekClient {
         model: this.model,
         messages,
         temperature: this.temperature,
-        max_tokens: this.maxTokens,
+        max_tokens: (typeof this.maxTokens === 'function' ? this.maxTokens() : this.maxTokens),
         stream: false,
       }
       if (tools && tools.length > 0) body.tools = tools
@@ -177,7 +178,7 @@ export class DeepSeekClient {
       model: this.model,
       messages,
       temperature: this.temperature,
-      max_tokens: this.maxTokens,
+      max_tokens: (typeof this.maxTokens === 'function' ? this.maxTokens() : this.maxTokens),
       stream: false,
     })
     const content = data?.choices?.[0]?.message?.content

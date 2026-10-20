@@ -1,5 +1,6 @@
 // 全部使用模拟网络，不调用 QQ 或付费模型。
 import assert from 'node:assert/strict'
+import { readUiSource } from './ui-source.mjs'
 import {readFileSync} from 'node:fs'
 import vm from 'node:vm'
 import {DeepSeekClient} from '../src/deepseek.js'
@@ -46,7 +47,7 @@ try{
   requests=0;const failed=await expandForwardRecords({...input,onebot:{async getForwardMsg(){requests++;throw Error('读取超时')}}});assert.equal(failed.failed,true);assert.equal(requests,2)
  })
  await test('报告页显示宽裕开关、等待与机器人设置，旧上限标为不生效',()=>{
-  const html=readFileSync(new URL('../src/admin/ui.html',import.meta.url),'utf8')
+  const html = readUiSource()
   const form=html.slice(html.indexOf('function configForm('),html.indexOf('function pageHumanize('))
   const report=html.slice(html.indexOf('function pageReport('),html.indexOf('function pageLogs('))
   const keys=['SUMMARY_UNRESTRICTED','SUMMARY_REQUEST_TIMEOUT_SECONDS','SUMMARY_BOT_USERS','SUMMARY_MAX_TOKENS','SUMMARY_TASK_TIMEOUT_MINUTES']

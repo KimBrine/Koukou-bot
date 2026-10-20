@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
+import { readUiSource } from './ui-source.mjs'
 import { readFileSync } from 'node:fs'
 
-const html = readFileSync(new URL('../src/admin/ui.html', import.meta.url), 'utf8')
+const html = readUiSource()
 
 // 导航里的每个页面都必须有渲染分支（之前「表情包」掉了分支，点了显示成记忆）
 const pagesBlock = html.match(/const PAGES = \[([\s\S]*?)\n\]/)[1]
