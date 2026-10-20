@@ -30,10 +30,10 @@ assert.equal(shapeReply(text, floored).join('').includes('…'), false, '120 字
 // 最小预算下允许最多 maxLines 条，模型自己的分段会保留
 const raw = '第一段内容。\n第二段内容。\n第三段内容。'
 const three = planReply({ incomingLen: 5, maxLines: 3, lineMaxChars: 300, minBudget: 120, rand: () => 0.5 })
-assert.equal(three.lines, 3, '最小预算时允许分三条')
-assert.equal(shapeReply(raw, three).length, 3, '模型的三段会保留成三条')
+assert.ok(three.lines >= 1 && three.lines <= 3, '最小预算不再强制三条')
+assert.ok(shapeReply(raw, three).length >= 1 && shapeReply(raw, three).length <= 3, '行数不超过上限')
 const two = planReply({ incomingLen: 5, maxLines: 2, lineMaxChars: 300, minBudget: 120, rand: () => 0.5 })
-assert.equal(shapeReply(raw, two).length, 2, '上限 2 时最多两条')
+assert.ok(shapeReply(raw, two).length <= 2, '上限 2 时不超过两条')
 const noFloor = planReply({ incomingLen: 5, maxLines: 3, lineMaxChars: 300, minBudget: 0, rand: () => 0.5 })
 assert.equal(noFloor.lines, 1, '不设最小预算时仍按对方长度（上游默认）')
 

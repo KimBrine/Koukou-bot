@@ -124,7 +124,7 @@ const EDITABLE = [
   { key: 'WEB_SEARCH_PROVIDER', label: '联网搜索方式', hint: 'auto = 千帆 > DeepSeek > 通义 > 必应；独立配置改完需重启，建议使用上方联网搜索卡片即时保存', live: false, type: 'text' },
   { key: 'WEB_SEARCH_MODEL', label: '联网搜索模型', hint: '通义联网搜索用的模型，默认 qwen-plus；改完需重启', live: false, type: 'text' },
   { key: 'TEMPERATURE', label: '采样温度', hint: '越高越随性', live: false, type: 'number' },
-  { key: 'MAX_TOKENS', label: '单次回复 token 上限', live: false, type: 'number' },
+  { key: 'MAX_TOKENS', label: '单次回复 token 上限', hint: '256～200000，即时生效；思考强度开启时建议 ≥2000，否则推理会吃掉输出预算导致回复被截断', live: true, type: 'number' },
   { key: 'LOG_LEVEL', label: '日志级别', hint: 'debug/info/warn/error', live: false, type: 'text' },
 ]
 
@@ -307,6 +307,8 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         name = friendMap.get(String(uid))?.name ?? ''
       }
       const history = Array.isArray(mem[key]) ? mem[key] : []
+      // 不在白名单、没有任何消息、也没有单独设置的群：视为残留空壳，不显示
+      if (gid !== null && !config.whitelistGroups.has(gid) && history.length === 0 && !raw) continue
       const lastLine = history.length > 0 ? history[history.length - 1] : null
       out.push({
         key,
@@ -837,6 +839,9 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       case 'DAILY_PING_CHAIN_WINDOW_MS':
         config.dailyPingChainWindowMs = Math.max(10000, num(value, config.dailyPingChainWindowMs))
         break
+      case 'MAX_TOKENS':
+        config.maxTokens = Math.max(256, Math.min(200000, Math.floor(num(value, config.maxTokens))))
+        break
       default:
         return false
     }
@@ -864,6 +869,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         if (key==='STICKER_SEND_SCOPE'&&!['all','whitelist','selected','private'].includes(value))throw new Error('配图范围无效')
         if (key==='STICKER_PICK_MODE'&&!['context','model','random'].includes(value))throw new Error('选图方式无效')
         if (key==='STICKER_MAX_PER_REPLY'&&(!Number.isInteger(Number(value))||Number(value)<1||Number(value)>3))throw new Error('每次最多1到3张')
+        if (key==='MAX_TOKENS'&&(!Number.isInteger(Number(value))||Number(value)<256||Number(value)>200000))throw new Error('单次回复 token 上限应为 256～200000')
         if (key==='STICKER_AUTO_RATE'&&(Number(value)<0||Number(value)>100))throw new Error('配图概率应为0到100')
         if (key==='STICKER_COOLDOWN_SECONDS'&&(Number(value)<0||Number(value)>86400))throw new Error('配图间隔应为0到86400秒')
         if (key === 'SUMMARY_MAX_TOKENS' && (!Number.isInteger(Number(value)) || Number(value) < 500 || Number(value) > 16000)) throw new Error('总结输出 token 上限应为 500～16000 的整数')
@@ -1360,6 +1366,8 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     }
     try {
       if (req.method==='GET'&&url.pathname==='/command-center.js') return send(200,readFileSync(path.join(__dirname,'commandCenter.js')),'text/javascript; charset=utf-8')
+      if (req.method==='GET'&&url.pathname==='/ui.css') return send(200,readFileSync(path.join(__dirname,'ui.css')),'text/css; charset=utf-8')
+      if (req.method==='GET'&&url.pathname==='/app.js') return send(200,readFileSync(path.join(__dirname,'app.js')),'text/javascript; charset=utf-8')
       if (url.pathname === '/' || url.pathname === '/index.html') {
         if (!existsSync(UI_FILE)) return send(500, '控制台界面文件缺失', 'text/plain; charset=utf-8')
         return send(200, readFileSync(UI_FILE), 'text/html; charset=utf-8')

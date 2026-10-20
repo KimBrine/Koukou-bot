@@ -123,7 +123,7 @@ const llm = new DeepSeekClient({
   baseUrl: config.deepseekBaseUrl,
   model: config.deepseekModel,
   temperature: config.temperature,
-  maxTokens: config.maxTokens,
+  maxTokens: () => config.maxTokens,
   timeoutMs: config.timeoutMs,
   maxRetries: config.maxRetries,
   maxConcurrency: config.maxConcurrency,

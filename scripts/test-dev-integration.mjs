@@ -1,5 +1,6 @@
 // 离线检查控制台编辑冲突与非白名单学习，不连接QQ或模型。
 import assert from 'node:assert/strict'
+import { readUiSource, readUiScript } from './ui-source.mjs'
 import vm from 'node:vm'
 import { mkdtempSync, rmSync, readFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs'
 import os from 'node:os'
@@ -59,8 +60,8 @@ try {
   const oldPending = await admin.routes['GET /api/memory-detail']({key:'g'})
   longMemory.removePending('g',0)
   await assert.rejects(admin.actions['pending-delete']({key:'g',index:0,revision:oldPending.pendingRevision}), /刷新/)
-  const html=readFileSync(new URL('../src/admin/ui.html',import.meta.url),'utf8')
-  const js=/<script>([\s\S]*?)<\/script>/.exec(html)[1]
+  const html = readUiSource()
+  const js=readUiScript()
   const prefix=js.slice(0,js.search(/\r?\nrenderNav\(\)\r?\nload\(\)/))
   const context=vm.createContext({location:{hash:''},console})
   vm.runInContext(prefix,context)

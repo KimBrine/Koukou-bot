@@ -275,3 +275,5 @@ git config core.hooksPath .githooks
 联网搜索卡片可即时保存开关、渠道和通义型号；自动模式按可用Key选择千帆、DeepSeek、通义、必应。指定渠道缺少Key会提示错误，不暗中切换服务商。搜索结果缓存10分钟，每轮最多执行两次搜索；真实接口可用性和计费由服务商决定。DeepSeek接口按[官方搜索文档](https://api-docs.deepseek.com/zh-cn/guides/search/)实现，通义来源参数按[官方联网搜索文档](https://help.aliyun.com/zh/model-studio/web-search/)实现。
 
 直接问答可用“点歌 歌名”等请求搜索网易云并尝试发送音乐名片。清理非白名单群需要控制台确认，执行前在私有数据目录的config-backups/group-cleanup-*备份记忆、会话设置和日报；不会在升级时自动清理任何会话。
+
+控制台前端按ui.html、app.js、ui.css拆分；普通聊天MAX_TOKENS可即时调整，默认4096，不改动已有实例设置或群总结独立预算。看门狗从windows.local.json指定的环境文件读取端口，先核对监听进程归属；DryRun不启动任务也不写状态。
