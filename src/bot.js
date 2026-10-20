@@ -1131,7 +1131,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       // 会话专属要求（控制台里设的），跟在人设后面、机械规则前面
       // 表情包：把可用清单告诉模型，让它用 [贴纸: 名称] 指定（程序负责发图）
       let stickerHint = !questionMode && stickerSend.allowed(evt)
-        ? `\n\n【表情包发送规则】可用表情包：${stickers.summary(20)}。当其中一张能贴切表达当前情绪或回应时，可以主动挑一张，不必等对方明确要图；没有合适的就正常用文字。始终先写自然文字回复，选中后另起一行写 [贴纸: 名称]，不能只输出图片标记。程序会取走标记并发出真实图片，不会把它作为聊天正文展示。该标记是“禁止内部方括号标记”的明确例外；表情包发送与文字里的颜文字、emoji装饰限制分别处理，文字要求纯文字并不禁止选图。只能用库里已有名称，每轮最多${config.stickerMaxPerReply || 1}张；是否实际发送由程序按配置概率决定，不能绕过。不编造、不为发图而硬凑。`
+        ? `\n\n【表情包发送规则】可用表情包：${stickers.summary(60)}。当其中一张能贴切表达当前情绪或回应时，可以主动挑一张，不必等对方明确要图；没有合适的就正常用文字。始终先写自然文字回复，选中后另起一行写 [贴纸: 名称]，不能只输出图片标记。程序会取走标记并发出真实图片，不会把它作为聊天正文展示。该标记是“禁止内部方括号标记”的明确例外；表情包发送与文字里的颜文字、emoji装饰限制分别处理，文字要求纯文字并不禁止选图。选图必须同时符合当前用户语境和你本轮回复的态度，不能只因出现一个情绪词就配图。认真安慰、讨论生死或群友冲突时尤其不要配嘲笑、吃瓜、夸张惊吓或撒娇的图；没有贴切的图就完全省略贴纸标记，35%只是上限机会，不是发图任务。不要根据以前发过什么推断这次也适合。只能逐字使用清单中的完整名称，每轮最多${config.stickerMaxPerReply || 1}张；是否实际发送由程序按配置概率决定，不能绕过。不编造、不为发图而硬凑。`
         : ''
       const stickerRequestPolicy=JSON.stringify(commandCenter?.get('request-sticker'))
       const stickerRequestAllowed=()=>directReply&&featureAllowed('request-sticker')&&JSON.stringify(commandCenter?.get('request-sticker'))===stickerRequestPolicy
@@ -1283,7 +1283,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         if (!finalLines.length || !samePersona()) return
         record = finalLines.join('\n')
         if(!textConfirmed)selection={items:[],reason:'文字发送回执未确认'}
-        if(!questionMode&&config.stickersEnabled&&stickers)logger.info(`[表情包选择] ${key}｜${selection.reason}｜选中 ${selection.items.map(i=>i.name).join('、')||'无'}｜配图概率 ${Math.round((config.stickerAutoRate??.35)*100)}%`)
+        if(!questionMode&&config.stickersEnabled&&stickers)logger.info(`[表情包选择] ${key}｜${selection.reason}｜来源 ${selection.source||'无'}｜模型候选 ${JSON.stringify(stickerQueries).slice(0,200)}｜选中 ${selection.items.map(i=>i.name).join('、')||'无'}｜配图概率 ${Math.round((config.stickerAutoRate??.35)*100)}%`)
         // 仅在文字真实发送成功后配图；发送失败不会单独发图。
         if (selection.items.length > 0 && stickers) {
           const sentText = record

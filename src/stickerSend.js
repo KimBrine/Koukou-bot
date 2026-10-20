@@ -16,13 +16,17 @@ export function createStickerSendPolicy({config,stickers,rand=Math.random,now=Da
     if(now()-(last.get(key)??-Infinity)<(config.stickerCooldownSeconds||0)*1000)return {items:[],reason:'会话配图冷却'}
     if(!requested&&(rate<=0||rand()>=rate))return {items:[],reason:'未命中配图概率'}
     const limit=Math.max(1,Math.min(3,config.stickerMaxPerReply||1)),mode=config.stickerPickMode||'context'
-    let items=mode==='random'?[]:queries.map(q=>stickers.find(q)).filter(Boolean)
-    if(!items.length&&(mode!=='model'||requested)){
+    let source=mode==='random'?'用户配置随机模式':'模型按完整名称选图'
+    let items=mode==='random'?[]:queries.map(q=>stickers.find(q,{exact:!requested})).filter(Boolean)
+    // 普通自动配图不以关键词、历史使用或随机结果替模型补选。
+    // 明确索图仍可按语境/随机兜底，用户主动选择随机模式也保留原行为。
+    if(!items.length&&(mode==='random'||requested)){
       const item=mode==='random'?stickers.random():stickers.pick(context+' '+text)
+      source=mode==='random'?source:'明确索图的语境/随机候选'
       if(item)items=[item]
     }
     items=[...new Map(items.map(i=>[i.id,i])).values()].slice(0,limit)
-    return {items,reason:items.length?(requested?'明确索图请求':'文字配图'):'没有合适的选图结果'}
+    return {items,source,reason:items.length?(requested?'明确索图请求':'文字配图'):'模型没有选中合适的库内图片，不补图'}
   }
   function begin(e){const key=e.message_type==='private'?`p${e.user_id}`:`g${e.group_id}`;last.set(key,now());if(last.size>1000)last.delete(last.keys().next().value)}
   return {allowed,select,begin}

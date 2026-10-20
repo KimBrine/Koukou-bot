@@ -35,6 +35,8 @@ try {
   assert.equal(lib.find('猫猫').id, a.item.id)
   assert.equal(lib.find('卖萌').id, a.item.id)
   assert.equal(lib.find('猫').id, a.item.id)
+  assert.equal(lib.find('猫',{exact:true}),null,'自动配图不能把模糊关键词变成模型未点名的图片')
+  assert.equal(lib.find(a.item.name,{exact:true}).id,a.item.id)
   assert.equal(lib.find('狗'), null)
 
   // 更新
