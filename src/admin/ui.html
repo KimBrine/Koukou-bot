@@ -220,7 +220,7 @@ function toast(msg, bad) {
   clearTimeout(t._t)
   t._t = setTimeout(() => t.classList.remove('show'), bad ? 4200 : 2200)
 }
-function ask(title, description, button = '确认', textInput = false) {
+function ask(title, description, button = '确认', textInput = false, defaultValue = '') {
   return new Promise(resolve => {
     const root = document.getElementById('modalRoot')
     root.innerHTML = '<div class="modal" role="dialog" aria-modal="true"><h2></h2><p></p>' +
@@ -229,6 +229,8 @@ function ask(title, description, button = '确认', textInput = false) {
     root.querySelector('h2').textContent = title
     root.querySelector('p').textContent = description
     root.querySelector('#modalOk').textContent = button
+    const inputBox = root.querySelector('#modalInput')
+    if (inputBox && defaultValue) inputBox.value = defaultValue
     root.classList.add('show')
     root.setAttribute('aria-hidden', 'false')
     const close = value => {
@@ -675,33 +677,46 @@ function pageCommands(){ return CommandCenterUI.render({custom:customCommands,bu
 function pageMemory(){
   const rows = memoryOverview.map(function(m){
     return '<tr><td class="mono">' + esc(m.key) + '</td><td>' + (m.recent||0) + ' 条</td><td>' + (m.longTermChars||0) + ' 字</td><td>' + (m.pending||0) + '</td>' +
-      '<td><button class="btn" data-memview="' + esc(m.key) + '">查看</button> <button class="btn" data-memclear="' + esc(m.key) + '">清除</button></td></tr>'
+      '<td><button class="btn" data-memview="' + esc(m.key) + '">查看</button> <button class="btn" data-memclear="' + esc(m.key) + '">清空</button></td></tr>'
   }).join('')
   const d = memoryDetail
   const fmtTime = function(ts){ if(!ts) return ''; try { return new Date(ts).toLocaleString('zh-CN',{hour12:false}) } catch(e){ return '' } }
-  const recentRows = d ? (d.recent||[]).map(function(m){
-    return '<div style="margin-bottom:8px"><span class="badge">' + (m.role === 'assistant' ? '机器人' : '对方') + '</span> ' + esc(m.content) + '</div>'
+  const key = d ? d.key : ''
+  const recentRows = d ? (d.recent||[]).map(function(m, idx){
+    return '<div style="margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--line,#eee)">' +
+      '<div style="display:flex;gap:8px;align-items:center;margin-bottom:4px">' +
+      '<span class="badge">' + (m.role === 'assistant' ? '机器人' : '对方') + '</span>' +
+      '<span class="mut" style="font-size:12px">' + esc(fmtTime(m.time)) + '</span>' +
+      '<button class="btn sm" data-mem-edit="' + idx + '">改</button>' +
+      '<button class="btn sm" data-mem-del="' + idx + '">删</button>' +
+      '</div><div>' + esc(m.content) + '</div></div>'
   }).join('') : ''
-  const pendingRows = d ? (d.pending||[]).map(function(p){
-    return '<div style="margin-bottom:8px"><span class="badge">' + esc(p.name || p.userId || '群友') + '</span> <span class="mut" style="font-size:12px">' + esc(fmtTime(p.time)) + '</span><div>' + esc(p.text) + '</div></div>'
+  const pendingRows = d ? (d.pending||[]).map(function(p, idx){
+    return '<div style="margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--line,#eee)">' +
+      '<div style="display:flex;gap:8px;align-items:center;margin-bottom:4px">' +
+      '<span class="badge">' + esc(p.name || p.userId || '群友') + '</span>' +
+      '<span class="mut" style="font-size:12px">' + esc(fmtTime(p.time)) + '</span>' +
+      '<button class="btn sm" data-pending-del="' + idx + '">删</button>' +
+      '</div><div>' + esc(p.text) + '</div></div>'
   }).join('') : ''
   return [
-    '<h1>记忆浏览</h1><div class="sub">当前人格 <b>' + esc(state?.config?.activePersona || '默认') + '</b>。这里可以分开看：近期对话、长期记忆、还没整理进长期记忆的原文。</div>',
+    '<h1>记忆浏览</h1><div class="sub">当前人格 <b>' + esc(state?.config?.activePersona || '默认') + '</b>。近期、长期、待整理分开显示，都可以单条修改或删除。</div>',
     '<section class="card"><h2>会话列表 <span class="pill">' + memoryOverview.length + ' 个</span></h2>',
     memoryOverview.length ? ('<table class="tbl"><thead><tr><th>会话</th><th>近期</th><th>长期</th><th>待整理</th><th>操作</th></tr></thead><tbody>' + rows + '</tbody></table>') : '<div class="mut">当前人格还没有任何记忆。</div>',
     '</section>',
     d ? [
-      '<section class="card"><h2>近期记忆 <span class="pill">' + (d.recent||[]).length + ' 条</span> <span class="mut" style="font-size:12px">' + esc(d.key) + '</span></h2>',
-      '<div class="note">最近对话的原文窗口，超出上限后会被挤出去、进入「待整理」。</div>',
-      '<div style="max-height:340px;overflow:auto;margin-top:8px">' + (recentRows || '<div class="mut">这个会话没有近期记忆。</div>') + '</div>',
+      '<section class="card"><h2>近期记忆 <span class="pill">' + (d.recent||[]).length + ' 条</span> <span class="mut" style="font-size:12px">' + esc(key) + '</span></h2>',
+      '<div class="note">每条都能改正文或单条删除；删除只影响这一条。</div>',
+      '<div style="max-height:360px;overflow:auto;margin-top:8px">' + (recentRows || '<div class="mut">这个会话没有近期记忆。</div>') + '</div>',
       '</section>',
       '<section class="card"><h2>长期记忆 <span class="pill">' + (d.longTerm||'').length + ' 字</span>' + (d.updatedAt ? ' <span class="mut" style="font-size:12px">更新于 ' + esc(fmtTime(d.updatedAt)) + '</span>' : '') + '</h2>',
-      '<div class="note">由待整理的原文压缩成的事实摘要，会一直累积。</div>',
-      '<div class="mono" style="max-height:340px;overflow:auto;white-space:pre-wrap;margin-top:8px">' + esc(d.longTerm || '（还没有整理出长期记忆）') + '</div>',
+      '<div class="note">可以直接改写摘要正文，保存后立刻生效。</div>',
+      '<textarea id="lmEdit" style="width:100%;min-height:160px;margin-top:8px" placeholder="还没有整理出长期记忆，可以直接写">' + esc(d.longTerm || '') + '</textarea>',
+      '<div class="flexbar"><button class="btn primary" id="lmSave">保存长期记忆</button><span class="mut" id="lmHint" style="font-size:12px"></span></div>',
       '</section>',
       '<section class="card"><h2>待整理 <span class="pill">' + (d.pending||[]).length + ' 条</span></h2>',
-      '<div class="note">从近期窗口挤出来的原文，攒够一批会自动压缩进长期记忆（也可以手动触发）。</div>',
-      '<div style="max-height:340px;overflow:auto;margin-top:8px">' + (pendingRows || '<div class="mut">没有待整理的原文。</div>') + '</div>',
+      '<div class="note">从近期窗口挤出来的原文，攒够会自动压缩进长期记忆；不想留的可以单条删掉。</div>',
+      '<div style="max-height:360px;overflow:auto;margin-top:8px">' + (pendingRows || '<div class="mut">没有待整理的原文。</div>') + '</div>',
       '</section>'
     ].join('') : '<section class="card"><div class="mut">点上面「查看」，会同时显示近期、长期和待整理三块内容。</div></section>'
   ].join('')
@@ -1069,23 +1084,69 @@ async function bind(){
     try { const r = await api('/api/action/sticker-send', { groupId, keyword }); toast('已发送「' + r.name + '」') }
     catch (e) { toast('发送失败：' + e.message, true) }
   }
-  // 记忆浏览：查看 / 清除
+  // 记忆浏览：查看 / 单条改删 / 摘要编辑 / 清空
+  const reloadMemoryDetail = async (key) => {
+    memoryDetail = await api('/api/memory-detail?key=' + encodeURIComponent(key))
+    render()
+  }
   document.querySelectorAll('[data-memview]').forEach(el => el.onclick = async () => {
-    const key = el.dataset.memview
-    try {
-      memoryDetail = await api('/api/memory-detail?key=' + encodeURIComponent(key))
-      render()
-    } catch (e) { toast('读取失败：' + e.message, true) }
+    try { await reloadMemoryDetail(el.dataset.memview) }
+    catch (e) { toast('读取失败：' + e.message, true) }
   })
+  document.querySelectorAll('[data-mem-edit]').forEach(el => el.onclick = async () => {
+    const idx = Number(el.dataset.memEdit)
+    const item = memoryDetail?.recent?.[idx]
+    if (!item) { toast('这条记忆已经变化，请刷新', true); return }
+    const text = await ask('修改这条记忆', '保存后立刻写回；机器人之后的回复会用改后的内容。', '保存', true, item.content)
+    if (text === null || text === undefined) return
+    try {
+      await api('/api/action/memory-update', { key: memoryDetail.key, index: idx, content: text })
+      await reloadMemoryDetail(memoryDetail.key)
+      toast('已修改')
+    } catch (e) { toast('修改失败：' + e.message, true) }
+  })
+  document.querySelectorAll('[data-mem-del]').forEach(el => el.onclick = async () => {
+    const idx = Number(el.dataset.memDel)
+    const item = memoryDetail?.recent?.[idx]
+    if (!item) { toast('这条记忆已经变化，请刷新', true); return }
+    if (!await ask('删除这条记忆？', String(item.content).slice(0, 80) + '…', '删除')) return
+    try {
+      await api('/api/action/memory-delete', { key: memoryDetail.key, index: idx })
+      await reloadMemoryDetail(memoryDetail.key)
+      toast('已删除这一条')
+    } catch (e) { toast('删除失败：' + e.message, true) }
+  })
+  document.querySelectorAll('[data-pending-del]').forEach(el => el.onclick = async () => {
+    const idx = Number(el.dataset.pendingDel)
+    if (!await ask('丢弃这条待整理原文？', '丢了就不会再进长期记忆。', '丢弃')) return
+    try {
+      await api('/api/action/pending-delete', { key: memoryDetail.key, index: idx })
+      await reloadMemoryDetail(memoryDetail.key)
+      toast('已丢弃')
+    } catch (e) { toast('删除失败：' + e.message, true) }
+  })
+  const lmSave = document.getElementById('lmSave')
+  if (lmSave) lmSave.onclick = async () => {
+    const box = document.getElementById('lmEdit')
+    const hint = document.getElementById('lmHint')
+    lmSave.disabled = true
+    try {
+      const r = await api('/api/action/longmemory-update', { key: memoryDetail.key, text: box.value })
+      if (hint) hint.textContent = '已保存 ' + r.chars + ' 字'
+      toast('长期记忆已保存')
+      await load()
+    } catch (e) { toast('保存失败：' + e.message, true) }
+    lmSave.disabled = false
+  }
   document.querySelectorAll('[data-memclear]').forEach(el => el.onclick = async () => {
     const key = el.dataset.memclear
-    if (!await ask('清除「' + key + '」的记忆？', '将重置本会话的近期、长期与待整理内容。清理前自动备份，其他会话不受影响。', '清除')) return
+    if (!await ask('清空「' + key + '」的全部记忆？', '会一次性清掉近期、长期和待整理；如果只想删几条，用上面每条的「改 / 删」。', '清空')) return
     try {
       const r = await api('/api/action/clear-memory', { key })
       memoryDetail = null
       await load()
-      toast('已清除：近期 ' + (r.recent || 0) + ' 条' + (r.longTerm ? '、长期 1 份' : ''))
-    } catch (e) { toast('清除失败：' + e.message, true) }
+      toast('已清空：近期 ' + (r.recent || 0) + ' 条' + (r.longTerm ? '、长期 1 份' : ''))
+    } catch (e) { toast('清空失败：' + e.message, true) }
   })
   document.querySelectorAll('[data-reset]').forEach(b => b.onclick = async () => {
     try { await api('/api/action/reset-chat', { key: b.dataset.reset }); toast('已恢复默认'); await load() }

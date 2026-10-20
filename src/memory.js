@@ -157,6 +157,26 @@ export class MemoryStore {
     this.dirty = false
     return removed
   }
+  /** 修改某条近期记忆的正文（index 为当前列表下标） */
+  updateEntry(key, index, content) {
+    const list = this.chats.get(key)
+    if (!Array.isArray(list) || !Number.isInteger(index) || index < 0 || index >= list.length) return null
+    if (typeof content !== 'string' || !content.trim()) return null
+    list[index].content = content.slice(0, 8000)
+    this.dirty = true
+    this.flush()
+    return list[index]
+  }
+  /** 删除某条近期记忆，返回是否删掉 */
+  removeEntry(key, index) {
+    const list = this.chats.get(key)
+    if (!Array.isArray(list) || !Number.isInteger(index) || index < 0 || index >= list.length) return false
+    list.splice(index, 1)
+    this.dirty = true
+    this.flush()
+    return true
+  }
+
   /** 当前有记忆的会话键 */
   keys() { return [...this.chats.keys()] }
   /** 某会话的近期记忆条数 */

@@ -123,6 +123,24 @@ export function createLongMemory({ file, logger, llm, maxChars = 1500, intervalM
     keyEpochs = nextEpochs; store.delete(key)
     return existed
   }
+  /** 手动改写长期记忆摘要 */
+  function setSummary(key, text) {
+    const item = store.get(key) || fresh()
+    item.summary = String(text ?? '').slice(0, 20000)
+    item.updatedAt = Date.now()
+    store.set(key, item)
+    save()
+    return { key, chars: item.summary.length, updatedAt: item.updatedAt }
+  }
+  /** 删掉一条待整理原文（不整理、直接丢弃） */
+  function removePending(key, index) {
+    const item = store.get(key)
+    if (!item || !Array.isArray(item.pending) || !Number.isInteger(index) || index < 0 || index >= item.pending.length) return false
+    item.pending.splice(index, 1)
+    save()
+    return true
+  }
+
   /** 某个会话的完整长期记忆：摘要 + 待整理原文 */
   function detail(key) {
     const item = store.get(key)
@@ -136,5 +154,5 @@ export function createLongMemory({ file, logger, llm, maxChars = 1500, intervalM
     }
   }
   function stats() { return [...store].map(([key, v]) => ({ key, summaryChars: v.summary.length, pending: v.pending.length })) }
-  return { get, addEvicted, summarize, feed, start, stop, save, stats, detail, snapshot, clear, restore, clearKey }
+  return { get, addEvicted, summarize, feed, start, stop, save, stats, detail, setSummary, removePending, snapshot, clear, restore, clearKey }
 }

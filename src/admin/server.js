@@ -957,6 +957,46 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       logger?.info?.(`[控制台] 测试发送表情包「${item.name}」到群 ${groupId}`)
       return { ok: true, name: item.name }
     },
+    async 'memory-update'(payload) {
+      const key = String(payload?.key || '')
+      const index = Number(payload?.index)
+      const content = String(payload?.content ?? '')
+      if (!key) throw new Error('缺少会话 key')
+      if (!Number.isInteger(index)) throw new Error('缺少要修改的条目')
+      if (!content.trim()) throw new Error('内容不能为空')
+      const item = memory.updateEntry(key, index, content)
+      if (!item) throw new Error('这条记忆已经变化，请刷新后再试')
+      logger?.info?.(`[控制台] 修改 ${key} 第 ${index + 1} 条近期记忆`)
+      return { ok: true, item }
+    },
+    async 'memory-delete'(payload) {
+      const key = String(payload?.key || '')
+      const index = Number(payload?.index)
+      if (!key) throw new Error('缺少会话 key')
+      if (!Number.isInteger(index)) throw new Error('缺少要删除的条目')
+      const ok = memory.removeEntry(key, index)
+      if (!ok) throw new Error('这条记忆已经变化，请刷新后再试')
+      logger?.info?.(`[控制台] 删除 ${key} 第 ${index + 1} 条近期记忆`)
+      return { ok: true, remain: memory.count(key) }
+    },
+    async 'longmemory-update'(payload) {
+      const key = String(payload?.key || '')
+      if (!key) throw new Error('缺少会话 key')
+      if (typeof longMemory?.setSummary !== 'function') throw new Error('当前版本不支持编辑长期记忆')
+      const out = longMemory.setSummary(key, String(payload?.text ?? ''))
+      logger?.info?.(`[控制台] 改写 ${key} 的长期记忆（${out.chars} 字）`)
+      return { ok: true, ...out }
+    },
+    async 'pending-delete'(payload) {
+      const key = String(payload?.key || '')
+      const index = Number(payload?.index)
+      if (!key) throw new Error('缺少会话 key')
+      if (typeof longMemory?.removePending !== 'function') throw new Error('当前版本不支持删除待整理')
+      const ok = longMemory.removePending(key, index)
+      if (!ok) throw new Error('这条待整理已经变化，请刷新后再试')
+      logger?.info?.(`[控制台] 丢弃 ${key} 第 ${index + 1} 条待整理原文`)
+      return { ok: true }
+    },
     async 'restart-bot'() {
       logger?.info?.('[控制台] 收到重启机器人指令')
       setTimeout(() => restartBot?.(), 300)
