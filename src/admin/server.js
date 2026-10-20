@@ -112,6 +112,10 @@ const EDITABLE = [
   { key: 'DEEPSEEK_API_KEY', label: '模型 Key', live: true, type: 'secret' },
   { key: 'VISION_PROVIDER', label: '识图服务商', hint: '当前选用哪家服务识别图片', live: false, type: 'text' },
   { key: 'VISION_MODEL', label: 'DeepSeek 识图模型', hint: '识图服务商为 DeepSeek 时使用', live: false, type: 'text' },
+  { key: 'STICKER_TAG_PROVIDER', label: '表情包打标模型', hint: 'auto = 有通义用通义，否则 DeepSeek，再否则自定义；也可指定 deepseek / dashscope / custom', live: true, type: 'text' },
+  { key: 'VISION_CUSTOM_BASE_URL', label: '自定义识图接口地址', hint: 'OpenAI 兼容的多模态接口，例如 https://xxx/v1', live: true, type: 'text', wide: true },
+  { key: 'VISION_CUSTOM_API_KEY', label: '自定义识图 Key', live: true, type: 'secret' },
+  { key: 'VISION_CUSTOM_MODEL', label: '自定义识图模型名', hint: '例如 gpt-4o-mini / glm-4v-plus / qwen3-vl-plus', live: true, type: 'text' },
   { key: 'DASHSCOPE_MODEL', label: 'DashScope 识图模型', hint: '仅识图服务商为 DashScope 时使用；不代表当前生效模型', live: false, type: 'text' },
   { key: 'DASHSCOPE_API_KEY', label: 'DashScope Key', live: false, type: 'secret' },
   { key: 'BAIDU_QIANFAN_API_KEY', label: '百度千帆 Key', live: false, type: 'secret' },
@@ -380,7 +384,9 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
           const ds = String(config.visionProvider ?? 'dashscope').toLowerCase() === 'deepseek'
           const key = ds ? config.deepseekApiKey : config.dashscopeApiKey
           if (!key) return null
-          return ds ? `${config.visionModel || 'deepseek-flash'}（DeepSeek）` : `${config.dashscopeModel}（DashScope）`
+          return custom
+    ? `${config.visionCustomModel || '未填模型'}（自定义）`
+    : ds ? `${config.visionModel || 'deepseek-flash'}（DeepSeek）` : `${config.dashscopeModel}（DashScope）`
         })(),
         webSearch: Boolean(config.baiduApiKey),
         onebotUrl: config.onebotWsUrl,
@@ -410,6 +416,10 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         replyTimingEnabled: Boolean(config.replyTimingEnabled),
         replyMinBudget: config.replyMinBudget,
         visionProvider: config.visionProvider,
+        visionCustomModel: config.visionCustomModel,
+        visionModelDeepseek: config.visionModel || '',
+        visionModelDashscope: config.dashscopeModel || '',
+        stickerTagProvider: config.stickerTagProvider,
         visionModelName: config.visionProvider === 'deepseek' ? (config.visionModel || 'deepseek-flash') : config.dashscopeModel,
         summaryTimes: config.summaryTimes,
         summaryFallbackEnabled: config.summaryFallbackEnabled,
@@ -625,12 +635,31 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         if (llm) llm.apiKey = v
         break
       }
+      case 'VISION_CUSTOM_BASE_URL':
+        config.visionCustomBaseUrl = String(value || '').trim().replace(/\/+$/, '')
+        try { switchVision?.() } catch (err) { logger?.warn?.('[控制台] 重建识图失败：' + err.message) }
+        break
+      case 'VISION_CUSTOM_API_KEY': {
+        const v = String(value || '').trim()
+        if (!v) return false
+        config.visionCustomApiKey = v
+        try { switchVision?.() } catch (err) { logger?.warn?.('[控制台] 重建识图失败：' + err.message) }
+        break
+      }
+      case 'VISION_CUSTOM_MODEL':
+        config.visionCustomModel = String(value || '').trim()
+        try { switchVision?.() } catch (err) { logger?.warn?.('[控制台] 重建识图失败：' + err.message) }
+        break
+      case 'STICKER_TAG_PROVIDER':
+        config.stickerTagProvider = String(value || 'auto').trim().toLowerCase()
+        try { switchVision?.() } catch (err) { logger?.warn?.('[控制台] 重建打标模型失败：' + err.message) }
+        break
       case 'MODEL_PROVIDER':
         config.modelProvider = String(value || '').trim().toLowerCase()
         break
       case 'VISION_PROVIDER': {
         const v = String(value || '').trim().toLowerCase()
-        if (!['deepseek', 'dashscope'].includes(v)) throw new Error('识图服务商只能是 deepseek 或 dashscope')
+        if (!['deepseek', 'dashscope', 'custom'].includes(v)) throw new Error('识图服务商只能是 deepseek / dashscope / custom')
         config.visionProvider = v
         // 即时重建识图客户端；失败只记录，不影响其它配置
         try { switchVision?.() } catch (err) { logger?.warn?.('[控制台] 切换识图模型失败：' + err.message) }
@@ -976,6 +1005,18 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       writeEnvFile(envFile, { TARGET_WATCH_ENABLED: '1', TARGET_WATCH_GROUP: String(gid), TARGET_WATCH_USER: uid }, { atomic: true })
       const st = targetWatch.configure({ enabled: true, groupId: String(gid), userId: uid })
       return { ok: true, ...st }
+    },
+    async 'detect-vision-models'(payload) {
+      const provider = String(payload?.provider || config.visionProvider || 'deepseek').toLowerCase()
+      const ep = provider === 'custom'
+        ? { baseUrl: String(payload?.baseUrl || config.visionCustomBaseUrl || ''), apiKey: String(payload?.apiKey || config.visionCustomApiKey || '') }
+        : provider === 'dashscope'
+          ? { baseUrl: config.dashscopeBaseUrl, apiKey: config.dashscopeApiKey }
+          : { baseUrl: config.deepseekBaseUrl, apiKey: config.deepseekApiKey }
+      if (!ep.apiKey) throw new Error('这个服务商还没有配置 Key')
+      const out = await detectModels(ep)
+      logger?.info?.(`[识图检测] ${provider} 返回 ${out.count} 个模型`)
+      return { ...out, provider }
     },
     async 'detect-models'(payload) {
       const baseUrl = String(payload?.baseUrl || '').trim() || config.deepseekBaseUrl

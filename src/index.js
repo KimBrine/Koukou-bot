@@ -140,31 +140,48 @@ const llm = new DeepSeekClient({
 // 注意：deepseek-v4-pro **不能读图**（会回"无法查看图片"），别拿它当视觉模型。
 const visionKnowledge = loadVisionKnowledge(config.dataDir, logger)
 // 识图客户端：可在 DeepSeek 与通义千问之间热切换（不需要重启）
-let visionActive = null
-function buildVisionClient(provider) {
-  const useDeepseek = String(provider || 'deepseek').toLowerCase() === 'deepseek'
-  const key = useDeepseek ? config.deepseekApiKey : config.dashscopeApiKey
-  if (!key) return null
+function visionEndpoint(provider) {
+  const p = String(provider || 'deepseek').toLowerCase()
+  if (p === 'custom') {
+    if (!config.visionCustomApiKey || !config.visionCustomBaseUrl) return null
+    return {
+      provider: 'custom', key: config.visionCustomApiKey, baseUrl: config.visionCustomBaseUrl,
+      model: config.visionCustomModel || '', label: '自定义识图', reasoningEffort: undefined, enableThinking: undefined,
+    }
+  }
+  if (p === 'deepseek') {
+    if (!config.deepseekApiKey) return null
+    return {
+      provider: 'deepseek', key: config.deepseekApiKey, baseUrl: config.deepseekBaseUrl,
+      model: config.visionModel || 'deepseek-flash', label: 'DeepSeek 视觉',
+      reasoningEffort: config.deepseekReasoningEffort, enableThinking: undefined,
+    }
+  }
+  if (!config.dashscopeApiKey) return null
+  return {
+    provider: 'dashscope', key: config.dashscopeApiKey, baseUrl: config.dashscopeBaseUrl,
+    model: config.dashscopeModel, label: '通义千问VL', reasoningEffort: undefined,
+    enableThinking: isQwenHybridModel(config.dashscopeModel) ? config.dashscopeThinking : undefined,
+  }
+}
+function makeClient(ep) {
+  if (!ep) return null
   return new DeepSeekClient({
-    apiKey: key,
-    baseUrl: useDeepseek ? config.deepseekBaseUrl : config.dashscopeBaseUrl,
-    model: useDeepseek ? config.visionModel || 'deepseek-flash' : config.dashscopeModel,
+    apiKey: ep.key, baseUrl: ep.baseUrl, model: ep.model,
     temperature: config.temperature,
     maxTokens: Math.min(config.maxTokens, 300),
-    timeoutMs: config.timeoutMs,
-    maxRetries: config.maxRetries,
-    maxConcurrency: config.maxConcurrency,
-    logger,
-    label: useDeepseek ? 'DeepSeek 视觉' : '通义千问VL',
-    reasoningEffort: useDeepseek ? config.deepseekReasoningEffort : undefined,
-    enableThinking: !useDeepseek && isQwenHybridModel(config.dashscopeModel) ? config.dashscopeThinking : undefined,
+    timeoutMs: config.timeoutMs, maxRetries: config.maxRetries,
+    maxConcurrency: config.maxConcurrency, logger, label: ep.label,
+    reasoningEffort: ep.reasoningEffort, enableThinking: ep.enableThinking,
   })
 }
+let visionActive = null
 let lastVisionLabel = ''
 function rebuildVision() {
-  visionActive = createGroundedVisionClient(buildVisionClient(config.visionProvider), visionKnowledge, logger)
+  const ep = visionEndpoint(config.visionProvider)
+  visionActive = createGroundedVisionClient(makeClient(ep), visionKnowledge, logger)
   const label = visionActive
-    ? '视觉模型：' + visionActive.model + '（' + (config.visionProvider === 'deepseek' ? 'DeepSeek' : '通义千问') + '）'
+    ? '视觉模型：' + visionActive.model + '（' + (ep ? ep.label : config.visionProvider) + '）'
     : '视觉模型未启用：' + config.visionProvider + ' 没有可用 Key'
   if (label !== lastVisionLabel) { lastVisionLabel = label; logger.info(label) }
   return visionActive
@@ -240,21 +257,30 @@ const stickerFilterLLM = config.deepseekApiKey ? new DeepSeekClient({
 }) : null
 // 打标优先用 DashScope；没有 Key 时回退到 DeepSeek 读图（实测 1 秒、描述准确），
 // 这样表情包学习不需要额外申请 DashScope。
-const stickerTagLLM = config.dashscopeApiKey
-  ? createSummaryVisionClient({ config: { ...config, summaryUnrestricted: true }, logger })
-  : (config.deepseekApiKey ? new DeepSeekClient({
-      apiKey: config.deepseekApiKey,
-      baseUrl: config.deepseekBaseUrl,
-      model: config.visionModel || 'deepseek-flash',
-      reasoningEffort: config.deepseekReasoningEffort,
-      temperature: 0.2,
-      maxTokens: config.maxTokens,
-      timeoutMs: config.timeoutMs,
-      maxRetries: config.maxRetries,
-      maxConcurrency: 1,
-      logger,
-      label: '表情包打标(DeepSeek)',
-    }) : null)
+let tagActive = null
+let lastTagLabel = ''
+function rebuildStickerTag() {
+  const prefer = String(config.stickerTagProvider || 'auto').toLowerCase()
+  const chain = prefer === 'auto' ? ['dashscope', 'deepseek', 'custom'] : [prefer]
+  let ep = null
+  for (const p of chain) { ep = visionEndpoint(p); if (ep) break }
+  tagActive = makeClient(ep)
+  const label = tagActive
+    ? '表情包打标：' + tagActive.model + '（' + (ep ? ep.label : '?') + '）'
+    : '表情包打标未启用：没有可用的识图模型'
+  if (label !== lastTagLabel) { lastTagLabel = label; logger.info(label) }
+  return tagActive
+}
+rebuildStickerTag()
+const stickerTagLLM = new Proxy({}, {
+  get(_t, prop) {
+    const target = tagActive
+    if (!target) return undefined
+    const value = target[prop]
+    return typeof value === 'function' ? value.bind(target) : value
+  },
+  has(_t, prop) { return Boolean(tagActive && prop in tagActive) },
+})
 const stickerLearner = createStickerLearner({ config, logger, onebot, stickers,
   filterLLM: stickerFilterLLM, tagLLM: stickerTagLLM, imageCache: sharedImageCache })
 const commandCenter = createCommandCenter({file:path.join(config.dataDir,'command-center.json'),customCommands,config,logger,llm})
@@ -351,7 +377,7 @@ if (config.adminEnabled) {
     llm,
     stickers,
     commandCenter,
-    switchVision: rebuildVision,
+    switchVision: () => { rebuildVision(); rebuildStickerTag() },
     restartBot: () => {
       // 让一个独立进程在 1.2 秒后杀掉当前实例并用计划任务重新拉起（避免自己杀自己杀不干净）
       //

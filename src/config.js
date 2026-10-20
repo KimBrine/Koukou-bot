@@ -157,6 +157,10 @@ export function loadConfig() {
     // 视觉模型（通义千问 DashScope，OpenAI 兼容模式），用于读图/表情包
     // 用哪个服务商读图：deepseek（实测快 21 倍）或 dashscope。见 src/index.js 顶部的实测数据。
     visionProvider: String(env.VISION_PROVIDER ?? 'dashscope').trim().toLowerCase(),
+    // 自定义识图（任意 OpenAI 兼容的多模态接口）
+    visionCustomBaseUrl: String(env.VISION_CUSTOM_BASE_URL ?? '').trim().replace(/\/+$/, ''),
+    visionCustomApiKey: String(env.VISION_CUSTOM_API_KEY ?? '').trim(),
+    visionCustomModel: String(env.VISION_CUSTOM_MODEL ?? '').trim(),
     // provider=deepseek 时读图用哪个模型（deepseek-v4-pro **不能读图**，别填它）
     visionModel: String(env.VISION_MODEL ?? 'deepseek-flash').trim(),
     dashscopeApiKey: String(env.DASHSCOPE_API_KEY ?? '').trim(),
@@ -340,6 +344,8 @@ export function loadConfig() {
     stickerAutoRate: Math.min(1, Math.max(0, num('STICKER_AUTO_RATE', 35) / 100)),
     // 从独立指定的群学习表情包，留空不采集，不继承聊天白名单
     stickerLearnGroups: new Set(String(env.STICKER_LEARN_GROUPS ?? '').split(/[,，\s]+/).filter(x => /^\d+$/.test(x) && Number(x) > 0).map(Number)),
+    // 表情包打标（二次审核）用哪个模型：auto = 有通义用通义，否则 DeepSeek，再否则自定义
+    stickerTagProvider: String(env.STICKER_TAG_PROVIDER ?? 'auto').trim().toLowerCase(),
     stickerLearnEnabled: ['1', 'true'].includes(String(env.STICKER_LEARN_ENABLED ?? '0').trim().toLowerCase()),
     // 每小时最多学习几张，防止刷屏式采集和 API 花销
     stickerLearnPerHour: Math.max(0, Math.min(60, Math.floor(num('STICKER_LEARN_PER_HOUR', 6)))),
