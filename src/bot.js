@@ -316,7 +316,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
   const lastReplayNote = new Map()
   const quotedMessages = createQuotedMessageResolver({ onebot, logger })
   const groupMute = createGroupMute({onebot,commandCenter,llm,logger,config,canExecute:evt=>replyStillCurrent(onebot,evt)})
-  const selfActions = createSelfActions({onebot,commandCenter,llm,logger,canExecute:evt=>replyStillCurrent(onebot,evt)})
+  const selfActions = createSelfActions({onebot,commandCenter,llm,logger,config,canExecute:evt=>replyStillCurrent(onebot,evt)})
   const autoPlusOne = createAutoPlusOne({ config, onebot, logger,
     isEnabled:commandCenter ? id=>commandCenter.allowed({...commandCenter.get('auto-plus-one'),adminOnly:false},{isPrivate:false,groupId:id}) : undefined,
     canTrigger:commandCenter ? evt=>commandCenter.allows('auto-plus-one',{isPrivate:false,groupId:evt.group_id,userId:evt.user_id}) : undefined,
@@ -733,6 +733,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
 
       // 每日总结：实时捕获群消息（在回复策略之前，未回复的消息也要记）
       groupMute.observe(evt,parsed)
+      selfActions.observe(evt,parsed)
       dailySummary?.capture(evt, parsed)
       // 盯人回复：记录目标用户在目标群的发言（每 N 秒统一处理一次）
       targetWatch?.note(evt, parsed)
@@ -753,6 +754,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       // 引用目标要在回复策略前确认；引用他人的消息不提升为对机器人的直接提问。
       const quotedRaw = parsed.replyId ? await quotedMessages.resolve(evt, parsed.replyId) : null
       groupMute.noteReply(evt,quotedRaw)
+      selfActions.noteReply(evt,quotedRaw,parsed.replyId)
       const replyToBot = quotedMessages.isFromBot(quotedRaw)
       if (!samePersona()) return
       const directReply = isPrivate || parsed.atBot || replyToBot
@@ -763,7 +765,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
 
 
       const commandContext={isPrivate,groupId,userId:evt.user_id,direct:directReply,event:'message',text:parsed.text}
-      const selfResult=!questionMode&&!muteFollowup&&selfActions.applies(evt,parsed,selfFollowup)?await selfActions.handle(evt,parsed,{followup:selfFollowup,canReply:samePersona,replyPrompt:()=>{
+      const selfResult=!questionMode&&!muteFollowup&&selfActions.applies(evt,parsed,selfFollowup)?await selfActions.handle(evt,parsed,{followup:selfFollowup,quotedRaw,canReply:samePersona,replyPrompt:()=>{
         const personaText=sessionPersona(config,chatSettings?.get?.(conversationKey)?.persona||'').text
         return buildSystemPrompt({botName:config.botName,now:new Date(),chatKey:conversationKey,query:parsed.text,personaText})
       }}):null
