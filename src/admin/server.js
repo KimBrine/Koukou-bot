@@ -120,6 +120,8 @@ const EDITABLE = [
   { key: 'DASHSCOPE_MODEL', label: 'DashScope 识图模型', hint: '仅识图服务商为 DashScope 时使用；不代表当前生效模型', live: false, type: 'text' },
   { key: 'DASHSCOPE_API_KEY', label: 'DashScope Key', live: false, type: 'secret' },
   { key: 'BAIDU_QIANFAN_API_KEY', label: '百度千帆 Key', live: false, type: 'secret' },
+  { key: 'WEB_SEARCH_PROVIDER', label: '联网搜索方式', hint: 'auto = 千帆 Key > 通义 API > 必应兜底；也可强制 dashscope / baidu / bing；off 关闭。改完需重启', live: false, type: 'text' },
+  { key: 'WEB_SEARCH_MODEL', label: '联网搜索模型', hint: '通义联网搜索用的模型，默认 qwen-plus；改完需重启', live: false, type: 'text' },
   { key: 'TEMPERATURE', label: '采样温度', hint: '越高越随性', live: false, type: 'number' },
   { key: 'MAX_TOKENS', label: '单次回复 token 上限', live: false, type: 'number' },
   { key: 'LOG_LEVEL', label: '日志级别', hint: 'debug/info/warn/error', live: false, type: 'text' },
@@ -208,7 +210,7 @@ function validateGroupConfig(key, value) {
   }
 }
 
-export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, quietGreetings, personaGreetings, bot, customCommands, commandCenter, llm, stickers, switchVision, visionProviders, restartBot }) {
+export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, quietGreetings, personaGreetings, bot, customCommands, commandCenter, llm, stickers, switchVision, visionProviders, restartBot, webSearch, switchWebSearch }) {
   // 本实例自己的 .env（并行跑两个实例时，写死 rootDir\.env 会改到另一个实例的配置上）
   const envFile = config.envFile || path.join(config.rootDir, '.env')
   const logFile = path.join(config.logDir || path.join(config.rootDir, 'logs'), 'bot.log')
@@ -399,7 +401,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
             ? (config.visionModel || 'deepseek-flash') + '（DeepSeek）'
             : config.dashscopeModel + '（DashScope）'
         })(),
-        webSearch: Boolean(config.baiduApiKey),
+        webSearch: config.webSearchEnabled !== false && String(config.webSearchProvider || 'auto').toLowerCase() !== 'off',
         onebotUrl: config.onebotWsUrl,
         napcatPort: portOk,
         napcatPortNumber: onebotPort,
@@ -481,6 +483,11 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         reasoning: config.deepseekReasoningEffort || '',
         hasKey: Boolean(config.deepseekApiKey),
       },
+    }),
+    'GET /api/websearch': async () => ({
+      enabled: Boolean(config.webSearchEnabled),
+      model: config.webSearchModel || 'qwen-plus',
+      provider: webSearch && webSearch.providerName ? webSearch.providerName : 'off',
     }),
     'GET /api/stickers': async () => ({
       items: stickers ? stickers.list() : [],
@@ -1163,6 +1170,19 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       if (!ok) throw new Error('这条待整理已经变化，请刷新后再试')
       logger?.info?.(`[控制台] 丢弃 ${key} 第 ${index + 1} 条待整理原文`)
       return { ok: true }
+    },
+    async 'set-websearch'(payload) {
+      const enabled = payload?.enabled !== false
+      const model = String(payload?.model || '').trim()
+      if (model && !/^[A-Za-z0-9._:-]{1,64}$/.test(model)) throw new Error('模型名不合法')
+      config.webSearchEnabled = enabled
+      if (model) config.webSearchModel = model
+      const patch = { WEB_SEARCH_ENABLED: enabled ? '1' : '0' }
+      if (model) patch.WEB_SEARCH_MODEL = model
+      writeEnvFile(envFile, patch, { atomic: true })
+      const state = switchWebSearch?.({ enabled, model }) || { enabled, model }
+      logger?.info?.(`[控制台] 联网搜索${enabled ? '开启' : '关闭'}${model ? '，模型 ' + model : ''}`)
+      return { ok: true, ...state }
     },
     async 'restart-bot'() {
       logger?.info?.('[控制台] 收到重启机器人指令')

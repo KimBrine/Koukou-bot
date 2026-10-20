@@ -26,7 +26,7 @@ const scripts = [
   'test-self-actions.mjs',
   'test-summary-depth.mjs',
   'test-summary-unrestricted.mjs',
-  'test-model-catalog.mjs',
+  'test-model-catalog.mjs', 'test-web-search.mjs',
   'test-stickers.mjs',
   'test-sticker-send.mjs',
   'test-sticker-learn.mjs',

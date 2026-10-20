@@ -202,6 +202,7 @@ let stickerList = []
 let stickerBlacklist = []
 let stickerScenes = []
 let stickerLearned = 0
+let webSearchInfo = null
 let stickerLearn = {}
 let stickerSettings = {}
 
@@ -635,10 +636,23 @@ function pageHumanize(){
   <div class="flexbar"><a class="btn" href="#chats">管理白名单群聊 →</a><span class="note">概率填写百分比，例如 20%，不需要输入配置格式。</span></div>
   <div class="card">${configForm(['PROACTIVE_RATE','PROACTIVE_RATE_PER_GROUP','PROACTIVE_COOLDOWN_MS','EMOJI_KEEP_RATE','HUMAN_DELAY_MIN_MS','HUMAN_DELAY_MAX_MS','REPLY_LENGTH_MATCH','REPLY_MIN_BUDGET','REPLY_MAX_LINES','REPLY_LINE_MAX_CHARS','LINE_GAP_MIN_MS','LINE_GAP_MAX_MS','RATE_LIMIT_PER_HOUR','RATE_LIMIT_MIN_GAP_MS','QUIET_HOURS','QUIET_GREETINGS_ENABLED','HISTORY_LIMIT','CONTEXT_REMEMBER_ALL','POKE_REPLY_ENABLED','AUTO_PLUS_ONE_ENABLED'],'修改全局概率不会覆盖已经单独设置的群；限流相关参数需重启生效。')}</div><div class="note">固定语库早晚安：${greetings?.enabled?'已启用':'未启用'}；语库就绪 ${greetings?.groups?.filter(g=>g.ready).length||0}/${greetings?.groups?.length||0} 群。检查时段、选句和发送均不调用 AI。<a href="#persona">前往人格页面编辑或导出语库 →</a> <button class="btn sm" id="catchUpMorning">补发本轮未发的早安</button></div>`
 }
+function webSearchCard(){
+  const info = webSearchInfo || {}
+  const presets = ['qwen-plus','qwen-max','qwen-turbo','qwen3-max','qwen-flash']
+  const cur = info.model || 'qwen-plus'
+  if (presets.indexOf(cur) < 0) presets.unshift(cur)
+  const opts = presets.map(function(m){ return '<option value="' + esc(m) + '"' + (m === cur ? ' selected' : '') + '>' + esc(m) + '</option>' }).join('')
+  return '<section class="card"><h2>联网搜索</h2>'
+    + '<div class="note">开着的时候由机器人自己判断这句话要不要搜，闲聊不会调用。搜索走通义千问联网 API（用 DashScope Key）。</div>'
+    + '<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:10px 0"><input type="checkbox" id="wsEnabled"' + (info.enabled ? ' checked' : '') + '> 允许联网搜索</label>'
+    + '<div class="frow"><label>搜索模型</label><div><select id="wsModel">' + opts + '</select>'
+    + '<div class="mut" style="font-size:12px;margin-top:3px">当前实际：' + esc(info.provider || '—') + ' · ' + esc(cur) + '</div></div></div>'
+    + '<div class="flexbar"><button class="btn primary" id="wsSave">保存（即时生效）</button><span class="mut" id="wsHint"></span></div></section>'
+}
 function pageApi(){
-  return modelPickerCard() + visionCard() + `<h1>模型与接口</h1><div class="sub">对话模型、思考强度改完立刻生效；下方视觉模型与其它项按标注生效。</div>
+  return modelPickerCard() + visionCard() + webSearchCard() + `<h1>模型与接口</h1><div class="sub">对话模型、思考强度改完立刻生效；下方视觉模型与其它项按标注生效。</div>
   <div class="card"><strong>当前生效的识图模型：</strong>${esc(state?.bot?.visionModel || '未启用')}<div class="mut" style="margin-top:5px">图片识别与群聊报告分别配置；下方的 DashScope 模型只有切换识图服务商后才会用于读图。</div></div>
-  <div class="card">${configForm(['TEMPERATURE','MAX_TOKENS','DASHSCOPE_API_KEY','BAIDU_QIANFAN_API_KEY','LOG_LEVEL'],'已设置的密钥不会显示；留空保持原值。')}</div>`
+  <div class="card">${configForm(['TEMPERATURE','MAX_TOKENS','DASHSCOPE_API_KEY','BAIDU_QIANFAN_API_KEY','WEB_SEARCH_PROVIDER','WEB_SEARCH_MODEL','LOG_LEVEL'],'已设置的密钥不会显示；留空保持原值。')}</div>`
 }
 function pageReport(){
   return `<h1>群聊报告</h1><div class="sub">每日自动生成「群聊日常分析报告」，也可以在这里随时手动生成</div>
@@ -913,6 +927,18 @@ function render(){
 }
 
 async function bind(){
+  // 联网搜索：开关 + 模型，保存后即时重建，不用重启
+  const wsSave = document.getElementById('wsSave')
+  if (wsSave) wsSave.onclick = async function(){
+    wsSave.disabled = true
+    try {
+      const r = await api('/api/action/set-websearch', { enabled: document.getElementById('wsEnabled').checked, model: document.getElementById('wsModel').value })
+      webSearchInfo = { enabled: r.enabled, model: r.model, provider: r.provider }
+      toast('已保存：' + (r.enabled ? '允许联网' : '关闭联网') + '，模型 ' + r.model)
+      await load()
+    } catch(e) { toast('保存失败：' + e.message, true) }
+    finally { wsSave.disabled = false }
+  }
   document.querySelectorAll('[data-act]').forEach(b => b.onclick = async () => {
     const act = b.dataset.act
     if (act === 'summary') { await doSummary(); return }
@@ -1655,6 +1681,7 @@ async function load(){
     stickerLearned = stk.learned || 0
     stickerLearn = stk.learn || {}
     stickerSettings = stk.settings || {}
+    webSearchInfo = await api('/api/websearch').catch(function(){ return {} })
     updateSideStatus(s.bot)
     // 预取人格内容与附加说明
     for (const item of personas) {
@@ -1749,6 +1776,7 @@ async function refreshStickersUI() {
     stickerLearned = stk.learned || 0
     stickerLearn = stk.learn || {}
     stickerSettings = stk.settings || {}
+    webSearchInfo = await api('/api/websearch').catch(function(){ return {} })
     if (!stickerPending) return
     const mainEl = document.getElementById('main')
     const focused = document.activeElement

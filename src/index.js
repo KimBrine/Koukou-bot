@@ -296,8 +296,34 @@ const stickerLearner = createStickerLearner({ config, logger, onebot, stickers,
   filterLLM: stickerFilterLLM, tagLLM: stickerTagLLM, imageCache: sharedImageCache })
 const commandCenter = createCommandCenter({file:path.join(config.dataDir,'command-center.json'),customCommands,config,logger,llm})
 
-// 联网搜索（百度千帆）：仅私聊与被@时可用，模型自行判断是否需要
-const webSearch = createWebSearch({ apiKey: config.baiduApiKey, timeoutMs: 20000, logger })
+// 联网搜索：仅私聊与被@时可用，由模型自己判断这句话要不要搜
+const webSearchState = { enabled: config.webSearchEnabled !== false, model: config.webSearchModel, provider: config.webSearchProvider }
+let webSearchImpl = null
+function rebuildWebSearch() {
+  webSearchImpl = createWebSearch({
+    apiKey: config.baiduApiKey,
+    dashscopeApiKey: config.dashscopeApiKey,
+    dashscopeModel: webSearchState.model,
+    provider: webSearchState.enabled ? webSearchState.provider : 'off',
+    timeoutMs: 20000,
+    logger,
+  })
+}
+rebuildWebSearch()
+const webSearch = async (query) => {
+  if (!webSearchState.enabled) throw new Error('联网搜索已关闭')
+  if (!webSearchImpl) throw new Error('联网搜索未启用')
+  return webSearchImpl(query)
+}
+Object.defineProperty(webSearch, 'isEnabled', { get: () => Boolean(webSearchState.enabled && webSearchImpl) })
+Object.defineProperty(webSearch, 'providerName', { get: () => (webSearchImpl && webSearchImpl.providerName) || 'off' })
+webSearch.setOptions = (patch) => {
+  if (patch && 'enabled' in patch) webSearchState.enabled = Boolean(patch.enabled)
+  if (patch && patch.model) webSearchState.model = String(patch.model).trim() || webSearchState.model
+  rebuildWebSearch()
+  logger?.info?.('[控制台] 联网搜索已更新：' + (webSearchState.enabled ? ('开启（' + webSearch.providerName + '，' + webSearchState.model + '）') : '关闭'))
+  return { enabled: webSearchState.enabled, model: webSearchState.model, provider: webSearch.providerName }
+}
 
 // 总结提示词：先注入当前实例人格，再给出报告格式与统计要求。
 const summaryPromptFn = (opts) => {
@@ -389,6 +415,8 @@ if (config.adminEnabled) {
     stickers,
     commandCenter,
     switchVision: () => { rebuildVision(); rebuildStickerTag() },
+    webSearch,
+    switchWebSearch: (patch) => webSearch.setOptions(patch),
     visionProviders,
     restartBot: () => {
       // 让一个独立进程在 1.2 秒后杀掉当前实例并用计划任务重新拉起（避免自己杀自己杀不干净）
@@ -495,7 +523,7 @@ if (config.mutedGroups && config.mutedGroups.size > 0) {
     .join('｜')
   logger.info(`白名单群主动搭话概率：${desc || `全局 ${Math.round(config.proactiveRate * 100)}%`}（冷却 ${Math.round(config.proactiveCooldownMs / 1000)}s）`)
 }
-logger.info(webSearch ? '联网搜索已启用（百度千帆，私聊/被@时模型按需调用）' : '联网搜索未启用（未配置 BAIDU_QIANFAN_API_KEY）')
+logger.info(webSearch.isEnabled ? `联网搜索已启用（${{baidu:'百度千帆',dashscope:'通义千问 API',bing:'必应网页兜底'}[webSearch.providerName] || webSearch.providerName}，私聊/被@时由模型自行决定要不要搜）` : '联网搜索未启用（控制台已关闭，或 WEB_SEARCH_PROVIDER=off）')
 logger.info(commandCenter.enabled('poke') ? `拍一拍回应已启用（冷却 ${Math.round(config.pokeCooldownMs / 1000)}s，语料 poke-replies.txt）` : '拍一拍回应未启用（POKE_REPLY_ENABLED=0）')
 logger.info(commandCenter.enabled('auto-plus-one') ? '自动+1已启用：仅白名单群，两条连续相同文字消息（可夹QQ自带表情）后原生跟一次；图片/纯表情不跟读，不受静音/安静时段限制，不调用模型' : '自动+1未启用（AUTO_PLUS_ONE_ENABLED=0）')
 logger.info(config.longMemoryEnabled

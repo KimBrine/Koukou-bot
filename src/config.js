@@ -228,8 +228,11 @@ export function loadConfig() {
     // 白名单群主动搭话最短间隔（毫秒，0=不限制）
     proactiveCooldownMs: Math.max(0, Math.floor(num('PROACTIVE_COOLDOWN_MS', 180000))),
 
-    // 联网搜索（百度千帆 AI Search）
+    // 联网搜索：有千帆 Key 走千帆，否则必应网页（免密钥）
     baiduApiKey: String(env.BAIDU_QIANFAN_API_KEY ?? '').trim(),
+    webSearchProvider: String(env.WEB_SEARCH_PROVIDER ?? 'auto').trim().toLowerCase(),
+    webSearchModel: String(env.WEB_SEARCH_MODEL ?? 'qwen-plus').trim() || 'qwen-plus',
+    webSearchEnabled: ['1', 'true'].includes(String(env.WEB_SEARCH_ENABLED ?? '1').trim().toLowerCase()),
 
     // 拍一拍回应（双击头像）
     pokeEnabled: String(env.POKE_REPLY_ENABLED ?? '1').toLowerCase() !== '0' && String(env.POKE_REPLY_ENABLED ?? '1').toLowerCase() !== 'false',

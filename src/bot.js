@@ -1015,7 +1015,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
 
       const allImages = [...parsed.images, ...(quoted?.images ?? []), ...(forwarded?.images ?? []), ...(quotedForward?.images ?? [])]
       const hasImages = visionLLM && allImages.length > 0
-      const enableTools = webSearch && !hasImages && directReply
+      const enableTools = webSearch && webSearch.isEnabled !== false && !hasImages && directReply
       logger.info(`[回复]（${decision.reason}）${isPrivate ? '私聊' : `群${groupId}`} ${senderName}：${parsed.text.slice(0, 50)}${quotedTag ? '（含引用）' : ''}${hasImages ? `（含 ${allImages.length} 张图，走视觉模型）` : ''}${enableTools ? '（可联网搜索）' : ''}`)
 
       // 本轮只使用到达时快照；人格/记忆已切换时不得带入旧快照。
