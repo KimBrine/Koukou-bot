@@ -10,6 +10,7 @@ import { modelHistory } from './memory.js'
 import { buildReplyFocus } from './replyFocus.js'
 import { conversationRules } from './conversationRules.js'
 import { stripInternalReplyMetadata, REPLY_REPAIR_HINT } from './replySanitizer.js'
+import { parseSongRequest, searchSong } from './music.js'
 import { parseMessage } from './cq.js'
 import { isBotAdmin, hasAdmins, adminHint } from './permissions.js'
 import { renderReply } from './customCommands.js'
@@ -997,6 +998,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       const quotedTag = quoted && quoted.text ? `[引用 ${quoted.name}：${String(quoted.text).slice(0, 2000)}] ` : ''
       const forwardText = [forwarded?.text, quotedForward?.text ? `【引用消息中的聊天记录】\n${quotedForward.text}` : ''].filter(Boolean).join('\n\n')
       const content = (isPrivate ? `${quotedTag}${parsed.text}` : `【${senderName}】${quotedTag}${parsed.text}`) + (forwardText ? `\n\n${forwardText}` : '')
+
       const userMeta = { time: messageTime(evt) ?? Date.now(), messageId: evt.message_id,
         replyLength: incomingLen, userId: evt.user_id, senderName }
       if (!samePersona()) return
@@ -1013,6 +1015,24 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         return
       }
 
+      // 点歌：明确要歌就直接搜一首发音乐名片，再让模型自然接一句
+      let musicNote = ''
+      try {
+        const songQuery = parseSongRequest(parsed.text, quoted?.text || '')
+        if (songQuery) {
+          const song = await searchSong(songQuery)
+          if (song) {
+            const card = [{ type: 'music', data: { type: '163', id: song.id } }]
+            if (isPrivate) await onebot.sendPrivate(evt.user_id, card)
+            else await onebot.sendGroup(groupId, card)
+            logger.info(`[点歌] 已发送《${song.name}》- ${song.artist || '未知歌手'}（搜索：${songQuery}）`)
+            musicNote = `\n（系统提示：刚刚已经发出《${song.name}》的音乐名片，别再声称发不了，用一句话自然回应即可。）`
+          } else {
+            logger.info(`[点歌] 没搜到「${songQuery}」`)
+          }
+        }
+      } catch (err) { logger.warn(`[点歌] 失败：${err.message}`) }
+
       const allImages = [...parsed.images, ...(quoted?.images ?? []), ...(forwarded?.images ?? []), ...(quotedForward?.images ?? [])]
       const hasImages = visionLLM && allImages.length > 0
       const enableTools = webSearch && webSearch.isEnabled !== false && !hasImages && directReply
@@ -1024,7 +1044,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       const rawHistory=history.filter(m=>evt.message_id==null||m.role!=='user'||m.messageId!==String(evt.message_id))
       const baseHistory = modelHistory(rawHistory)
       const focus=buildReplyFocus({evt,text:parsed.text,senderName,quoted,quoteFromBot:replyToBot,history:rawHistory})
-      const focusedContent=content+focus.marker
+      const focusedContent=content+musicNote+focus.marker
 
       // 先把图片取下来。顺带确定"这条消息的图到底看不看得见"——这件事**代码知道，模型不知道**。
       // 以前把判断权交给模型，它看到历史里的 [图片] 就会套用"看不到就说图没加载出来"，

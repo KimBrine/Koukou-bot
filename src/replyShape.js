@@ -168,10 +168,19 @@ function decorationChars(text) {
 }
 
 /** 在 limit 字内按句末标点 → 逗号 → 硬截断的顺序裁剪，尽量不砍断句子，也绝不砍断装饰符号 */
+const LINK_RE = /(?:https?:\/\/|www\.)[^\s，。！？、）)】"'<>]+|(?:[a-z0-9-]+\.)+(?:com|cn|net|org|tv|cc|me|io|ly|gl|top|xyz)\/[^\s，。！？、）)】"'<>]*/gi
+
 export function trimTo(text, limit) {
   const s = String(text ?? '').trim()
   if (!s) return ''
   if (s.length <= limit) return s
+  // 断点如果落在链接里，就把整条链接保留下来，别发半截地址
+  const links = s.match(LINK_RE) || []
+  for (const link of links) {
+    const start = s.indexOf(link)
+    const end = start + link.length
+    if (start < limit && end > limit) return s.slice(0, end).trim()
+  }
   const head = s.slice(0, limit)
   const bySentence = head.match(/^[\s\S]*[。！？!?～~…]/)
   if (bySentence && bySentence[0].trim().length >= 4) return completeDecoration(bySentence[0].trim(), s, limit)
