@@ -1171,6 +1171,21 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       logger?.info?.(`[控制台] 丢弃 ${key} 第 ${index + 1} 条待整理原文`)
       return { ok: true }
     },
+    async 'cleanup-groups'() {
+      const mem = readJsonSafe(config.memoryFile, {})
+      const keys = new Set([...Object.keys(mem), ...chatSettings.keys()])
+      const removed = []
+      for (const key of keys) {
+        const gid = keyToGroupId(key)
+        if (gid === null || config.whitelistGroups.has(gid)) continue
+        resetConversationMemory({ config, memory, longMemory, targetWatch, key, reason: '清理非白名单群' })
+        try { chatSettings.remove(key) } catch {}
+        try { rmSync(path.join(dailyDir, String(gid)), { recursive: true, force: true }) } catch {}
+        removed.push(key)
+      }
+      if (removed.length) logger?.info?.('[控制台] 已清理非白名单群：' + removed.join('、'))
+      return { ok: true, removed }
+    },
     async 'set-websearch'(payload) {
       const enabled = payload?.enabled !== false
       const model = String(payload?.model || '').trim()

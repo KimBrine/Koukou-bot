@@ -445,7 +445,7 @@ function pageChats(){
       <select id="newchatType" aria-label="会话类型" style="max-width:120px"><option value="g">群聊</option><option value="p">私聊</option></select>
       <select id="newchatPick" aria-label="选择联系人或群" style="max-width:260px"></select>
       <input id="newchat" type="text" inputmode="numeric" placeholder="或直接输入号码" style="max-width:160px">
-      <button class="btn" id="addchat">添加普通会话</button><span class="note">需要主动搭话的群，请使用上方「添加 / 导入白名单群」。</span>
+      <button class="btn" id="addchat">添加普通会话</button><button class="btn" id="cleanGroups" title="把不在白名单里的群从会话列表里删掉（记忆和设置一起清）">清理非白名单群</button><span class="note">需要主动搭话的群，请使用上方「添加 / 导入白名单群」。</span>
     </div>
   </div>
   <h2>群聊（${groups.length}）</h2>
@@ -928,6 +928,17 @@ function render(){
 }
 
 async function bind(){
+  const cleanGroups = document.getElementById('cleanGroups')
+  if (cleanGroups) cleanGroups.onclick = async function(){
+    if (!await ask('清理非白名单群？', '会把不在白名单里的群从会话列表移除，并清空它们的记忆、会话设置和日报文件（记忆有备份）。', '清理')) return
+    cleanGroups.disabled = true
+    try {
+      const r = await api('/api/action/cleanup-groups', {})
+      toast(r.removed && r.removed.length ? ('已清理 ' + r.removed.length + ' 个：' + r.removed.join('、')) : '没有需要清理的群')
+      await load()
+    } catch(e) { toast('清理失败：' + e.message, true) }
+    finally { cleanGroups.disabled = false }
+  }
   // 联网搜索：开关 + 模型，保存后即时重建，不用重启
   const wsSave = document.getElementById('wsSave')
   if (wsSave) wsSave.onclick = async function(){
