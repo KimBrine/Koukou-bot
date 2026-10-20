@@ -187,9 +187,10 @@ export function createStickers({ dir, logger, now = () => Date.now() }) {
   }
 
   /** 按名称/关键词匹配；都匹配不到返回 null（不猜） */
-  function find(query) {
+  function find(query, {exact=false}={}) {
     const q = String(query || '').trim().toLowerCase()
     if (!q) return null
+    if(exact)return items.find(item=>String(item.name).toLowerCase()===q||item.id===q)||null
     const score = (item) => {
       const name = String(item.name || '').toLowerCase()
       const kws = (item.keywords || []).map((k) => String(k).toLowerCase())
@@ -264,10 +265,10 @@ export function createStickers({ dir, logger, now = () => Date.now() }) {
     return items[Math.floor(Math.random() * items.length)]
   }
 
-  /** 给模型看的一句话清单（太多会撑提示词，只取前 20 个） */
+  /** 给模型看的元数据清单；使用次数只供管理查看，不代表语境正确。 */
   function summary(limit = 20) {
     if (items.length === 0) return ''
-    return items.slice(0, limit).map((x) => x.name + ((x.keywords || []).length ? `(${x.keywords.slice(0, 3).join('/')})` : '') + (x.description ? `：${x.description.slice(0,80)}` : '')).join('、')
+    return items.slice(0, limit).map((x) => x.name + ((x.keywords || []).length ? `(${x.keywords.join('/')})` : '') + ((x.scenes||[]).length?`[场景:${x.scenes.map(id=>STICKER_SCENES.find(s=>s.id===id)?.name||id).join('/')}]`:'') + (x.description ? `：${x.description.slice(0,240)}` : '')).join('；')
   }
 
   function dataUrlOf(item) {
