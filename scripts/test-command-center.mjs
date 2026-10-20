@@ -14,7 +14,7 @@ const root=mkdtempSync(path.join(os.tmpdir(),'koukou-command-center-')),stores=[
 const logger={info(){},warn(){},debug(){},error(){}}
 let seq=0,passed=0
 async function test(name,run){await run();passed++;console.log('PASS '+name)}
-function fixture(){
+function fixture({musicSearch,stickers}={}){
   const dir=path.join(root,String(++seq)),calls=[],sent=[],triggers=[],repeated=[]
   let result='AI回复',clock=Date.now()
   const llm={async chat(prompt,messages,options){calls.push({prompt,messages,options});return typeof result==='function'?result(prompt,messages):result}}
@@ -27,15 +27,59 @@ function fixture(){
   const chatSettings=createChatSettings({file:path.join(dir,'chats.json'),logger})
   const onebot={selfId:'200000010',async sendGroup(groupId,text){sent.push({groupId,text});return {message_id:sent.length+100}},async sendPrivate(userId,text){sent.push({userId,text});return {message_id:sent.length+100}},async repeatGroupMessage(g,id){repeated.push({g,id})},async getGroupMemberInfo(){return {nickname:'群友'}}}
   const dailySummary={capture(){},summaryGroups(){return [200000002]},isRunning(){return false},countCaptured(){return 0},trigger(groups,options){triggers.push({groups,options})}}
-  const bot=createBot({config,logger,llm,onebot,customCommands,commandCenter,memory,chatSettings,buildSystemPrompt:()=>config.persona,dailySummary,pokeReplier:()=> '原有私有拍一拍语料'})
+  const bot=createBot({config,logger,llm,onebot,customCommands,commandCenter,memory,chatSettings,stickers,musicSearch,buildSystemPrompt:()=>config.persona,dailySummary,pokeReplier:()=> '原有私有拍一拍语料'})
   const ctx={isPrivate:false,groupId:200000002,userId:'200000011',direct:true,event:'message',name:'群友'}
   return {dir,config,calls,sent,triggers,repeated,llm,customCommands,commandCenter,memory,chatSettings,onebot,bot,ctx,setResult:r=>result=r,advance:n=>clock+=n}
 }
 let messageId=1000
 const evt=(text,groupId=200000002,userId=200000011,direct=true)=>({post_type:'message',message_type:'group',group_id:groupId,user_id:userId,message_id:messageId++,time:Date.now()/1000,sender:{nickname:'测试群友'},message:[...(direct?[{type:'at',data:{qq:'200000010'}}]:[]),{type:'text',data:{text}}]})
 try{
+ await test('新增解题、点歌、明确索图统一导出，导入后关闭，help不显示已关闭入口',async()=>{
+  const t=fixture(),c=t.commandCenter
+  for(const id of ['question','music','request-sticker']){
+   assert.equal(c.enabled(id),true)
+   const pack=c.exportPack({id});assert.equal(pack.builtins[0].id,id)
+   c.importPack(JSON.stringify(pack),{includeBuiltins:true});assert.equal(c.enabled(id),false)
+  }
+  c.saveBuiltin({...c.get('self-recall'),enabled:true,scope:'group',groups:[200000002]})
+  c.saveBuiltin({...c.get('request-poke'),enabled:true})
+  await t.bot.handleMessage(evt('/help'))
+  const help=t.sent[0].text
+  assert.match(help,/帮忙撤回消息/);assert.match(help,/请求拍一拍群成员/)
+  assert.doesNotMatch(help,/认真解题|点歌音乐名片|请求发送表情包/)
+  assert.equal(t.calls.length,0)
+ })
+ await test('解题/点歌开关、群范围和管理员条件先于AI及歌曲查询，途中关闭取消发送',async()=>{
+  let queries=0
+  const t=fixture({musicSearch:async()=>{queries++;return {id:'123',name:'测试曲',artist:'歌手',platform:'163'}}}),c=t.commandCenter
+  c.saveBuiltin({...c.get('question'),enabled:false})
+  c.saveBuiltin({...c.get('music'),enabled:false})
+  await t.bot.handleMessage(evt('/Q 解释一下'));await t.bot.handleMessage(evt('点歌 周深唱的浮光'))
+  assert.equal(t.calls.length,0);assert.equal(queries,0)
+  c.saveBuiltin({...c.get('question'),enabled:true,scope:'group',groups:[200000003]})
+  c.saveBuiltin({...c.get('music'),enabled:true,adminOnly:true})
+  await t.bot.handleMessage(evt('/Q 解释一下'));await t.bot.handleMessage(evt('点歌 123'))
+  assert.equal(t.calls.length,0);assert.equal(queries,0)
+  const q=fixture();q.setResult(()=>{q.commandCenter.saveBuiltin({...q.commandCenter.get('question'),enabled:false});return '不该发送'})
+  await q.bot.handleMessage(evt('/Q 解释一下'));assert.equal(q.sent.length,0)
+  const m=fixture({musicSearch:async()=>{m.commandCenter.saveBuiltin({...m.commandCenter.get('music'),enabled:false});return {id:'123',name:'测试',platform:'163'}}})
+  await m.bot.handleMessage(evt('点歌 123'));assert.equal(m.sent.length,0)
+ })
+ await test('索图关闭或生成期间撤权不发送图片，普通自动配图不被索图开关关闭',async()=>{
+  const item={id:'test',name:'猫猫'},stickers={count:()=>1,summary:()=>item.name,find:()=>item,pick:()=>item,dataUrlOf:()=> 'base64://eA=='}
+  for(const during of [false,true]){
+   const t=fixture({stickers});Object.assign(t.config,{stickersEnabled:true,stickerAutoRate:0})
+   if(!during)t.commandCenter.saveBuiltin({...t.commandCenter.get('request-sticker'),enabled:false})
+   t.setResult(()=>{if(during)t.commandCenter.saveBuiltin({...t.commandCenter.get('request-sticker'),enabled:false});return '陪你聊呀 [索要表情包][贴纸: 猫猫]'})
+   await t.bot.handleMessage(evt('给我发张表情包'));assert.equal(t.sent.length,1);assert.equal(typeof t.sent[0].text,'string')
+  }
+  const t=fixture({stickers});Object.assign(t.config,{stickersEnabled:true,stickerAutoRate:1})
+  t.commandCenter.saveBuiltin({...t.commandCenter.get('request-sticker'),enabled:false})
+  t.setResult('陪你聊呀 [贴纸: 猫猫]');await t.bot.handleMessage(evt('你好呀'))
+  assert.equal(t.sent.length,2);assert.equal(t.sent[1].text[0].type,'image')
+ })
  await test('已有功能默认继承原配置，清理记忆保留显式管理员门槛',()=>{
-  const t=fixture(),c=t.commandCenter;assert.equal(c.all().length,12)
+  const t=fixture(),c=t.commandCenter;assert.equal(c.all().length,15)
   assert.equal(c.allows('summary',t.ctx),true);assert.equal(c.allows('clear-memory',t.ctx),false)
   c.saveBuiltin({...c.get('clear-memory'),adminOnly:false,naturalLanguage:true});assert.equal(c.get('clear-memory').adminOnly,true);assert.equal(c.get('clear-memory').naturalLanguage,false)
   assert.equal(c.allows('id-check',{...t.ctx,groupId:200000003}),false)
@@ -122,7 +166,7 @@ try{
   try{t.setResult('{"trigger":"早安","reply":"早上好","name":"问候"}')
    await admin.actions['generate-command']({description:'早安回复',mode:'fixed'});assert.equal(t.customCommands.all().length,0)
    assert.equal((await admin.actions['check-poke']()).enabled,true)
-   const data=await admin.routes['GET /api/custom-commands']();assert.equal(data.builtinItems.length,12)
+   const data=await admin.routes['GET /api/custom-commands']();assert.equal(data.builtinItems.length,15)
    assert.equal(t.sent.length,0)
    await assert.rejects(admin.actions['save-custom-command']({trigger:'/群总结',reply:'伪总结'}),/内置功能/)
   }finally{admin.server.close()}
@@ -147,7 +191,7 @@ try{
   const t=fixture(),context={window:{},structuredClone,console,Date};vm.createContext(context)
   vm.runInContext(readFileSync(new URL('../src/admin/commandCenter.js',import.meta.url),'utf8'),context)
   const html=context.window.CommandCenterUI.render({custom:[{name:'<script>test</script>',id:'test',enabled:false}],builtins:t.commandCenter.all(),poke:{},groups:[]})
-  assert.match(html,/12 项已有功能/);assert.match(html,/调用一次 AI/);assert.match(html,/开始观察拍一拍/)
+  assert.match(html,/15 项已有功能/);assert.match(html,/调用一次 AI/);assert.match(html,/开始观察拍一拍/)
   assert.match(html,/先预览/);assert.match(html,/&lt;script&gt;/);assert.doesNotMatch(html,/<script>test/)
  })
  console.log(`${passed} command-center cases passed; no QQ or paid model calls.`)

@@ -10,7 +10,7 @@ import { modelHistory } from './memory.js'
 import { buildReplyFocus } from './replyFocus.js'
 import { conversationRules } from './conversationRules.js'
 import { stripInternalReplyMetadata, REPLY_REPAIR_HINT } from './replySanitizer.js'
-import { resolveMusicRequest, searchSong, musicPlatformName } from './music.js'
+import { parseMusicRequest, resolveMusicRequest, searchSong, musicPlatformName } from './music.js'
 import { parseMessage } from './cq.js'
 import { isBotAdmin, hasAdmins, adminHint } from './permissions.js'
 import { renderReply } from './customCommands.js'
@@ -781,6 +781,14 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
 
 
       const commandContext={isPrivate,groupId,userId:evt.user_id,direct:directReply,event:'message',text:parsed.text}
+      let featurePolicy=null
+      const featureAllowed=id=>!commandCenter||commandCenter.allows(id,commandContext)
+      const featureCurrent=()=>!featurePolicy||(featureAllowed(featurePolicy.id)&&JSON.stringify(commandCenter?.get(featurePolicy.id))===featurePolicy.snapshot)
+      const requestedFeature=questionMode?'question':directReply&&parseMusicRequest(parsed.text,quotedRaw?parseMessage(quotedRaw.message??quotedRaw.raw_message,onebot.selfId).text:'')?'music':null
+      if(requestedFeature){
+        if(!featureAllowed(requestedFeature)){await sendTo(evt,'这个指令在当前会话未启用，或需要机器人管理员权限。');return}
+        featurePolicy={id:requestedFeature,snapshot:JSON.stringify(commandCenter?.get(requestedFeature))}
+      }
       const selfResult=!questionMode&&!muteFollowup&&selfActions.applies(evt,parsed,selfFollowup)?await selfActions.handle(evt,parsed,{followup:selfFollowup,quotedRaw,canReply:samePersona,replyPrompt:()=>{
         const personaText=sessionPersona(config,chatSettings?.get?.(conversationKey)?.persona||'').text
         return buildSystemPrompt({botName:config.botName,now:new Date(),chatKey:conversationKey,query:parsed.text,personaText})
@@ -905,9 +913,9 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       // 指令列表：谁都能问；管理员专属的只对管理员显示
       if (ADMIN_HELP_CMD_RE.test(parsed.text.trim()) && directReply) {
         if(commandCenter){
-          const builtin=commandCenter.all().filter(c=>(c.management||['summary','help','clear-memory','id-check','id-check-kick'].includes(c.id))&&commandCenter.allowed(c,commandContext))
-          const custom=customCommands.all().filter(c=>commandCenter.allowed(c,commandContext))
-          await sendTo(evt,['📋 当前会话的指令','/Q 问题  本轮认真解题（私聊或群里@我）',...builtin.map(c=>c.trigger+'  '+c.name),...custom.slice(0,30).map(c=>(c.event==='poke'?'拍一拍':c.trigger)+'  '+c.name+(c.responseMode==='ai'?'（AI）':''))].join('\n'))
+          const builtin=commandCenter.all().filter(c=>commandCenter.allowed(c,commandContext))
+          const custom=(customCommands?.all?.()||[]).filter(c=>commandCenter.allowed(c,commandContext))
+          await sendTo(evt,['📋 当前会话的指令与互动',...builtin.map(c=>c.trigger+'  '+c.name),...custom.slice(0,30).map(c=>(c.event==='poke'?'拍一拍':c.trigger)+'  '+c.name+(c.responseMode==='ai'?'（AI）':'')),'群里的文字请求请@我；管理动作仍核验实际身份与QQ权限。',...(builtin.some(c=>c.id==='question')?['/Q 必须外层@，不能只引用。']:[]),...(builtin.some(c=>c.id==='music')?['点歌默认网易云，可注明QQ音乐；ID/链接直接跟在“点歌”后。']:[])].join('\n'))
           return
         }
         const isAdmin = isBotAdmin(evt.user_id, config.adminUsers)
@@ -1029,11 +1037,17 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       }
 
       // 点歌：明确要歌就直接搜一首发音乐名片，再让模型自然接一句
-      const canContinue = () => samePersona() && sameSessionPersona(config, chatSettings, key, sessionPersonaText) &&
+      const canContinue = () => samePersona() && featureCurrent() && sameSessionPersona(config, chatSettings, key, sessionPersonaText) &&
         replyStillCurrent(onebot, evt, { latestOnly: !directReply }) && !autoPlusOne.wasTriggered(repetition)
       let musicNote = ''
       try {
-        const songQuery = directReply && !questionMode ? await resolveMusicRequest(parsed.text, quoted?.text || '',{llm}) : null
+        const musicInput=directReply&&!questionMode?parseMusicRequest(parsed.text,quoted?.text||''):null
+        if(musicInput&&!featurePolicy){
+            if(!featureAllowed('music')){if(canContinue())await sendTo(evt,'点歌指令在当前会话未启用，或需要机器人管理员权限。');return}
+            featurePolicy={id:'music',snapshot:JSON.stringify(commandCenter?.get('music'))}
+        }
+        if(!canContinue())return
+        const songQuery = musicInput ? await resolveMusicRequest(parsed.text, quoted?.text || '',{llm}) : null
         if (songQuery) {
           if(!canContinue())return
           if(songQuery.error){await sendTo(evt,songQuery.error);return}
@@ -1119,7 +1133,9 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       let stickerHint = !questionMode && stickerSend.allowed(evt)
         ? `\n\n【表情包发送规则】可用表情包：${stickers.summary(20)}。当其中一张能贴切表达当前情绪或回应时，可以主动挑一张，不必等对方明确要图；没有合适的就正常用文字。始终先写自然文字回复，选中后另起一行写 [贴纸: 名称]，不能只输出图片标记。程序会取走标记并发出真实图片，不会把它作为聊天正文展示。该标记是“禁止内部方括号标记”的明确例外；表情包发送与文字里的颜文字、emoji装饰限制分别处理，文字要求纯文字并不禁止选图。只能用库里已有名称，每轮最多${config.stickerMaxPerReply || 1}张；是否实际发送由程序按配置概率决定，不能绕过。不编造、不为发图而硬凑。`
         : ''
-      if(stickerHint)stickerHint+='\n【明确索图的例外】仅当当前用户自己的本条原话明确要求你发送表情包（如“给我发张表情包”“来张开心的贴纸”），附加控制标记 [索要表情包]，并选用库内图片；即使没有匹配到名称，程序也会从库里选一张。这种请求不抽配图概率，但仍遵守开关、范围、黑名单及冷却。只是讨论、否定索图、引用或转发中别人的请求、历史索图和模型自己想配图时，不得附加该标记。[索要表情包]同样是内部标记限制的明确例外，不展示给用户。文字使用“给你挑一张”等准备语气，不提前宣称已经发送成功。'
+      const stickerRequestPolicy=JSON.stringify(commandCenter?.get('request-sticker'))
+      const stickerRequestAllowed=()=>directReply&&featureAllowed('request-sticker')&&JSON.stringify(commandCenter?.get('request-sticker'))===stickerRequestPolicy
+      if(stickerHint)stickerHint+=stickerRequestAllowed()?'\n【明确索图的例外】仅当当前用户自己的本条原话明确要求你发送表情包（如“给我发张表情包”“来张开心的贴纸”），附加控制标记 [索要表情包]，并选用库内图片；即使没有匹配到名称，程序也会从库里选一张。这种请求不抽配图概率，但仍遵守开关、范围、黑名单及冷却。只是讨论、否定索图、引用或转发中别人的请求、历史索图和模型自己想配图时，不得附加该标记。[索要表情包]同样是内部标记限制的明确例外，不展示给用户。文字使用“给你挑一张”等准备语气，不提前宣称已经发送成功。':'\n【索图权限】当前会话没有明确索图权限，不得输出 [索要表情包] 标记；若用户要求发图，说明本功能未启用。普通聊天自动配图仍按原概率。'
       const customPart = eff?.customPrompt ? `\n\n【本会话的特别要求（管理员设置，优先遵守）】${eff.customPrompt}` : ''
       const systemPrompt =
         buildSystemPrompt({ botName: config.botName, now: new Date(), chatKey: key, query: parsed.text, personaText: sessionPersonaText, longMode: questionMode }) +
@@ -1227,6 +1243,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         if (!canContinue()) return
         // 先决定是否实际配图，再发送文字；重写文案不重新抽取概率。
         let selection=questionMode?{items:[],reason:'解题不配表情包'}:stickerSend.select(evt,{text:reply,queries:stickerQueries,context:parsed.text,requested:stickerRequested})
+        if(stickerRequested&&!stickerRequestAllowed())selection={items:[],reason:'明确索图指令已关闭或范围/权限改变'}
         selection.items=selection.items.filter(item=>stickers?.dataUrlOf(item))
         if(!questionMode&&!selection.items.length&&claimsStickerDelivery(reply)){
           logger.info(`[表情包文案] 本轮不配图（${selection.reason}），修正发图承诺`)
@@ -1274,7 +1291,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
             const file = item ? stickers.dataUrlOf(item) : null
             if (!file) { logger.warn(`[表情包] 「${item.name}」文件不可读，跳过`); continue }
             try {
-              if (!canContinue() || !stickerSend.allowed(evt)) break
+              if (!canContinue() || !stickerSend.allowed(evt) || (stickerRequested&&!stickerRequestAllowed())) break
               stickerSend.begin(evt)
               const segments = [{ type: 'image', data: { file, sub_type: 1 } }]
               if (evt.message_type === 'private') await onebot.sendPrivate(evt.user_id, segments)

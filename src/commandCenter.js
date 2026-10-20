@@ -10,6 +10,9 @@ export const SUMMARY_RE=/^\s*[\/／]?\s*(今日总结|每日总结|群总结|群
 export const CLEAR_RE=/^[\/／]\s*(?:清除记忆|清空记忆|重置记忆)\s*(全部|all)?\s*[。！!~～.…]*$/i
 export const HELP_RE=/^[\/／]\s*(?:help|帮助|指令|命令)\s*[。！!~～.…]*$/i
 const DEFINITIONS=[
+  {id:'question',name:'认真解题（单轮 /Q）',trigger:'/Q 问题（私聊或群里@机器人）',description:'仅本轮完整讲解、推导及看题图；下一轮恢复聊天。思考耗时显示只在本模式使用，仍沿用会话总开关、静音和模型设置',ai:'required'},
+  {id:'music',name:'点歌音乐名片',trigger:'点歌 歌名 歌手 / 歌曲ID / 完整歌曲链接',description:'私聊或群里@/引用机器人点歌；默认网易云，也支持QQ音乐。复杂自然语言可能调用AI解析，核对平台及歌手后发送名片；收到成功回执才生成回应',ai:'required'},
+  {id:'request-sticker',name:'请求发送表情包',trigger:'@机器人 给我发张表情包（私聊可直接说）',description:'当前用户明确索图时跳过自动配图概率，仍须伴随文字并遵守表情包总开关、范围、冷却及黑名单。AI在本轮识别意图；关闭本指令不关闭普通聊天自动配图',ai:'required'},
   {id:'summary',name:'群总结（手动）',trigger:'/群总结 [天数]',description:'总结本群今天或最近几天的真实聊天',ai:'required',semantic:true,pattern:SUMMARY_RE},
   {id:'help',name:'指令帮助',trigger:'/help',description:'查看当前会话能使用的指令',ai:'none',semantic:true,pattern:HELP_RE},
   {id:'clear-memory',name:'清除记忆',trigger:'/清除记忆 [全部]',description:'备份并重置会话记忆；始终需要显式管理员',ai:'none',protected:true,pattern:CLEAR_RE},
