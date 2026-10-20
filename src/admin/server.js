@@ -12,10 +12,13 @@ import { activatePersona } from '../personaSwitch.js'
 import { applyConversationSettings, resetConversationMemory } from '../conversationSessions.js'
 import { writeTextAtomic } from '../stateFile.js'
 import { createWebSearch } from '../search.js'
+import { createUpdateChecker } from '../updateCheck.js'
+import { suggestStickerMetadata } from '../stickerMetadata.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const stamp = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const UI_FILE = path.join(__dirname, 'ui.html')
+const APP_VERSION=JSON.parse(readFileSync(path.join(__dirname,'../../package.json'),'utf8')).version
 
 /**
  * 机器人控制台：一个只监听 127.0.0.1 的本地服务，界面由 Edge/Chrome 的 app 模式窗口打开。
@@ -211,7 +214,7 @@ function validateGroupConfig(key, value) {
   }
 }
 
-export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, quietGreetings, personaGreetings, bot, customCommands, commandCenter, llm, stickers, switchVision, visionProviders, restartBot, webSearch, switchWebSearch }) {
+export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, quietGreetings, personaGreetings, bot, customCommands, commandCenter, llm, stickers, stickerTagLLM, updateChecker=createUpdateChecker({currentVersion:APP_VERSION}), switchVision, visionProviders, restartBot, webSearch, switchWebSearch }) {
   // 本实例自己的 .env（并行跑两个实例时，写死 rootDir\.env 会改到另一个实例的配置上）
   const envFile = config.envFile || path.join(config.rootDir, '.env')
   const logFile = path.join(config.logDir || path.join(config.rootDir, 'logs'), 'bot.log')
@@ -385,6 +388,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     if (runtimeStats?.replies) for (const [k, v] of runtimeStats.replies) replyStats[k] = v
     return {
       now: Date.now(),
+      version: APP_VERSION,
       pid: process.pid,
       uptimeSec: Math.round((Date.now() - (runtimeStats?.startedAt ?? Date.now())) / 1000),
       bot: {
@@ -472,6 +476,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
   const routes = {
     'GET /api/ping': async () => ({ ok: true, at: Date.now() }),
     'GET /api/state': async () => buildState(),
+    'GET /api/updates': async () => updateChecker.check(),
     'GET /api/chats': async () => ({ items: await buildChatList() }),
     'GET /api/groups': async () => ({ items: await getGroupList() }),
     'GET /api/friends': async () => ({ items: await getFriendList() }),
@@ -1120,6 +1125,10 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       const out = stickers.add({ name: payload?.name, keywords: payload?.keywords, scenes: payload?.scenes, dataUrl: payload?.dataUrl, description: payload?.description })
       return { ok: true, item: out.item, duplicated: out.duplicated, count: stickers.count() }
     },
+    async 'sticker-suggest'(payload) {
+      return {ok:true,draft:await suggestStickerMetadata({dataUrl:payload?.dataUrl,tagLLM:stickerTagLLM})}
+    },
+    async 'check-update'() {return updateChecker.check({force:true})},
     async 'sticker-update'(payload) {
       if (!stickers) throw new Error('表情包库未启用')
       const item = stickers.update(String(payload?.id || ''), { name: payload?.name, keywords: payload?.keywords, scenes: payload?.scenes, description: payload?.description, dataUrl: payload?.dataUrl })
@@ -1368,6 +1377,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       if (req.method==='GET'&&url.pathname==='/command-center.js') return send(200,readFileSync(path.join(__dirname,'commandCenter.js')),'text/javascript; charset=utf-8')
       if (req.method==='GET'&&url.pathname==='/ui.css') return send(200,readFileSync(path.join(__dirname,'ui.css')),'text/css; charset=utf-8')
       if (req.method==='GET'&&url.pathname==='/app.js') return send(200,readFileSync(path.join(__dirname,'app.js')),'text/javascript; charset=utf-8')
+      if (req.method==='GET'&&url.pathname==='/sticker-upload.js') return send(200,readFileSync(path.join(__dirname,'stickerUpload.js')),'text/javascript; charset=utf-8')
       if (url.pathname === '/' || url.pathname === '/index.html') {
         if (!existsSync(UI_FILE)) return send(500, '控制台界面文件缺失', 'text/plain; charset=utf-8')
         return send(200, readFileSync(UI_FILE), 'text/html; charset=utf-8')

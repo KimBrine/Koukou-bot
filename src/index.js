@@ -435,6 +435,7 @@ if (config.adminEnabled) {
     llm,
     stickers,
     commandCenter,
+    stickerTagLLM,
     switchVision: () => { rebuildVision(); rebuildStickerTag() },
     webSearch,
     switchWebSearch: (patch) => webSearch.setOptions(patch),

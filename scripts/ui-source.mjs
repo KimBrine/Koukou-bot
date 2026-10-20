@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 export function readUiSource() {
   const base = new URL('../src/admin/', import.meta.url)
   let out = ''
-  for (const file of ['ui.html', 'app.js', 'ui.css']) {
+  for (const file of ['ui.html', 'stickerUpload.js', 'app.js', 'ui.css']) {
     const target = new URL(file, base)
     if (existsSync(fileURLToPath(target))) out += readFileSync(target, 'utf8') + '\n'
   }

@@ -14,6 +14,7 @@ const PAGES = [
 let page = location.hash.replace('#','') || 'overview'
 if (!PAGES.some(p => p[0] === page)) page = 'overview'
 let state = null
+let updateInfo = null, updateChecking = false
 let chats = []
 let configItems = []
 let personas = []
@@ -119,6 +120,29 @@ function updateSideStatus(b = {}) {
   if (dot) dot.className = 'dot ' + (b.online === true ? 'ok' : 'bad')
   if (label) label.textContent = accountStatusText(b) + (b.selfId ? ' · ' + b.selfId : '')
 }
+function updateStatusText(){
+  const u=updateInfo;if(!u)return '尚未检查';
+  if(u.status==='available')return '发现新版 v'+u.latestVersion;
+  if(u.status==='current')return '已是最新正式版本';
+  if(u.status==='ahead')return '当前版本高于已发布标签';
+  return '检查失败：'+(u.message||'请稍后重试');
+}
+function paintUpdates(){
+  const u=updateInfo,n=document.getElementById('updateNotice');
+  if(n){n.hidden=!u;n.innerHTML=u?'<small>当前 v'+esc(u.currentVersion||'未知')+'</small>'+(u.status==='available'?'<a href="'+esc(u.url)+'" target="_blank" rel="noopener noreferrer">发现新版 v'+esc(u.latestVersion)+' · 查看新版</a>':''):''}
+  const status=document.getElementById('versionStatus');if(status)status.textContent=updateStatusText();
+  const current=document.getElementById('currentVersion');if(current)current.textContent='v'+(u?.currentVersion||state?.version||'读取中');
+  const checked=document.getElementById('versionChecked');if(checked)checked.textContent=u?.checkedAt?'上次检查：'+new Date(u.checkedAt).toLocaleString():'';
+  const link=document.getElementById('versionLink');if(link){link.hidden=u?.status!=='available';if(u?.url)link.href=u.url}
+}
+async function refreshUpdates(force=false){
+  if(updateChecking)return;updateChecking=true;
+  const button=document.getElementById('checkUpdate');if(button)button.disabled=true;
+  try{updateInfo=await api(force?'/api/action/check-update':'/api/updates',force?{}:undefined)}catch(e){updateInfo={...updateInfo,status:'error',message:e.message}}
+  finally{updateChecking=false;paintUpdates();if(button)button.disabled=false}
+}
+function versionCard(){return '<section class="card"><h2>版本与更新</h2><p>当前版本：<strong id="currentVersion">v'+esc(updateInfo?.currentVersion||state?.version||'读取中')+'</strong></p><p id="versionStatus">'+esc(updateStatusText())+'</p><p id="versionChecked" class="mut">'+(updateInfo?.checkedAt?'上次检查：'+esc(new Date(updateInfo.checkedAt).toLocaleString()):'')+'</p><div class="flexbar"><button class="btn" id="checkUpdate">检查更新</button><a class="btn primary" id="versionLink" href="'+esc(updateInfo?.url||'https://github.com/KimBrine/Koukou-bot/tags')+'" target="_blank" rel="noopener noreferrer"'+(updateInfo?.status==='available'?'':' hidden')+'>查看新版</a></div><p class="mut">自动检查GitHub正式标签（最多100个），缓存6小时；手动检查间隔至少30秒。检查失败不代表已是最新。更新前请备份私有配置与数据；这里不会自动安装。</p></section>'}
+
 function pageOverview(){
   const b = state?.bot ?? {}
   const c = state?.counters ?? {}
@@ -164,7 +188,7 @@ function pageOverview(){
     '<div class="mut" style="margin-top:8px">当前管理员：' + (admins.length ? admins.map(esc).join('、') : '未配置（群总结等沿用公开范围；清除记忆须显式配置管理员）') + '</div>',
     '</section>'
   ].join('')
-    return quickCard + adminCard + `
+    return quickCard + adminCard + versionCard() + `
   <div class="hero"><span class="hero-status">${dot(b.online === true)} ${accountStatusText(b)}</span>
     <h1>机器人工作台</h1><div class="sub"><span id="updatedAt">${new Date().toLocaleTimeString('zh-CN',{hour12:false})}</span> 更新 · 集中管理运行状态与操作</div></div>
   <div class="grid g3">${cards.map(([k,v,s]) => `<div class="card"><h3>${k}</h3><div class="kpi">${v}</div><div class="note">${s||''}</div></div>`).join('')}</div>
@@ -717,16 +741,7 @@ function pageStickers(){
     '<span class="mut">每小时最多</span><input id="stkLearnPerHour" type="number" min="0" max="60" value="' + (learn.perHour || 0) + '" style="width:90px"><span class="mut">张</span>',
     '<button class="btn" id="stkLearnSave">保存学习设置</button>',
     '</div></section>',
-    '<section class="card"><h2>上传 <span class="pill">' + items.length + ' 张</span></h2>',
-    '<div class="note">支持 PNG / JPEG / WebP / GIF，单张 ≤ 4MB。</div>',
-    '<div class="row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">',
-    '<input type="file" id="stkFile" accept="image/png,image/jpeg,image/webp,image/gif" multiple>',
-    '<input id="stkKw" placeholder="统一关键词（可留空）" style="flex:1;min-width:160px">',
-    '<button class="btn primary" id="stkUpload">上传</button>',
-    '</div>',
-    (sceneChoices ? '<div style="margin-top:8px">语境：' + sceneChoices + '</div>' : ''),
-    '<div class="mut" id="stkHint" style="margin-top:8px"></div>',
-    '</section>',
+    window.StickerUploadUI?.render(sceneList) || '',
     '<section class="card"><h2>手动发送文字＋表情包</h2><div class="note">这里会真实发送到所选群；手动发送不抽取概率，但同样必须有伴随文字。</div>',
     '<div class="row" style="display:flex;gap:8px;flex-wrap:wrap">',
     '<select id="stkSendGroup">' + (gopts || '<option value="">没有群可发</option>') + '</select>',
@@ -766,6 +781,7 @@ function render(){
 }
 
 async function bind(){
+  const checkUpdate=document.getElementById('checkUpdate');if(checkUpdate)checkUpdate.onclick=()=>refreshUpdates(true)
   if(page==='stickers'){
     stickerControlsDirty=false
     document.querySelectorAll('#stkEnabled,#stkAutoRange,#stkAutoRate,#stkMax,#stkPickMode,#stkSendScope,#stkCooldown,#stkLearnToggle,#stkLearnPrivate,#stkLearnPerHour,[data-stk-send-group],[data-stk-learn-group]').forEach(el=>el.addEventListener('input',()=>{stickerControlsDirty=true}))
@@ -1112,27 +1128,7 @@ async function bind(){
   const previewClose=document.getElementById('stkPreviewClose');if(previewClose)previewClose.onclick=()=>document.getElementById('stkPreviewDialog').close()
   document.querySelectorAll('[data-stk-copy]').forEach(el=>el.onclick=async()=>{try{await navigator.clipboard.writeText(stickerList.find(s=>s.id===el.dataset.stkCopy).hash);toast('哈希已复制')}catch(e){toast('可在哈希输入框中手动复制',true)}})
   document.querySelectorAll('[data-stk-file]').forEach(el=>el.onchange=()=>{const f=el.files[0];if(!f)return;if(f.size>4*1024*1024){toast('图片不能超过4MB',true);el.value='';return}const r=new FileReader();r.onload=()=>{document.querySelector('[data-stk-thumb="'+el.dataset.stkFile+'"]').src=r.result};r.readAsDataURL(f)})
-  const stkUpload = document.getElementById('stkUpload')
-  if (stkUpload) stkUpload.onclick = async () => {
-    const input = document.getElementById('stkFile')
-    const kw = document.getElementById('stkKw').value.trim()
-    const hint = document.getElementById('stkHint')
-    const scenes = Array.from(document.querySelectorAll('[data-up-scene]:checked')).map(function(el){ return el.value })
-    const files = input && input.files ? Array.from(input.files) : []
-    if (!files.length) { toast('先选图片', true); return }
-    stkUpload.disabled = true
-    let ok = 0, dup = 0
-    for (const f of files) {
-      try {
-        const dataUrl = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = () => rej(new Error('读取失败')); fr.readAsDataURL(f) })
-        const r = await api('/api/action/sticker-add', { name: f.name.replace(/\.[^.]+$/, ''), keywords: kw, scenes, dataUrl })
-        if (r.duplicated) { dup++ } else { ok++ }
-      } catch (e) { if (hint) hint.textContent = '上传失败：' + e.message }
-    }
-    stkUpload.disabled = false
-    await load()
-    toast('已上传 ' + ok + ' 张' + (dup ? '，' + dup + ' 张重复已跳过' : ''))
-  }
+  window.StickerUploadUI?.bind({api,toast,onSaved:load})
   document.querySelectorAll('[data-stk-save]').forEach(el => el.onclick = async () => {
     const id = el.dataset.stkSave
     const name = document.querySelector('[data-stk-name="' + id + '"]').value
@@ -1559,6 +1555,8 @@ async function load(){
 }
 renderNav()
 load()
+refreshUpdates()
+setInterval(()=>refreshUpdates(),30*60*1000)
 // 支持浏览器前进/后退与直接改地址栏（#chats 这类）
 window.addEventListener('hashchange', () => {
   const p = location.hash.replace('#', '')
@@ -1600,6 +1598,7 @@ async function refreshStateUI() {
 // 表情包页：新收录的图自动出现；有未保存的编辑时不打断，只提示一次
 let refreshingStickers = false, stickerPending = false, stickerNotified = false, stickerControlsDirty=false
 function stickerEditsDirty() {
+  if(window.StickerUploadUI?.dirty())return true
   if(stickerControlsDirty)return true
   const byId = new Map((stickerList || []).map(function (it) { return [String(it.id), it] }))
   for (const el of document.querySelectorAll('[data-stk-name],[data-stk-kw],[data-stk-desc]')) {
