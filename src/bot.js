@@ -1,4 +1,4 @@
-import { createStickerSendPolicy } from './stickerSend.js'
+import { createStickerSendPolicy, claimsStickerDelivery } from './stickerSend.js'
 import { isQuestionMode, QUESTION_MODE_HINT, QUESTION_IMAGE_PROMPT } from './questionMode.js'
 import { readFileSync, existsSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -1181,6 +1181,18 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         }
         // 第一条的普通回复可能仍在生成；复读段已触发时取消这条迟到的搭话。
         if (!canContinue()) return
+        // 先决定是否实际配图，再发送文字；重写文案不重新抽取概率。
+        let selection=questionMode?{items:[],reason:'解题不配表情包'}:stickerSend.select(evt,{text:reply,queries:stickerQueries,context:parsed.text})
+        selection.items=selection.items.filter(item=>stickers?.dataUrlOf(item))
+        if(!questionMode&&!selection.items.length&&claimsStickerDelivery(reply)){
+          logger.info(`[表情包文案] 本轮不配图（${selection.reason}），修正发图承诺`)
+          try{
+            const repaired=extractStickerMarkers(stripInternalReplyMetadata(await llm.chat(replyPrompt+'\n\n【执行结果】本轮没有图片可发送。请重新回答当前用户，明确本轮没有配图，保持当前人格；不得声称或暗示图已发出、图来啦、拿去或收好，不得输出贴纸标记。',[...baseHistory,{role:'user',content:replyContent}])))
+            reply=stripReportScaffold(repaired.text)
+          }catch(error){logger.warn(`[表情包文案] 修正失败，使用文字兜底：${error.message}`);reply=''}
+          if(!reply.trim()||claimsStickerDelivery(reply))reply='这次没有配图，先用文字陪你聊呀。'
+          if(!canContinue())return
+        }
         // 形态裁剪：按本次计划的行数与字数预算整理（超长在句子/逗号边界截断，不会砍出半句话）
         let lines = questionMode ? [reply.trim()] : shapeReply(reply, plan)
         if (lines.length === 0) lines = [shortenReply(reply, config.replyLineMaxChars)]
@@ -1209,7 +1221,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         finalLines = await sendReplyLines(evt, finalLines, key, { directReply, perHourLimit: hourCap, canSend: canContinue, onSent:receipt=>{if(receipt?.message_id!=null||receipt?.data?.message_id!=null)textConfirmed=true} })
         if (!finalLines.length || !samePersona()) return
         record = finalLines.join('\n')
-        const selection=questionMode||!textConfirmed?{items:[],reason:questionMode?'解题不配表情包':'文字发送回执未确认'}:stickerSend.select(evt,{text:record,queries:stickerQueries,context:parsed.text})
+        if(!textConfirmed)selection={items:[],reason:'文字发送回执未确认'}
         if(!questionMode&&config.stickersEnabled&&stickers)logger.info(`[表情包选择] ${key}｜${selection.reason}｜选中 ${selection.items.map(i=>i.name).join('、')||'无'}｜配图概率 ${Math.round((config.stickerAutoRate??.35)*100)}%`)
         // 仅在文字真实发送成功后配图；发送失败不会单独发图。
         if (selection.items.length > 0 && stickers) {

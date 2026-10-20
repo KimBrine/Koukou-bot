@@ -1,4 +1,5 @@
 /** 普通文字回复之后的一次配图机会；模型选图也不能绕过概率或范围。 */
+export const claimsStickerDelivery = text => /(?:表情包|图片|图).{0,12}(?:来[啦了咯]|发[出送给]|拿去|收好)|(?:发[出送给]|给你发|拿去|收好).{0,12}(?:图|表情包)/u.test(String(text || ''))
 export function createStickerSendPolicy({config,stickers,rand=Math.random,now=Date.now}) {
   const last=new Map()
   function allowed(e){

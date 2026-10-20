@@ -67,6 +67,15 @@ try {
     unconfirmed.onebot.sendGroup=async(g,msg)=>{unconfirmed.sent.push(msg);return {}}
     await unconfirmed.bot.handleMessage(unconfirmed.event([at(),text('你好')]))
     assert.equal(unconfirmed.sent.length,1,'文字发送未收到消息编号时，不能继续发图片')
+    let repairCalls=0
+    const promise=setup({stickers,config:{stickersEnabled:true,stickerAutoRate:0},chat:()=>++repairCalls===1?'图来啦，拿去拿去 [贴纸: 猫猫问号]':'这轮先用文字陪你聊呀'})
+    await promise.bot.handleMessage(promise.event([at(),text('给我发张表情包')]))
+    assert.equal(repairCalls,2);assert.equal(promise.sent.length,1)
+    assert.doesNotMatch(promise.sent[0],/图来啦|拿去|贴纸/)
+    assert.match(promise.requests.at(-1)[0],/本轮没有图片可发送/)
+    const failedRepair=setup({stickers,config:{stickersEnabled:true,stickerAutoRate:0},chat:()=> '图片来啦，收好'})
+    await failedRepair.bot.handleMessage(failedRepair.event([at(),text('来张表情包')]))
+    assert.equal(failedRepair.sent.length,1);assert.match(failedRepair.sent[0],/没有配图/)
   })
   await test('/Q仅私聊或当前外层@触发，标记有边界且不改变全局模式', async()=>{
     assert.equal(isQuestionMode('/Q 推导',{isPrivate:true}),true)
