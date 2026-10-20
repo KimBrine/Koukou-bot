@@ -787,7 +787,7 @@ function visionCard(){
       '</select>'),
     row('识图模型', '<div class="row" style="display:flex;gap:8px"><select id="vcModel" style="flex:1">' +
       '<option value="' + esc(modelByProvider[provider] || '') + '"' + (modelByProvider[provider] ? ' selected' : '') + '>' + esc(modelByProvider[provider] || '（先点自动检测）') + '</option>' +
-      '</select><button class="btn" type="button" id="vcDetect">自动检测模型</button></div><div class="mut" id="vcDetectHint" style="font-size:12px;margin-top:4px"></div>'),
+      '</select><button class="btn" type="button" id="vcDetect">自动检测模型</button></div><div class="mut" id="vcDetectHint" style="font-size:12px;margin-top:4px">' + (provider === 'custom' ? '自定义：先填下面的接口地址和 Key，再点自动检测' : '点「自动检测模型」拿型号列表') + '</div>'),
     row('自定义接口地址', '<input id="vcBase" value="' + esc(s.visionCustomBaseUrl || '') + '" placeholder="https://你的服务/v1（选择自定义时必填）">'),
     row('自定义 Key', '<input id="vcKey" type="password" placeholder="留空表示不修改"><div class="mut" style="font-size:12px;margin-top:4px">选自定义时，检测和识图都用这个 Key</div>'),
     row('表情包打标模型', '<select id="vcTag">' +
@@ -1020,7 +1020,7 @@ async function bind(){
       const p = vcProvider.value
       const current = vcValueOf(p)
       fillVisionModels(p, visionModelCache[p] || [], current)
-      if (vcDetectHint) vcDetectHint.textContent = visionModelCache[p] ? ('已缓存 ' + visionModelCache[p].length + ' 个型号') : '切换了服务商，点自动检测拿列表'
+      if (vcDetectHint) vcDetectHint.textContent = visionModelCache[p] ? ('已缓存 ' + visionModelCache[p].length + ' 个型号') : (p === 'custom' ? '自定义：先填下面的接口地址和 Key，再点自动检测' : '切换了服务商，点自动检测拿列表')
     }
   }
   if (vcDetect) vcDetect.onclick = async () => {
@@ -1049,6 +1049,12 @@ async function bind(){
     const hint = document.getElementById('vcHint')
     const provider = vcProvider.value
     const model = vcModel.value.trim()
+    if (provider === 'custom') {
+      const baseNow = document.getElementById('vcBase').value.trim()
+      const keyNow = document.getElementById('vcKey').value.trim()
+      const ready = state?.config?.visionCustomReady || (baseNow && keyNow && model)
+      if (!ready) { toast('自定义识图需要填写接口地址、Key 和模型名', true); return }
+    }
     vcSave.disabled = true
     try {
       await api('/api/action/set-config', { key: 'VISION_PROVIDER', value: provider })

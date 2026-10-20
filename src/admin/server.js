@@ -1018,6 +1018,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
           ? { baseUrl: config.dashscopeBaseUrl, apiKey: config.dashscopeApiKey }
           : { baseUrl: config.deepseekBaseUrl, apiKey: config.deepseekApiKey }
       if (!ep.apiKey) throw new Error('这个服务商还没有配置 Key')
+      if (!ep.baseUrl) throw new Error('请先填写自定义接口地址（Base URL）')
       const out = await detectModels(ep)
       logger?.info?.(`[识图检测] ${provider} 返回 ${out.count} 个模型`)
       return { ...out, provider }
