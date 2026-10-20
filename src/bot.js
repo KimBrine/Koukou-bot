@@ -10,6 +10,7 @@ import { modelHistory } from './memory.js'
 import { buildReplyFocus } from './replyFocus.js'
 import { conversationRules } from './conversationRules.js'
 import { stripInternalReplyMetadata, REPLY_REPAIR_HINT } from './replySanitizer.js'
+import { parseSongRequest, searchSong } from './music.js'
 import { parseMessage } from './cq.js'
 import { isBotAdmin, hasAdmins, adminHint } from './permissions.js'
 import { renderReply } from './customCommands.js'
@@ -301,8 +302,6 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
     logger,
   }) : null)
   // 只缓存客观画面；模型或识图提示词改变后使用新描述，不缓存聊天口吻。
-  const visionCacheScope = JSON.stringify([visionLLM?.baseUrl, visionLLM?.model, VISION_DESCRIBE_PROMPT, VISION_DESCRIBE_ASK,
-    ...(visionLLM?.knowledgeVersion ? [visionLLM.knowledgeVersion] : [])])
   const stickerSend = createStickerSendPolicy({config,stickers,rand})
   const failedRecently = new Map() // 私聊报错提示限频：key -> 上次提示时间戳
   const lastProactive = new Map() // 白名单群主动搭话冷却：groupId -> 上次时间戳
@@ -534,25 +533,39 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
     const msgs = [{ role: 'system', content: systemPrompt }, ...history, { role: 'user', content }]
     const first = await llm.chatRaw(msgs, SEARCH_TOOLS)
     if (first.toolCalls && first.toolCalls.length > 0) {
-      const call = first.toolCalls[0]
-      let query = ''
-      try {
-        query = JSON.parse(call.function?.arguments || '{}').query || ''
-      } catch {
-        query = ''
-      }
-      if (query) {
+      // 模型可能一次要搜多个词：每个 tool_call 都必须有一条对应的 tool 消息，
+      // 否则 DeepSeek 会以 400 拒绝（tool_calls 后面缺 tool 回复）。最多处理 2 个。
+      const calls = first.toolCalls
+      const answers = []
+      for (const call of calls) {
+        if(answers.length>=2){answers.push({id:call.id,text:'本轮搜索次数已达上限，请根据已有结果作答。'});continue}
+        let query = ''
+        try {
+          const value=JSON.parse(call.function?.arguments || '{}').query
+          query = typeof value==='string'?value.trim().slice(0,400):''
+        } catch {
+          query = ''
+        }
+        if (!query) {
+          answers.push({ id: call.id, text: '（这次调用没有给搜索关键词）' })
+          continue
+        }
         try {
           const { summary } = await webSearch(query)
           logger.info(`[联网搜索] ${query.slice(0, 60)}`)
-          msgs.push({ role: 'assistant', content: first.content || '', tool_calls: first.toolCalls })
-          msgs.push({ role: 'tool', tool_call_id: call.id, content: String(summary).slice(0, 3000) })
-          const second = await llm.chatRaw(msgs)
-          if (second.content) return second.content
+          answers.push({ id: call.id, text: String(summary).slice(0, 3000) })
         } catch (err) {
-          logger.warn(`联网搜索失败，退回普通回复：${err.message}`)
-          return llm.chat(systemPrompt, [...history, { role: 'user', content }])
+          logger.warn(`联网搜索失败（${query.slice(0, 40)}）：${err.message}`)
+          answers.push({ id: call.id, text: `搜索失败：${err.message}` })
         }
+      }
+      msgs.push({ role: 'assistant', content: first.content || '', tool_calls: calls,...(first.reasoningContent!==undefined?{reasoning_content:first.reasoningContent}:{}) })
+      for (const item of answers) msgs.push({ role: 'tool', tool_call_id: item.id, content: item.text })
+      try {
+        const second = await llm.chatRaw(msgs)
+        if (second.content) return second.content
+      } catch (err) {
+        logger.warn(`联网搜索后生成失败，退回普通回复：${err.message}`)
       }
     }
     if (first.content) return first.content
@@ -702,9 +715,9 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
 
       const parsed = parseMessage(evt.message ?? evt.raw_message, onebot.selfId)
       // 表情包学习：独立指定群里别人发的图，按配置自动收录（异步，不影响回复）
-      if (!isPrivate && config.stickerLearnEnabled && stickerLearner && parsed.images.length > 0) {
+      if (config.stickerLearnEnabled && (!isPrivate || config.stickerLearnPrivate) && stickerLearner && parsed.images.length > 0) {
         stickerLearner
-          .learnFromMessage({ images: parsed.images, groupId, senderName: evt.sender?.card || evt.sender?.nickname, text: parsed.text })
+          .learnFromMessage({ images: parsed.images, chatKey: isPrivate ? `p${evt.user_id}` : `g${groupId}`, senderName: evt.sender?.card || evt.sender?.nickname, text: parsed.text })
           .catch((err) => logger.warn(`[表情包学习] ${err.message}`))
       }
 
@@ -997,6 +1010,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       const quotedTag = quoted && quoted.text ? `[引用 ${quoted.name}：${String(quoted.text).slice(0, 2000)}] ` : ''
       const forwardText = [forwarded?.text, quotedForward?.text ? `【引用消息中的聊天记录】\n${quotedForward.text}` : ''].filter(Boolean).join('\n\n')
       const content = (isPrivate ? `${quotedTag}${parsed.text}` : `【${senderName}】${quotedTag}${parsed.text}`) + (forwardText ? `\n\n${forwardText}` : '')
+
       const userMeta = { time: messageTime(evt) ?? Date.now(), messageId: evt.message_id,
         replyLength: incomingLen, userId: evt.user_id, senderName }
       if (!samePersona()) return
@@ -1013,9 +1027,31 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         return
       }
 
+      // 点歌：明确要歌就直接搜一首发音乐名片，再让模型自然接一句
+      const canContinue = () => samePersona() && sameSessionPersona(config, chatSettings, key, sessionPersonaText) &&
+        replyStillCurrent(onebot, evt, { latestOnly: !directReply }) && !autoPlusOne.wasTriggered(repetition)
+      let musicNote = ''
+      try {
+        const songQuery = directReply && !questionMode ? parseSongRequest(parsed.text, quoted?.text || '') : ''
+        if (songQuery) {
+          const song = await searchSong(songQuery)
+          if (song && canContinue()) {
+            const card = [{ type: 'music', data: { type: '163', id: song.id } }]
+            const receipt=isPrivate ? await onebot.sendPrivate(evt.user_id, card) : await onebot.sendGroup(groupId, card)
+            if(receipt?.message_id==null&&receipt?.data?.message_id==null)throw new Error('音乐名片未收到成功回执')
+            logger.info(`[点歌] 已发送《${song.name}》- ${song.artist || '未知歌手'}（搜索：${songQuery}）`)
+            musicNote = `\n（系统提示：刚刚已经发出《${song.name}》的音乐名片，别再声称发不了，用一句话自然回应即可。）`
+          } else {
+            logger.info(`[点歌] 没搜到「${songQuery}」`)
+          }
+        }
+      } catch (err) { logger.warn(`[点歌] 失败：${err.message}`) }
+
       const allImages = [...parsed.images, ...(quoted?.images ?? []), ...(forwarded?.images ?? []), ...(quotedForward?.images ?? [])]
-      const hasImages = visionLLM && allImages.length > 0
-      const enableTools = webSearch && !hasImages && directReply
+      const activeVision=typeof visionLLM?.snapshot==='function'?visionLLM.snapshot():visionLLM
+      const hasImages = typeof activeVision?.describeImages==='function' && allImages.length > 0
+      const visionCacheScope = JSON.stringify([activeVision?.baseUrl, activeVision?.model, VISION_DESCRIBE_PROMPT, VISION_DESCRIBE_ASK, activeVision?.knowledgeVersion || ''])
+      const enableTools = webSearch && webSearch.isEnabled !== false && !hasImages && directReply
       logger.info(`[回复]（${decision.reason}）${isPrivate ? '私聊' : `群${groupId}`} ${senderName}：${parsed.text.slice(0, 50)}${quotedTag ? '（含引用）' : ''}${hasImages ? `（含 ${allImages.length} 张图，走视觉模型）` : ''}${enableTools ? '（可联网搜索）' : ''}`)
 
       // 本轮只使用到达时快照；人格/记忆已切换时不得带入旧快照。
@@ -1024,7 +1060,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       const rawHistory=history.filter(m=>evt.message_id==null||m.role!=='user'||m.messageId!==String(evt.message_id))
       const baseHistory = modelHistory(rawHistory)
       const focus=buildReplyFocus({evt,text:parsed.text,senderName,quoted,quoteFromBot:replyToBot,history:rawHistory})
-      const focusedContent=content+focus.marker
+      const focusedContent=content+musicNote+focus.marker
 
       // 先把图片取下来。顺带确定"这条消息的图到底看不看得见"——这件事**代码知道，模型不知道**。
       // 以前把判断权交给模型，它看到历史里的 [图片] 就会套用"看不到就说图没加载出来"，
@@ -1065,6 +1101,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         lineMaxChars: eff?.lineMaxChars ?? config.replyLineMaxChars,
         matchEnabled: config.replyLengthMatch,
         longMode: questionMode,
+        minBudget: config.replyMinBudget,
         rand, // 可注入的随机源（生产为 Math.random，测试可固定以保证确定性）
       })
       logger.debug(`[形态] 对方 ${incomingLen} 字 → 目标 ${plan.targetLen} 字｜${plan.lines} 行｜预算 ${plan.budget} 字`)
@@ -1088,8 +1125,6 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         imageNote +
         (questionMode ? QUESTION_MODE_HINT : shapeHint(plan)) +
         decorationHint(allowDecoration, decoKind, decorationPreset) + focus.hint + stickerHint
-      const canContinue = () => samePersona() && sameSessionPersona(config, chatSettings, key, sessionPersonaText) &&
-        replyStillCurrent(onebot, evt, { latestOnly: !directReply }) && !autoPlusOne.wasTriggered(repetition)
       if (!canContinue()) return
       try {
         // 计时：模型生成耗时（含识图 / 联网 / 纯文本与重试）
@@ -1103,7 +1138,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
           const imgSizes = imageParts.map((p) => String(p.image_url?.url?.length ?? 0))
           let desc = ''
           const readDescription = async () => {
-            const raw = await visionLLM.describeImages(
+            const raw = await activeVision.describeImages(
               questionMode ? QUESTION_IMAGE_PROMPT : VISION_DESCRIBE_PROMPT,
               questionMode ? '请完整读取题目。' : VISION_DESCRIBE_ASK,
               imageParts,
@@ -1162,7 +1197,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
           reply = stripInternalReplyMetadata(await llm.chat(replyPrompt + REPLY_REPAIR_HINT, [...baseHistory, { role: 'user', content: replyContent }]))
           if (!reply) { logger.warn('[回复清理] 重生成仍无有效正文，取消发送'); return }
         }
-        if (hasImages && visionLLM?.guardReply) reply = visionLLM.guardReply(reply, imageDescription)
+        if (hasImages && activeVision?.guardReply) reply = activeVision.guardReply(reply, imageDescription)
         // Markdown/分析文体残留清理（`**加粗**`、`### 标题`、`1. 编号`）——所有回复都过，
         // 因为发到群里它们就是字面的星号和井号，很难看
         if (!questionMode) reply = stripReportScaffold(reply)

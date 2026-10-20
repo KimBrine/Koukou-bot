@@ -1,5 +1,6 @@
 // 临时人格库与模拟浏览器下载；不连接 QQ、不调用模型、不改部署人格。
 import assert from 'node:assert/strict'
+import { readUiSource, readUiScript } from './ui-source.mjs'
 import {mkdtempSync,readFileSync,writeFileSync,rmSync} from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -57,8 +58,8 @@ try{
       assert.match(result.content,/例\/子/);assert.equal(result.filename,'Koukou-例_子-人格.txt')
     }finally{Object.assign(config,previous)}
   })
-  const html=readFileSync(new URL('../src/admin/ui.html',import.meta.url),'utf8')
-  const script=html.match(/<script>([\s\S]*?)<\/script>/)[1]
+  const html = readUiSource()
+  const script=readUiScript()
   new vm.Script(script)
   const helper=script.slice(script.indexOf('function downloadPersonaFile'),script.indexOf('function previewPersonaImport'))
   const blobs=[],downloads=[],timers=[],revoked=[]

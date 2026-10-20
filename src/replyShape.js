@@ -101,6 +101,7 @@ export function planReply({
   lineMaxChars = 40,
   matchEnabled = true,
   longMode = false,
+  minBudget = 0,
   backlogWeight = 0.35,
   rand = Math.random,
 } = {}) {
@@ -109,6 +110,16 @@ export function planReply({
   if (longMode) {
     const lines = Math.max(1, maxLines)
     return { targetLen: target, lines, budget: lines * lineMaxChars, perLineCap: lineMaxChars, lineMaxChars, longMode: true }
+  }
+  // 设了最小预算时：行数仍然按对方消息长度自然决定（1~maxLines），
+  // 最小预算只保证“有这么多字可说”，不是“必须拆成几条发”。
+  if (minBudget > 0) {
+    const lines = matchEnabled ? pickLineCount(target, { maxLines, lineMaxChars, rand }) : 1
+    const budget = Math.min(lines * lineMaxChars, Math.max(minBudget, Math.round(target * 1.15) + 8))
+    // 最小预算的语义是“至少给这么多”，不是“最多只能这么多”：
+    // 单行仍可写到单行上限，否则模型刚说到一半就被 … 截断。
+    const perLineCap = lineMaxChars
+    return { targetLen: target, lines, budget, perLineCap, lineMaxChars }
   }
   const lines = matchEnabled ? pickLineCount(target, { maxLines, lineMaxChars, rand }) : 1
   // 预算：跟着对方长度走，再给几个字余量；下限 8 字（避免出现"嗯"这种没有信息的回复），
@@ -160,15 +171,27 @@ function decorationChars(text) {
 }
 
 /** 在 limit 字内按句末标点 → 逗号 → 硬截断的顺序裁剪，尽量不砍断句子，也绝不砍断装饰符号 */
+const LINK_RE = /(?:https?:\/\/|www\.)[^\s，。！？、）)】"'<>]+|(?:[a-z0-9-]+\.)+(?:com|cn|net|org|tv|cc|me|io|ly|gl|top|xyz)\/[^\s，。！？、）)】"'<>]*/gi
+
 export function trimTo(text, limit) {
   const s = String(text ?? '').trim()
   if (!s) return ''
   if (s.length <= limit) return s
+  // 只超出一点点时宁可完整发出，也别为了凑数加个 …
+  if (limit >= 30 && s.length <= limit + 15) return s
+  // 断点如果落在链接里，就把整条链接保留下来，别发半截地址
+  const links = s.match(LINK_RE) || []
+  for (const link of links) {
+    const start = s.indexOf(link)
+    const end = start + link.length
+    if (start < limit && end > limit) return s.slice(0, end).trim()
+  }
   const head = s.slice(0, limit)
   const bySentence = head.match(/^[\s\S]*[。！？!?～~…]/)
   if (bySentence && bySentence[0].trim().length >= 4) return completeDecoration(bySentence[0].trim(), s, limit)
   const byComma = head.match(/^[\s\S]*[，,、]/)
-  if (byComma && byComma[0].trim().length >= 6) {
+  // 仅当断点够长才采用：否则会在第一个逗号就把长句砍成很短一句（"你是谁" 只回 15 字）
+  if (byComma && byComma[0].trim().length >= Math.max(6, Math.floor(limit * 0.6))) {
     return completeDecoration(byComma[0].trim().replace(/[，,、]$/, ''), s, limit)
   }
   return completeDecoration(`${head.slice(0, Math.max(1, limit - 1)).trim()}…`, s, limit)
@@ -248,9 +271,10 @@ export function shapeReply(raw, plan) {
   lines = lines.map((s) => trimTo(s, lineCap + decorationChars(s))).filter((s) => s.length > 0)
   if (lines.length === 0) return fallback()
 
-  // 总预算同样只算正文，装饰符号白送（否则短回复里 🍥/颜文字永远第一个被丢掉）
+  // 总预算只用来约束“多行合并起来的体量”；单行不再按预算二次裁剪，
+  // 否则「最小预算 20」会把一句完整的话砍在半截（用户看到的 …）。
   let total = contentLength(lines.join(''))
-  for (let i = lines.length - 1; i >= 0 && total > budget; i--) {
+  for (let i = lines.length - 1; lines.length > 1 && i >= 0 && total > budget; i--) {
     const allow = Math.max(4, budget - (total - contentLength(lines[i])))
     lines[i] = trimTo(lines[i], allow + decorationChars(lines[i]))
     total = contentLength(lines.join(''))

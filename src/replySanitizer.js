@@ -6,7 +6,12 @@ const internalStart = new RegExp(`([【\\[])\\s*(?:${labels})(?=[：:\\s】\\]\\
 
 export function stripInternalReplyMetadata(raw) {
   const original = String(raw ?? '')
-  let text = original.replace(/\r\n?/g, '\n')
+  // 模型偶尔会把工具调用残留（<tool_result>…）当正文吐出来，直接清掉
+  const cleaned = original
+    .replace(/<tool_result[\s\S]*?(?:<\/tool_result>|$)/gi, '')
+    .replace(/<tool_calls[\s\S]*?(?:<\/tool_calls>|$)/gi, '')
+    .replace(/<\/?(?:tool_result|tool_calls?|function_call)[^>]*>/gi, '')
+  let text = cleaned.replace(/\r\n?/g, '\n')
   let removed = false
   // 缺右括号的残片按本行丢弃；引号内的括号属于昵称，不提前结束元数据。
   for (;;) {

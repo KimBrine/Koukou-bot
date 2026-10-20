@@ -46,6 +46,33 @@ function setup({config={},getMsg,forwards={},chat,chatSettings,rateLimiter,visio
 const lastUser=t=>t.requests.at(-1)[1].at(-1).content
 const shape=t=>t.requests.at(-1)[0].match(/【本次回复的形态要求[^]*?(?=\n\n【|$)/)?.[0]
 try {
+  await test('多搜索调用保留所有工具回执与思考内容，实际最多执行两次',async()=>{
+    let round=0,searches=0
+    const calls=[1,2,3].map(i=>({id:'call'+i,type:'function',function:{name:'web_search',arguments:JSON.stringify({query:'测试'+i})}}))
+    const t=setup({webSearch:async()=>{searches++;return {summary:'资料'}},chatRaw:messages=>{
+      if(++round===1)return {content:'',reasoningContent:'tool reasoning',toolCalls:calls}
+      const assistant=messages.find(m=>m.tool_calls)
+      assert.equal(assistant.reasoning_content,'tool reasoning');assert.equal(assistant.tool_calls.length,3)
+      assert.equal(messages.filter(m=>m.role==='tool').length,3)
+      return {content:'根据资料回答',toolCalls:null}
+    }})
+    await t.bot.handleMessage(t.event([at(),text('查一下')]))
+    assert.equal(searches,2);assert.ok(t.sent.length)
+  })
+  await test('识图热切换隔离缓存、无可用客户端不进入识图流程',async()=>{
+    let active={baseUrl:'https://example.test',model:'vision-a',describeImages:async()=> '红色方形图案'}
+    const scopes=[]
+    const t=setup({visionLLM:{snapshot:()=>active},imageCache:{async load(){return {hash:'same-image',part:{type:'image_url',image_url:{url:'data:image/png;base64,eA=='}}}},async describe(hashes,scope,read){scopes.push(scope);return read()}}})
+    const msg=()=>t.event([at(),text('看看这张图'),{type:'image',data:{file:'image'}}])
+    await t.bot.handleMessage(msg())
+    active={...active,model:'vision-b',describeImages:async()=> '蓝色圆形图案'}
+    await t.bot.handleMessage(msg())
+    assert.equal(scopes.length,2);assert.notEqual(scopes[0],scopes[1])
+    active=null
+    const before=t.sent.length
+    await t.bot.handleMessage(msg())
+    assert.equal(scopes.length,2);assert.ok(t.sent.length>before,'无客户端时仍能正常处理文字')
+  })
   await test('表情包必须配文字，模型选图不能绕过0概率；只有标记时先修正文案',async()=>{
     const item={id:'sticker',name:'猫猫问号'}
     const stickers={count:()=>1,summary:()=>item.name,find:q=>q===item.name?item:null,pick:()=>item,dataUrlOf:()=> 'base64://eA=='}

@@ -11,6 +11,7 @@ import { OneBotClient } from './onebot.js'
 import { createBot, imageToDataUrl } from './bot.js'
 import { createImageCache } from './imageCache.js'
 import { loadVisionKnowledge, createGroundedVisionClient } from './visionKnowledge.js'
+import { createVisionProviders } from './visionProviders.js'
 import { createSummaryVisionClient } from './summaryReferences.js'
 import { createDailySummary, buildSummaryPrompt } from './dailySummary.js'
 import { createWebSearch } from './search.js'
@@ -122,7 +123,7 @@ const llm = new DeepSeekClient({
   baseUrl: config.deepseekBaseUrl,
   model: config.deepseekModel,
   temperature: config.temperature,
-  maxTokens: config.maxTokens,
+  maxTokens: () => config.maxTokens,
   timeoutMs: config.timeoutMs,
   maxRetries: config.maxRetries,
   maxConcurrency: config.maxConcurrency,
@@ -139,28 +140,77 @@ const llm = new DeepSeekClient({
 //   差的 21 倍几乎全在输出长度上 —— 提示词里写了"120 字以内"，qwen 并不照做。
 // 注意：deepseek-v4-pro **不能读图**（会回"无法查看图片"），别拿它当视觉模型。
 const visionKnowledge = loadVisionKnowledge(config.dataDir, logger)
-let visionLLM = null
-if (config.visionProvider === 'deepseek' ? config.deepseekApiKey : config.dashscopeApiKey) {
-  const isDeepseek = config.visionProvider === 'deepseek'
-  visionLLM = new DeepSeekClient({
-    apiKey: isDeepseek ? config.deepseekApiKey : config.dashscopeApiKey,
-    baseUrl: isDeepseek ? config.deepseekBaseUrl : config.dashscopeBaseUrl,
-    model: isDeepseek ? config.visionModel || 'deepseek-flash' : config.dashscopeModel,
+// 多个自定义识图接口（存放在实例数据目录，不进仓库）
+const visionProviders = createVisionProviders({
+  file: path.join(config.dataDir, 'vision-providers.json'),
+  logger,
+  legacy: { baseUrl: config.visionCustomBaseUrl, apiKey: config.visionCustomApiKey, model: config.visionCustomModel },
+})
+if(config.visionProvider==='custom'&&visionProviders.list()[0])config.visionProvider='custom:'+visionProviders.list()[0].id
+// 识图客户端：可在 DeepSeek 与通义千问之间热切换（不需要重启）
+function customEndpoint(id) {
+  const vp = id ? visionProviders.get(id) : null
+  if (!vp || !vp.baseUrl || !vp.apiKey || !vp.model) return null
+  return { provider: 'custom:' + vp.id, key: vp.apiKey, baseUrl: vp.baseUrl, model: vp.model || '', label: (vp.name || '自定义') + ' 识图', reasoningEffort: undefined, enableThinking: undefined }
+}
+function visionEndpoint(provider) {
+  const raw = String(provider || 'deepseek')
+  if (raw.startsWith('custom:')) return customEndpoint(raw.slice(7))
+  const p = raw.toLowerCase()
+  if (p === 'custom') {
+    const first = visionProviders.list()[0]
+    return first ? customEndpoint(first.id) : null
+  }
+  if (p === 'deepseek') {
+    if (!config.deepseekApiKey) return null
+    return {
+      provider: 'deepseek', key: config.deepseekApiKey, baseUrl: config.deepseekBaseUrl,
+      model: config.visionModel || 'deepseek-flash', label: 'DeepSeek 视觉',
+      reasoningEffort: config.deepseekReasoningEffort, enableThinking: undefined,
+    }
+  }
+  if (!config.dashscopeApiKey) return null
+  return {
+    provider: 'dashscope', key: config.dashscopeApiKey, baseUrl: config.dashscopeBaseUrl,
+    model: config.dashscopeModel, label: '通义千问VL', reasoningEffort: undefined,
+    enableThinking: isQwenHybridModel(config.dashscopeModel) ? config.dashscopeThinking : undefined,
+  }
+}
+function makeClient(ep) {
+  if (!ep) return null
+  return new DeepSeekClient({
+    apiKey: ep.key, baseUrl: ep.baseUrl, model: ep.model,
     temperature: config.temperature,
-    // 识图回复硬性限长：真人看到表情包只会随口吐槽一两句，不需要长篇分析
     maxTokens: Math.min(config.maxTokens, 300),
-    timeoutMs: config.timeoutMs,
-    maxRetries: config.maxRetries,
-    maxConcurrency: config.maxConcurrency,
-    logger,
-    label: isDeepseek ? 'DeepSeek 视觉' : '通义千问VL',
-    reasoningEffort: isDeepseek ? config.deepseekReasoningEffort : undefined,
-    enableThinking: !isDeepseek && isQwenHybridModel(config.dashscopeModel) ? config.dashscopeThinking : undefined,
+    timeoutMs: config.timeoutMs, maxRetries: config.maxRetries,
+    maxConcurrency: config.maxConcurrency, logger, label: ep.label,
+    reasoningEffort: ep.reasoningEffort, enableThinking: ep.enableThinking,
   })
 }
-
-// 每日总结模型：独立客户端（token 预算大）；可切换提供方（DeepSeek / 通义千问）
-visionLLM = createGroundedVisionClient(visionLLM, visionKnowledge, logger)
+let visionActive = null
+let lastVisionLabel = ''
+function rebuildVision() {
+  const ep = visionEndpoint(config.visionProvider)
+  visionActive = createGroundedVisionClient(makeClient(ep), visionKnowledge, logger)
+  const label = visionActive
+    ? '视觉模型：' + visionActive.model + '（' + (ep ? ep.label : config.visionProvider) + '）'
+    : '视觉模型未启用：' + config.visionProvider + ' 没有可用 Key'
+  if (label !== lastVisionLabel) { lastVisionLabel = label; logger.info(label) }
+  return visionActive
+}
+rebuildVision()
+// 对外始终是同一个对象，调用时才取当前生效的客户端，所以切换后立即生效
+const visionLLM = new Proxy({}, {
+  get(_t, prop) {
+    if (prop === 'snapshot') return () => visionActive
+    if (prop === 'provider') return config.visionProvider
+    const target = visionActive
+    if (!target) return undefined
+    const value = target[prop]
+    return typeof value === 'function' ? value.bind(target) : value
+  },
+  has(_t, prop) { return prop === 'provider' || Boolean(visionActive && prop in visionActive) },
+})
 if (visionKnowledge) logger.info(`[角色辨认] 已加载本地对照资料：${visionKnowledge.characters.length} 个角色、${visionKnowledge.references.length} 张参考图；缓存版本 ${visionKnowledge.version.slice(0, 12)}`)
 const useQwenForSummary = Boolean(config.summaryModel) && config.summaryProvider === 'dashscope'
 const summaryLLM = new DeepSeekClient({
@@ -218,13 +268,70 @@ const stickerFilterLLM = config.deepseekApiKey ? new DeepSeekClient({
   timeoutMs: Math.max(config.timeoutMs, 180000), maxRetries: config.maxRetries,
   maxConcurrency: 1, logger, label: '表情包初筛(DeepSeek Flash)',
 }) : null
-const stickerTagLLM = createSummaryVisionClient({ config: { ...config, summaryUnrestricted: true }, logger })
+// 打标优先用 DashScope；没有 Key 时回退到 DeepSeek 读图（实测 1 秒、描述准确），
+// 这样表情包学习不需要额外申请 DashScope。
+let tagActive = null
+let lastTagLabel = ''
+function rebuildStickerTag() {
+  const prefer = String(config.stickerTagProvider || 'auto').toLowerCase()
+  const chain = prefer === 'auto' ? ['dashscope', 'deepseek', 'custom'] : [prefer]
+  let ep = null
+  for (const p of chain) { ep = visionEndpoint(p); if (ep) break }
+  tagActive = makeClient(ep)
+  const label = tagActive
+    ? '表情包打标：' + tagActive.model + '（' + (ep ? ep.label : '?') + '）'
+    : '表情包打标未启用：没有可用的识图模型'
+  if (label !== lastTagLabel) { lastTagLabel = label; logger.info(label) }
+  return tagActive
+}
+rebuildStickerTag()
+const stickerTagLLM = new Proxy({}, {
+  get(_t, prop) {
+    if (prop === 'snapshot') return () => tagActive
+    const target = tagActive
+    if (!target) return undefined
+    const value = target[prop]
+    return typeof value === 'function' ? value.bind(target) : value
+  },
+  has(_t, prop) { return Boolean(tagActive && prop in tagActive) },
+})
 const stickerLearner = createStickerLearner({ config, logger, onebot, stickers,
   filterLLM: stickerFilterLLM, tagLLM: stickerTagLLM, imageCache: sharedImageCache })
 const commandCenter = createCommandCenter({file:path.join(config.dataDir,'command-center.json'),customCommands,config,logger,llm})
 
-// 联网搜索（百度千帆）：仅私聊与被@时可用，模型自行判断是否需要
-const webSearch = createWebSearch({ apiKey: config.baiduApiKey, timeoutMs: 20000, logger })
+// 联网搜索：仅私聊与被@时可用，由模型自己判断这句话要不要搜
+const webSearchState = { enabled: config.webSearchEnabled !== false, model: config.webSearchModel, provider: config.webSearchProvider }
+let webSearchImpl = null
+function resolveSearchProvider(configured, model) {
+  return String(configured || 'auto').toLowerCase()
+}
+function rebuildWebSearch() {
+  try{webSearchImpl = createWebSearch({
+    apiKey: config.baiduApiKey,
+    dashscopeApiKey: config.dashscopeApiKey,
+    deepseekApiKey: config.deepseekApiKey,
+    dashscopeModel: webSearchState.model,
+    provider: webSearchState.enabled ? resolveSearchProvider(webSearchState.provider, webSearchState.model) : 'off',
+    timeoutMs: 20000,
+    logger,
+  })}catch(error){webSearchImpl=null;logger.warn('联网搜索暂不可用：'+error.message)}
+}
+rebuildWebSearch()
+const webSearch = async (query) => {
+  if (!webSearchState.enabled) throw new Error('联网搜索已关闭')
+  if (!webSearchImpl) throw new Error('联网搜索未启用')
+  return webSearchImpl(query)
+}
+Object.defineProperty(webSearch, 'isEnabled', { get: () => Boolean(webSearchState.enabled && webSearchImpl) })
+Object.defineProperty(webSearch, 'providerName', { get: () => (webSearchImpl && webSearchImpl.providerName) || 'off' })
+webSearch.setOptions = (patch) => {
+  if (patch && patch.provider) webSearchState.provider = patch.provider
+  if (patch && 'enabled' in patch) webSearchState.enabled = Boolean(patch.enabled)
+  if (patch && patch.model) webSearchState.model = String(patch.model).trim() || webSearchState.model
+  rebuildWebSearch()
+  logger?.info?.('[控制台] 联网搜索已更新：' + (webSearchState.enabled ? ('开启（' + webSearch.providerName + '，' + webSearchState.model + '）') : '关闭'))
+  return { enabled: webSearchState.enabled, model: webSearchState.model, provider: webSearch.providerName }
+}
 
 // 总结提示词：先注入当前实例人格，再给出报告格式与统计要求。
 const summaryPromptFn = (opts) => {
@@ -315,6 +422,10 @@ if (config.adminEnabled) {
     llm,
     stickers,
     commandCenter,
+    switchVision: () => { rebuildVision(); rebuildStickerTag() },
+    webSearch,
+    switchWebSearch: (patch) => webSearch.setOptions(patch),
+    visionProviders,
     restartBot: () => {
       // 让一个独立进程在 1.2 秒后杀掉当前实例并用计划任务重新拉起（避免自己杀自己杀不干净）
       //
@@ -420,7 +531,7 @@ if (config.mutedGroups && config.mutedGroups.size > 0) {
     .join('｜')
   logger.info(`白名单群主动搭话概率：${desc || `全局 ${Math.round(config.proactiveRate * 100)}%`}（冷却 ${Math.round(config.proactiveCooldownMs / 1000)}s）`)
 }
-logger.info(webSearch ? '联网搜索已启用（百度千帆，私聊/被@时模型按需调用）' : '联网搜索未启用（未配置 BAIDU_QIANFAN_API_KEY）')
+logger.info(webSearch.isEnabled ? `联网搜索已启用（${{baidu:'百度千帆',deepseek:'DeepSeek 搜索',dashscope:'通义千问 API',bing:'必应网页兜底'}[webSearch.providerName] || webSearch.providerName}，私聊/被@时由模型自行决定要不要搜）` : '联网搜索未启用（控制台已关闭，或 WEB_SEARCH_PROVIDER=off）')
 logger.info(commandCenter.enabled('poke') ? `拍一拍回应已启用（冷却 ${Math.round(config.pokeCooldownMs / 1000)}s，语料 poke-replies.txt）` : '拍一拍回应未启用（POKE_REPLY_ENABLED=0）')
 logger.info(commandCenter.enabled('auto-plus-one') ? '自动+1已启用：仅白名单群，两条连续相同文字消息（可夹QQ自带表情）后原生跟一次；图片/纯表情不跟读，不受静音/安静时段限制，不调用模型' : '自动+1未启用（AUTO_PLUS_ONE_ENABLED=0）')
 logger.info(config.longMemoryEnabled
@@ -455,7 +566,7 @@ logger.info(`管理员（ADMIN_USERS）：${config.adminUsers.length ? config.ad
   const cmds = typeof customCommands?.all === 'function' ? customCommands.all() : []
   const sched = cmds.filter((c) => c.scheduleEnabled && (c.scheduleTimes || []).length).length
   logger.info(`自定义指令：${cmds.length} 条${sched ? `（其中 ${sched} 条带定时推送）` : ''}`)
-  logger.info(`表情包：${stickers.count()} 张${config.stickersEnabled ? '' : '（已关闭）'}${config.stickerLearnEnabled ? `｜群聊学习开启（每小时 ${config.stickerLearnPerHour} 张）` : ''}${config.stickerAutoRate > 0 ? `｜主动发 ${Math.round(config.stickerAutoRate * 100)}%` : ''}`)
+  logger.info(`表情包：${stickers.count()} 张${config.stickersEnabled ? '' : '（已关闭）'}${config.stickerLearnEnabled ? `｜群聊学习开启（每小时 ${config.stickerLearnPerHour} 张）` : ''}${config.stickerAutoRate > 0 ? `｜主动发 ${Math.round(config.stickerAutoRate * 100)}%` : ''}${stickerTagLLM ? `｜打标 ${stickerTagLLM.model}` : ''}`)
 }
 
 dailySummary.schedule()

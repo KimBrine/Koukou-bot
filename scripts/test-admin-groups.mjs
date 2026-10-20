@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readUiSource, readUiScript } from './ui-source.mjs'
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -42,8 +43,8 @@ try {
   assert.equal(groups.items[0].name,'示例群 A')
   assert.match(readFileSync(envFile,'utf8'), /# preserve comment/)
   assert.match(readFileSync(envFile,'utf8'), /UNRELATED=keep/)
-  const html = readFileSync(new URL('../src/admin/ui.html',import.meta.url),'utf8')
-  new vm.Script(html.match(/<script>([\s\S]*?)<\/script>/)[1])
+  const html = readUiSource()
+  new vm.Script(readUiScript())
   console.log('Group management checks passed: persistence, deduplication, invalid input, preserved settings, probability precedence, UI syntax')
 } finally {
   admin.server.close()

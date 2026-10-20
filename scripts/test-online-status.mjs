@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readUiSource } from './ui-source.mjs'
 import { readFileSync } from 'node:fs'
 import { OneBotClient } from '../src/onebot.js'
 const logger={info(){},warn(){}}
@@ -98,7 +99,7 @@ await test('状态查询中收到离线事件，过时的 get_status 在线回�
   await pending;assert.equal(ob.status().qqOnline,false)
 })
 await test('控制台文案区分缓存在线、实际异常与成功核验',async()=>{
-  const html=readFileSync(new URL('../src/admin/ui.html',import.meta.url),'utf8')
+  const html = readUiSource()
   const source=html.match(/function accountStatusText\(b = \{\}\) \{[\s\S]*?\n\}/)?.[0]
   assert.ok(source)
   const label=new Function(`${source};return accountStatusText`)()

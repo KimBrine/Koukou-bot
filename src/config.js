@@ -157,6 +157,10 @@ export function loadConfig() {
     // 视觉模型（通义千问 DashScope，OpenAI 兼容模式），用于读图/表情包
     // 用哪个服务商读图：deepseek（实测快 21 倍）或 dashscope。见 src/index.js 顶部的实测数据。
     visionProvider: String(env.VISION_PROVIDER ?? 'dashscope').trim().toLowerCase(),
+    // 自定义识图（任意 OpenAI 兼容的多模态接口）
+    visionCustomBaseUrl: String(env.VISION_CUSTOM_BASE_URL ?? '').trim().replace(/\/+$/, ''),
+    visionCustomApiKey: String(env.VISION_CUSTOM_API_KEY ?? '').trim(),
+    visionCustomModel: String(env.VISION_CUSTOM_MODEL ?? '').trim(),
     // provider=deepseek 时读图用哪个模型（deepseek-v4-pro **不能读图**，别填它）
     visionModel: String(env.VISION_MODEL ?? 'deepseek-flash').trim(),
     dashscopeApiKey: String(env.DASHSCOPE_API_KEY ?? '').trim(),
@@ -224,8 +228,11 @@ export function loadConfig() {
     // 白名单群主动搭话最短间隔（毫秒，0=不限制）
     proactiveCooldownMs: Math.max(0, Math.floor(num('PROACTIVE_COOLDOWN_MS', 180000))),
 
-    // 联网搜索（百度千帆 AI Search）
+    // 联网搜索：有千帆 Key 走千帆，否则必应网页（免密钥）
     baiduApiKey: String(env.BAIDU_QIANFAN_API_KEY ?? '').trim(),
+    webSearchProvider: String(env.WEB_SEARCH_PROVIDER ?? 'auto').trim().toLowerCase(),
+    webSearchModel: String(env.WEB_SEARCH_MODEL ?? 'qwen-plus').trim() || 'qwen-plus',
+    webSearchEnabled: ['1', 'true'].includes(String(env.WEB_SEARCH_ENABLED ?? '1').trim().toLowerCase()),
 
     // 拍一拍回应（双击头像）
     pokeEnabled: String(env.POKE_REPLY_ENABLED ?? '1').toLowerCase() !== '0' && String(env.POKE_REPLY_ENABLED ?? '1').toLowerCase() !== 'false',
@@ -317,6 +324,8 @@ export function loadConfig() {
     replyLengthMatch: String(env.REPLY_LENGTH_MATCH ?? '1').toLowerCase() !== '0' && String(env.REPLY_LENGTH_MATCH ?? '1').toLowerCase() !== 'false',
     // 长回答模式：开启后不再"跟着对方字数"压缩，允许写完整过程（解题/写代码时用）
     replyLongMode: false, // 兼容旧配置字段；解题只由当前消息/Q触发
+    // 最小回复预算（字）：0 = 完全跟随对方长度（上游默认）；大于 0 时短问题也至少给这么多字数
+    replyMinBudget: Math.max(0, Math.min(300, Math.floor(num('REPLY_MIN_BUDGET', 0)))),
     replyMaxLines: Math.max(1, Math.min(20, Math.floor(num('REPLY_MAX_LINES', 3)))),
     replyLineMaxChars: Math.max(10, Math.min(1000, Math.floor(num('REPLY_LINE_MAX_CHARS', 40)))),
     // 分条发送之间的间隔（比首次"打字"短：第二条是想接着说的，不该等太久）
@@ -338,6 +347,10 @@ export function loadConfig() {
     stickerAutoRate: Math.min(1, Math.max(0, num('STICKER_AUTO_RATE', 35) / 100)),
     // 从独立指定的群学习表情包，留空不采集，不继承聊天白名单
     stickerLearnGroups: new Set(String(env.STICKER_LEARN_GROUPS ?? '').split(/[,，\s]+/).filter(x => /^\d+$/.test(x) && Number(x) > 0).map(Number)),
+    // 表情包打标（二次审核）用哪个模型：auto = 有通义用通义，否则 DeepSeek，再否则自定义
+    stickerTagProvider: String(env.STICKER_TAG_PROVIDER ?? 'auto').trim().toLowerCase(),
+    // 私聊也学习表情包（默认关闭，只在开启后生效）
+    stickerLearnPrivate: ['1', 'true'].includes(String(env.STICKER_LEARN_PRIVATE ?? '0').trim().toLowerCase()),
     stickerLearnEnabled: ['1', 'true'].includes(String(env.STICKER_LEARN_ENABLED ?? '0').trim().toLowerCase()),
     // 每小时最多学习几张，防止刷屏式采集和 API 花销
     stickerLearnPerHour: Math.max(0, Math.min(60, Math.floor(num('STICKER_LEARN_PER_HOUR', 6)))),
@@ -348,7 +361,8 @@ export function loadConfig() {
     stickerCooldownSeconds: Math.max(0, Math.min(86400, num('STICKER_COOLDOWN_SECONDS', 0))),
     stickerMaxPerReply: Math.max(1, Math.min(3, Math.floor(num('STICKER_MAX_PER_REPLY', 1)))),
     temperature: Math.min(2, Math.max(0, num('TEMPERATURE', 1.2))),
-    maxTokens: Math.max(1, Math.floor(num('MAX_TOKENS', 500))),
+    // 默认给足空间：思考强度开启时 500 会被推理吃光，导致回复被截断/空回复
+    maxTokens: Math.max(256, Math.floor(num('MAX_TOKENS', 4096))),
     timeoutMs: Math.max(5000, Math.floor(num('TIMEOUT_MS', 90000))),
     maxRetries: Math.max(0, Math.min(5, Math.floor(num('MAX_RETRIES', 2)))),
     maxConcurrency: Math.max(1, Math.min(8, Math.floor(num('MAX_CONCURRENCY', 2)))),
