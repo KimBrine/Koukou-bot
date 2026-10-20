@@ -207,7 +207,7 @@ function validateGroupConfig(key, value) {
   }
 }
 
-export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, quietGreetings, personaGreetings, bot, customCommands, commandCenter, llm, stickers, switchVision, restartBot }) {
+export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, quietGreetings, personaGreetings, bot, customCommands, commandCenter, llm, stickers, switchVision, visionProviders, restartBot }) {
   // 本实例自己的 .env（并行跑两个实例时，写死 rootDir\.env 会改到另一个实例的配置上）
   const envFile = config.envFile || path.join(config.rootDir, '.env')
   const logFile = path.join(config.logDir || path.join(config.rootDir, 'logs'), 'bot.log')
@@ -383,10 +383,17 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         visionModel: (() => {
           const provider = String(config.visionProvider ?? 'dashscope').toLowerCase()
           const isDeepseek = provider === 'deepseek'
-          const isCustom = provider === 'custom'
-          const key = isCustom ? config.visionCustomApiKey : isDeepseek ? config.deepseekApiKey : config.dashscopeApiKey
+          const isCustom = provider === 'custom' || provider.startsWith('custom:')
+          if (isCustom) {
+            const id = provider.startsWith('custom:') ? provider.slice(7) : ''
+            const vp = id && typeof visionProviders?.get === 'function' ? visionProviders.get(id) : null
+            if (!vp && !config.visionCustomApiKey) return null
+            const model = (vp && vp.model) || config.visionCustomModel || '未填模型'
+            const name = (vp && vp.name) || '自定义'
+            return model + '（' + name + '）'
+          }
+          const key = isDeepseek ? config.deepseekApiKey : config.dashscopeApiKey
           if (!key) return null
-          if (isCustom) return (config.visionCustomModel || '未填模型') + '（自定义）'
           return isDeepseek
             ? (config.visionModel || 'deepseek-flash') + '（DeepSeek）'
             : config.dashscopeModel + '（DashScope）'
@@ -422,6 +429,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         visionCustomModel: config.visionCustomModel,
         visionModelDeepseek: config.visionModel || '',
         visionCustomReady: Boolean(config.visionCustomApiKey && config.visionCustomBaseUrl && config.visionCustomModel),
+        visionProviders: typeof visionProviders?.list === 'function' ? visionProviders.list() : [],
         visionModelDashscope: config.dashscopeModel || '',
         stickerTagProvider: config.stickerTagProvider,
         visionModelName: config.visionProvider === 'deepseek' ? (config.visionModel || 'deepseek-flash') : config.dashscopeModel,
@@ -460,6 +468,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       const items = [...map.values()].sort((a, b) => b.recent + b.longTermChars - (a.recent + a.longTermChars))
       return { persona: config.activePersona || '', items }
     },
+    'GET /api/vision-providers': async () => ({ items: typeof visionProviders?.list === 'function' ? visionProviders.list() : [] }),
     'GET /api/models': async () => ({
       providers: PROVIDERS,
       levels: REASONING_LEVELS,
@@ -663,7 +672,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         break
       case 'VISION_PROVIDER': {
         const v = String(value || '').trim().toLowerCase()
-        if (!['deepseek', 'dashscope', 'custom'].includes(v)) throw new Error('识图服务商只能是 deepseek / dashscope / custom')
+        if (!['deepseek', 'dashscope', 'custom'].includes(v) && !/^custom:[\w-]+$/.test(v)) throw new Error('识图服务商取值不合法')
         config.visionProvider = v
         // 即时重建识图客户端；失败只记录，不影响其它配置
         try { switchVision?.() } catch (err) { logger?.warn?.('[控制台] 切换识图模型失败：' + err.message) }
@@ -1010,10 +1019,35 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       const st = targetWatch.configure({ enabled: true, groupId: String(gid), userId: uid })
       return { ok: true, ...st }
     },
+    async 'vision-provider-add'(payload) {
+      if (!visionProviders) throw new Error('当前版本不支持多自定义识图')
+      const item = visionProviders.add({ name: payload?.name, baseUrl: payload?.baseUrl, apiKey: payload?.apiKey, model: payload?.model })
+      logger?.info?.('[控制台] 新增自定义识图：' + item.name)
+      return { ok: true, item }
+    },
+    async 'vision-provider-update'(payload) {
+      if (!visionProviders) throw new Error('当前版本不支持多自定义识图')
+      const item = visionProviders.update(String(payload?.id || ''), { name: payload?.name, baseUrl: payload?.baseUrl, apiKey: payload?.apiKey, model: payload?.model })
+      try { switchVision?.() } catch (err) { logger?.warn?.('[控制台] 重建识图失败：' + err.message) }
+      return { ok: true, item }
+    },
+    async 'vision-provider-delete'(payload) {
+      if (!visionProviders) throw new Error('当前版本不支持多自定义识图')
+      const id = String(payload?.id || '')
+      const active = String(config.visionProvider || '')
+      const ok = visionProviders.remove(id)
+      if (ok && active === 'custom:' + id) {
+        config.visionProvider = 'deepseek'
+        try { switchVision?.() } catch (err) { logger?.warn?.('[控制台] 重建识图失败：' + err.message) }
+      }
+      return { ok }
+    },
     async 'detect-vision-models'(payload) {
-      const provider = String(payload?.provider || config.visionProvider || 'deepseek').toLowerCase()
-      const ep = provider === 'custom'
-        ? { baseUrl: String(payload?.baseUrl || config.visionCustomBaseUrl || ''), apiKey: String(payload?.apiKey || config.visionCustomApiKey || '') }
+      const provider = String(payload?.provider || config.visionProvider || 'deepseek')
+      const customId = provider.startsWith('custom:') ? provider.slice(7) : (provider === 'custom' ? (visionProviders?.list?.()[0]?.id || '') : '')
+      const customRec = customId && visionProviders ? visionProviders.get(customId) : null
+      const ep = provider.startsWith('custom') || provider === 'custom'
+        ? { baseUrl: String(payload?.baseUrl || customRec?.baseUrl || ''), apiKey: String(payload?.apiKey || customRec?.apiKey || '') }
         : provider === 'dashscope'
           ? { baseUrl: config.dashscopeBaseUrl, apiKey: config.dashscopeApiKey }
           : { baseUrl: config.deepseekBaseUrl, apiKey: config.deepseekApiKey }

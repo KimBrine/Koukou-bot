@@ -11,6 +11,7 @@ import { OneBotClient } from './onebot.js'
 import { createBot, imageToDataUrl } from './bot.js'
 import { createImageCache } from './imageCache.js'
 import { loadVisionKnowledge, createGroundedVisionClient } from './visionKnowledge.js'
+import { createVisionProviders } from './visionProviders.js'
 import { createSummaryVisionClient } from './summaryReferences.js'
 import { createDailySummary, buildSummaryPrompt } from './dailySummary.js'
 import { createWebSearch } from './search.js'
@@ -139,15 +140,25 @@ const llm = new DeepSeekClient({
 //   差的 21 倍几乎全在输出长度上 —— 提示词里写了"120 字以内"，qwen 并不照做。
 // 注意：deepseek-v4-pro **不能读图**（会回"无法查看图片"），别拿它当视觉模型。
 const visionKnowledge = loadVisionKnowledge(config.dataDir, logger)
+// 多个自定义识图接口（存放在实例数据目录，不进仓库）
+const visionProviders = createVisionProviders({
+  file: path.join(config.dataDir, 'vision-providers.json'),
+  logger,
+  legacy: { baseUrl: config.visionCustomBaseUrl, apiKey: config.visionCustomApiKey, model: config.visionCustomModel },
+})
 // 识图客户端：可在 DeepSeek 与通义千问之间热切换（不需要重启）
+function customEndpoint(id) {
+  const vp = id ? visionProviders.get(id) : null
+  if (!vp || !vp.baseUrl || !vp.apiKey) return null
+  return { provider: 'custom:' + vp.id, key: vp.apiKey, baseUrl: vp.baseUrl, model: vp.model || '', label: (vp.name || '自定义') + ' 识图', reasoningEffort: undefined, enableThinking: undefined }
+}
 function visionEndpoint(provider) {
-  const p = String(provider || 'deepseek').toLowerCase()
+  const raw = String(provider || 'deepseek')
+  if (raw.startsWith('custom:')) return customEndpoint(raw.slice(7))
+  const p = raw.toLowerCase()
   if (p === 'custom') {
-    if (!config.visionCustomApiKey || !config.visionCustomBaseUrl) return null
-    return {
-      provider: 'custom', key: config.visionCustomApiKey, baseUrl: config.visionCustomBaseUrl,
-      model: config.visionCustomModel || '', label: '自定义识图', reasoningEffort: undefined, enableThinking: undefined,
-    }
+    const first = visionProviders.list()[0]
+    return first ? customEndpoint(first.id) : null
   }
   if (p === 'deepseek') {
     if (!config.deepseekApiKey) return null
@@ -378,6 +389,7 @@ if (config.adminEnabled) {
     stickers,
     commandCenter,
     switchVision: () => { rebuildVision(); rebuildStickerTag() },
+    visionProviders,
     restartBot: () => {
       // 让一个独立进程在 1.2 秒后杀掉当前实例并用计划任务重新拉起（避免自己杀自己杀不干净）
       //
