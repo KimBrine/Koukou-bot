@@ -254,10 +254,11 @@ export function createStickers({ dir, logger, now = () => Date.now() }) {
 /** 从一段文字里取出 [贴纸: xxx] 标记，返回去掉标记的文本与按顺序的查询词 */
 export function extractStickerMarkers(text) {
   const queries = []
-  const cleaned = String(text || '').replace(/\[贴纸[:：]\s*([^\]\n]{1,40})\]/g, (_, q) => {
+  let requested=false
+  const cleaned = String(text || '').replace(/\[索要表情包\]/g,()=>{requested=true;return ''}).replace(/\[贴纸[:：]\s*([^\]\n]{1,40})\]/g, (_, q) => {
     const v = String(q).trim()
     if (v) queries.push(v)
     return ''
   }).replace(/\n{3,}/g, '\n\n').replace(/[ \t]+$/gm, '').trim()
-  return { text: cleaned, queries }
+  return { text: cleaned, queries, requested }
 }
