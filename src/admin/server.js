@@ -95,6 +95,7 @@ const EDITABLE = [
   { key: 'DEEPSEEK_BASE_URL', label: '接口地址（Base URL）', hint: 'OpenAI 兼容地址，例如 https://api.deepseek.com', live: true, type: 'text', wide: true },
   { key: 'DEEPSEEK_MODEL', label: '对话模型', hint: '建议先用「自动检测模型」拿到列表再选', live: true, type: 'text' },
   { key: 'DEEPSEEK_REASONING_EFFORT', label: 'DeepSeek 思考强度', hint: 'none / low / high / max；留空 = 不发送。统一用于对话、指令理解与识图；max 更慢更贵', live: true, type: 'text' },
+  { key: 'REPLY_TIMING_ENABLED', label: '显示思考耗时', hint: '1 开启：每条回复末尾附加「（想了 X.X 秒）」；0 关闭（日志里始终有记录）', live: true, type: 'text' },
   { key: 'STICKERS_ENABLED', label: '表情包库', hint: '1 开启，0 关闭；开启后模型可用 [贴纸: 名称] 指定发图', live: true, type: 'text' },
   { key: 'STICKER_LEARN_ENABLED', label: '从群聊学习表情包', hint: '1 开启：白名单群里别人发的图会自动收藏并打标签；0 关闭', live: true, type: 'text' },
   { key: 'STICKER_LEARN_PER_HOUR', label: '每小时最多学习几张', hint: '0 = 不学；建议 3~10，避免刷屏式采集', live: true, type: 'number' },
@@ -605,6 +606,9 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         if (llm) llm.reasoningEffort = level
         break
       }
+      case 'REPLY_TIMING_ENABLED':
+        config.replyTimingEnabled = ['1', 'true'].includes(String(value ?? '').trim().toLowerCase())
+        break
       case 'STICKERS_ENABLED':
         config.stickersEnabled = !['0', 'false'].includes(String(value ?? '').trim().toLowerCase())
         break

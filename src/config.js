@@ -329,6 +329,8 @@ export function loadConfig() {
     longMemoryIntervalMs: Math.max(60000, Math.floor(num('LONG_MEMORY_INTERVAL_MS', 600000))),
 
     // 表情包库：模型可以在回复里用 [贴纸: 关键词] 让程序发图
+    // 在回复末尾显示本次"思考耗时"（默认关；开了方便直观看到模型快慢）
+    replyTimingEnabled: ['1', 'true'].includes(String(env.REPLY_TIMING_ENABLED ?? '0').trim().toLowerCase()),
     stickersEnabled: !['0', 'false'].includes(String(env.STICKERS_ENABLED ?? '1').trim().toLowerCase()),
     // 主动发表情包的概率（百分比）：0 = 只有模型明确要求时才发
     stickerAutoRate: Math.min(1, Math.max(0, num('STICKER_AUTO_RATE', 0) / 100)),

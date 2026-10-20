@@ -675,6 +675,10 @@ function pageMemory(){
     '</section>'
   ].join('')
 }
+function configFlag(key){
+  const it = (configItems || []).find(function(x){ return x.key === key })
+  return Boolean(it && String(it.value).trim() === '1')
+}
 function modelPickerCard(){
   const m = modelsInfo || {}
   const cur = m.current || {}
@@ -700,6 +704,7 @@ function modelPickerCard(){
     '<div class="frow"><label>密钥</label><div><input id="mpKey" type="password" placeholder="' + (cur.hasKey ? '已配置，留空表示不修改' : '填 API Key') + '"><div class="mut" style="font-size:12px;margin-top:4px">检测模型和保存都会用到；不会显示明文</div></div></div>',
     '<div class="frow"><label>型号</label><div><select id="mpModel">' + modelOpts + '</select><div class="mut" id="mpHint" style="font-size:12px;margin-top:4px">' + (modelList.length ? ('已检测到 ' + modelList.length + ' 个型号') : '还没检测，点下面的按钮获取列表') + '</div></div></div>',
     '<div class="frow"><label>思考强度</label><div><select id="mpReason">' + lvls + '</select><div class="mut" style="font-size:12px;margin-top:4px">不是所有服务商都支持；报错就改回「关闭」</div></div></div>',
+    '<div class="frow"><label>显示耗时</label><div><label class="chk"><input type="checkbox" id="mpTiming"' + (configFlag('REPLY_TIMING_ENABLED') ? ' checked' : '') + '> 在回复末尾显示「（想了 X.X 秒）」</label><div class="mut" style="font-size:12px;margin-top:4px">关闭后群里看不到，但日志里始终有 [耗时] 记录</div></div></div>',
     '<div class="flexbar"><button class="btn" id="mpDetect">自动检测模型</button><button class="btn" id="mpSaveBase">保存地址/密钥</button></div>',
     '<div class="mut" id="mpStatus" style="margin-top:8px">当前：' + esc(cur.provider || '-') + ' · ' + esc(cur.model || '-') + ' · 思考 ' + esc(cur.reasoning || '关闭') + '</div>',
     '</section>'
@@ -941,6 +946,13 @@ async function bind(){
       if (st) st.textContent = '当前：' + (m.provider || '-') + ' · ' + value + ' · 思考 ' + (m.reasoning || '默认')
       toast('已切换到 ' + value)
     } catch (e) { toast('切换失败：' + e.message, true) }
+  }
+  const mpTiming = document.getElementById('mpTiming')
+  if (mpTiming) mpTiming.onchange = async () => {
+    try {
+      await api('/api/action/set-config', { key: 'REPLY_TIMING_ENABLED', value: mpTiming.checked ? '1' : '0' })
+      toast(mpTiming.checked ? '已开启：回复末尾显示耗时' : '已关闭耗时显示')
+    } catch (e) { toast('保存失败：' + e.message, true) }
   }
   const mpReason = document.getElementById('mpReason')
   if (mpReason) mpReason.onchange = async () => {

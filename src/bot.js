@@ -1082,6 +1082,8 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         replyStillCurrent(onebot, evt, { latestOnly: !directReply }) && !autoPlusOne.wasTriggered(repetition)
       if (!canContinue()) return
       try {
+        // 计时：模型生成耗时（含识图 / 联网 / 纯文本与重试）
+        const genStartedAt = Date.now()
         let reply
         let imageDescription = ''
         let replyPrompt = systemPrompt, replyContent = focusedContent
@@ -1177,6 +1179,11 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         // 装饰符号：这次允许就原样保留，不允许就清成纯文字（频率已在上面的提示里定好）
         let finalLines = limitDecorationLines(lines, allowDecoration ? 1 : 0)
         if (finalLines.length === 0) finalLines = lines.slice(0, 1)
+        const thinkMs = Date.now() - genStartedAt
+        if (config.replyTimingEnabled && thinkMs > 0 && finalLines.length > 0) {
+          // 挂在最后一行末尾，不额外多一条消息
+          finalLines[finalLines.length - 1] = finalLines[finalLines.length - 1] + '（想了 ' + (thinkMs / 1000).toFixed(1) + ' 秒）'
+        }
         let record = finalLines.join('\n')
         // 距上次发言太近 → 先等一等（拟人节奏）；等不了就整条放弃，且不写进记忆，
         // 保证"记忆里的话 = 真的发出去过的话"
@@ -1225,6 +1232,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         if (groupId) targetWatch?.markReplied(evt.message_id)
         runtimeStats?.noteReply?.(key)
         const decoTag = /🍥/u.test(record) ? (hasDecoration(record.replace(/🍥/gu, '')) ? '（🍥+颜文字）' : '（🍥）') : hasDecoration(record) ? '（颜文字）' : '（纯文字）'
+        logger.info(`[耗时] 模型生成 ${(thinkMs / 1000).toFixed(1)}s`)
         logger.info(`[已回复]${finalLines.length > 1 ? `（${finalLines.length} 行分条）` : ''}${decoTag} ${senderName}：${record.replace(/\n/g, ' ⏎ ').slice(0, 60)}`)
       } catch (err) {
         if (!samePersona()) return
