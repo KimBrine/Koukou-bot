@@ -287,6 +287,8 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         name = friendMap.get(String(uid))?.name ?? ''
       }
       const history = Array.isArray(mem[key]) ? mem[key] : []
+      // 不在白名单、没有任何消息、也没有单独设置的群：视为残留空壳，不显示
+      if (gid !== null && !config.whitelistGroups.has(gid) && history.length === 0 && !raw) continue
       const lastLine = history.length > 0 ? history[history.length - 1] : null
       out.push({
         key,
