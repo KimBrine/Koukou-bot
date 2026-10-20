@@ -203,7 +203,7 @@ function validateGroupConfig(key, value) {
   }
 }
 
-export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, quietGreetings, personaGreetings, bot, customCommands, commandCenter, llm, stickers, restartBot }) {
+export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, quietGreetings, personaGreetings, bot, customCommands, commandCenter, llm, stickers, switchVision, restartBot }) {
   // 本实例自己的 .env（并行跑两个实例时，写死 rootDir\.env 会改到另一个实例的配置上）
   const envFile = config.envFile || path.join(config.rootDir, '.env')
   const logFile = path.join(config.logDir || path.join(config.rootDir, 'logs'), 'bot.log')
@@ -409,6 +409,8 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         questionModeTrigger: '/Q',
         replyTimingEnabled: Boolean(config.replyTimingEnabled),
         replyMinBudget: config.replyMinBudget,
+        visionProvider: config.visionProvider,
+        visionModelName: config.visionProvider === 'deepseek' ? (config.visionModel || 'deepseek-flash') : config.dashscopeModel,
         summaryTimes: config.summaryTimes,
         summaryFallbackEnabled: config.summaryFallbackEnabled,
         summaryGroups: config.summaryGroups,
@@ -626,6 +628,14 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       case 'MODEL_PROVIDER':
         config.modelProvider = String(value || '').trim().toLowerCase()
         break
+      case 'VISION_PROVIDER': {
+        const v = String(value || '').trim().toLowerCase()
+        if (!['deepseek', 'dashscope'].includes(v)) throw new Error('识图服务商只能是 deepseek 或 dashscope')
+        config.visionProvider = v
+        // 即时重建识图客户端；失败只记录，不影响其它配置
+        try { switchVision?.() } catch (err) { logger?.warn?.('[控制台] 切换识图模型失败：' + err.message) }
+        break
+      }
       case 'DEEPSEEK_REASONING_EFFORT': {
         // 上游语义：'' = 不发送；none/low/high/max 才会带上 thinking + reasoning_effort
         const v = String(value || '').trim().toLowerCase()

@@ -309,6 +309,13 @@ function pageOverview(){
       '<label class="switch"><input type="checkbox" id="quickTiming"' + (configFlag('REPLY_TIMING_ENABLED') ? ' checked' : '') + '><i></i></label>',
       '<div><b>显示思考耗时</b><div class="mut" style="font-size:12px">仅 /Q 解题回复末尾附「（想了 X.X 秒）」；普通聊天不显示</div></div>',
     '</div>',
+    '<div style="display:flex;align-items:center;gap:12px;margin:10px 0">',
+    '<div><b>识图模型</b><div class="mut" style="font-size:12px">聊天里发图片时用哪个模型看</div></div>',
+    '<select id="quickVision" style="margin-left:auto">',
+    '<option value="deepseek"' + (state?.config?.visionProvider === 'dashscope' ? '' : ' selected') + '>DeepSeek（快）</option>',
+    '<option value="dashscope"' + (state?.config?.visionProvider === 'dashscope' ? ' selected' : '') + '>通义千问（准）</option>',
+    '</select>',
+    '</div>',
     '<div class="mut" style="margin-top:8px;font-size:12px">开关状态实时显示，改完立刻生效，不用重启</div>',
     '</section>'
   ].join('')
@@ -628,7 +635,7 @@ function pageHumanize(){
 function pageApi(){
   return modelPickerCard() + `<h1>模型与接口</h1><div class="sub">对话模型、思考强度改完立刻生效；下方视觉模型与其它项按标注生效。</div>
   <div class="card"><strong>当前生效的识图模型：</strong>${esc(state?.bot?.visionModel || '未启用')}<div class="mut" style="margin-top:5px">图片识别与群聊报告分别配置；下方的 DashScope 模型只有切换识图服务商后才会用于读图。</div></div>
-  <div class="card">${configForm(['TEMPERATURE','MAX_TOKENS','VISION_PROVIDER','VISION_MODEL','DASHSCOPE_MODEL','DASHSCOPE_API_KEY','BAIDU_QIANFAN_API_KEY','LOG_LEVEL'],'已设置的密钥不会显示；留空保持原值。')}</div>`
+  <div class="card">${configForm(['TEMPERATURE','MAX_TOKENS','VISION_MODEL','DASHSCOPE_MODEL','DASHSCOPE_API_KEY','BAIDU_QIANFAN_API_KEY','LOG_LEVEL'],'已设置的密钥不会显示；留空保持原值。')}</div>`
 }
 function pageReport(){
   return `<h1>群聊报告</h1><div class="sub">每日自动生成「群聊日常分析报告」，也可以在这里随时手动生成</div>
@@ -953,6 +960,15 @@ async function bind(){
     adminSaveBtn.disabled = false
   }
   if(page === 'commands') CommandCenterUI.bind({api,toast,load,render,ask})
+  // 工作台：识图模型切换
+  const quickVision = document.getElementById('quickVision')
+  if (quickVision) quickVision.onchange = async () => {
+    try {
+      await api('/api/action/set-config', { key: 'VISION_PROVIDER', value: quickVision.value })
+      await load()
+      toast(quickVision.value === 'dashscope' ? '识图已切换到通义千问' : '识图已切换到 DeepSeek')
+    } catch (e) { toast('切换失败：' + e.message, true) }
+  }
   // 工作台快捷开关
   const quickTiming = document.getElementById('quickTiming')
   if (quickTiming) quickTiming.onchange = async () => {

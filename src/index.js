@@ -139,28 +139,48 @@ const llm = new DeepSeekClient({
 //   差的 21 倍几乎全在输出长度上 —— 提示词里写了"120 字以内"，qwen 并不照做。
 // 注意：deepseek-v4-pro **不能读图**（会回"无法查看图片"），别拿它当视觉模型。
 const visionKnowledge = loadVisionKnowledge(config.dataDir, logger)
-let visionLLM = null
-if (config.visionProvider === 'deepseek' ? config.deepseekApiKey : config.dashscopeApiKey) {
-  const isDeepseek = config.visionProvider === 'deepseek'
-  visionLLM = new DeepSeekClient({
-    apiKey: isDeepseek ? config.deepseekApiKey : config.dashscopeApiKey,
-    baseUrl: isDeepseek ? config.deepseekBaseUrl : config.dashscopeBaseUrl,
-    model: isDeepseek ? config.visionModel || 'deepseek-flash' : config.dashscopeModel,
+// 识图客户端：可在 DeepSeek 与通义千问之间热切换（不需要重启）
+let visionActive = null
+function buildVisionClient(provider) {
+  const useDeepseek = String(provider || 'deepseek').toLowerCase() === 'deepseek'
+  const key = useDeepseek ? config.deepseekApiKey : config.dashscopeApiKey
+  if (!key) return null
+  return new DeepSeekClient({
+    apiKey: key,
+    baseUrl: useDeepseek ? config.deepseekBaseUrl : config.dashscopeBaseUrl,
+    model: useDeepseek ? config.visionModel || 'deepseek-flash' : config.dashscopeModel,
     temperature: config.temperature,
-    // 识图回复硬性限长：真人看到表情包只会随口吐槽一两句，不需要长篇分析
     maxTokens: Math.min(config.maxTokens, 300),
     timeoutMs: config.timeoutMs,
     maxRetries: config.maxRetries,
     maxConcurrency: config.maxConcurrency,
     logger,
-    label: isDeepseek ? 'DeepSeek 视觉' : '通义千问VL',
-    reasoningEffort: isDeepseek ? config.deepseekReasoningEffort : undefined,
-    enableThinking: !isDeepseek && isQwenHybridModel(config.dashscopeModel) ? config.dashscopeThinking : undefined,
+    label: useDeepseek ? 'DeepSeek 视觉' : '通义千问VL',
+    reasoningEffort: useDeepseek ? config.deepseekReasoningEffort : undefined,
+    enableThinking: !useDeepseek && isQwenHybridModel(config.dashscopeModel) ? config.dashscopeThinking : undefined,
   })
 }
-
-// 每日总结模型：独立客户端（token 预算大）；可切换提供方（DeepSeek / 通义千问）
-visionLLM = createGroundedVisionClient(visionLLM, visionKnowledge, logger)
+let lastVisionLabel = ''
+function rebuildVision() {
+  visionActive = createGroundedVisionClient(buildVisionClient(config.visionProvider), visionKnowledge, logger)
+  const label = visionActive
+    ? '视觉模型：' + visionActive.model + '（' + (config.visionProvider === 'deepseek' ? 'DeepSeek' : '通义千问') + '）'
+    : '视觉模型未启用：' + config.visionProvider + ' 没有可用 Key'
+  if (label !== lastVisionLabel) { lastVisionLabel = label; logger.info(label) }
+  return visionActive
+}
+rebuildVision()
+// 对外始终是同一个对象，调用时才取当前生效的客户端，所以切换后立即生效
+const visionLLM = new Proxy({}, {
+  get(_t, prop) {
+    if (prop === 'provider') return config.visionProvider
+    const target = visionActive
+    if (!target) return undefined
+    const value = target[prop]
+    return typeof value === 'function' ? value.bind(target) : value
+  },
+  has(_t, prop) { return prop === 'provider' || Boolean(visionActive && prop in visionActive) },
+})
 if (visionKnowledge) logger.info(`[角色辨认] 已加载本地对照资料：${visionKnowledge.characters.length} 个角色、${visionKnowledge.references.length} 张参考图；缓存版本 ${visionKnowledge.version.slice(0, 12)}`)
 const useQwenForSummary = Boolean(config.summaryModel) && config.summaryProvider === 'dashscope'
 const summaryLLM = new DeepSeekClient({
@@ -331,6 +351,7 @@ if (config.adminEnabled) {
     llm,
     stickers,
     commandCenter,
+    switchVision: rebuildVision,
     restartBot: () => {
       // 让一个独立进程在 1.2 秒后杀掉当前实例并用计划任务重新拉起（避免自己杀自己杀不干净）
       //
