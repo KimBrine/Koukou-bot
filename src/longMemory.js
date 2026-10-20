@@ -123,6 +123,18 @@ export function createLongMemory({ file, logger, llm, maxChars = 1500, intervalM
     keyEpochs = nextEpochs; store.delete(key)
     return existed
   }
+  /** 某个会话的完整长期记忆：摘要 + 待整理原文 */
+  function detail(key) {
+    const item = store.get(key)
+    if (!item) return { summary: '', pending: [], updatedAt: 0 }
+    return {
+      summary: item.summary || '',
+      updatedAt: item.updatedAt || 0,
+      pending: (item.pending || []).map((e) => ({
+        name: e.name || '', userId: e.userId || '', text: String(e.text || '').slice(0, 2000), time: e.time || 0,
+      })),
+    }
+  }
   function stats() { return [...store].map(([key, v]) => ({ key, summaryChars: v.summary.length, pending: v.pending.length })) }
-  return { get, addEvicted, summarize, feed, start, stop, save, stats, snapshot, clear, restore, clearKey }
+  return { get, addEvicted, summarize, feed, start, stop, save, stats, detail, snapshot, clear, restore, clearKey }
 }

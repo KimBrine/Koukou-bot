@@ -475,6 +475,13 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       const list = Array.isArray(mem[key]) ? mem[key] : []
       return { key, items: list.slice(-200) }
     },
+    'GET /api/memory-detail': async (query) => {
+      const key = String(query.key || '')
+      const mem = readJsonSafe(config.memoryFile, {})
+      const recent = Array.isArray(mem[key]) ? mem[key].slice(-200) : []
+      const d = typeof longMemory?.detail === 'function' ? longMemory.detail(key) : { summary: '', pending: [], updatedAt: 0 }
+      return { key, recent, longTerm: d.summary || '', updatedAt: d.updatedAt || 0, pending: d.pending || [] }
+    },
     'GET /api/longmemory': async (query) => ({
       key: query.key || null,
       text: longMemory?.get?.(String(query.key || ''), { query: String(query.q || '').slice(0, 500) }) ?? '',
