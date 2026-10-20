@@ -72,6 +72,21 @@ try {
   assert.equal(lib.count(), 0)
   assert.equal(existsSync(path.join(lib.dir, fileName)), false, '图片文件应被删除')
 
+  const blockItem=lib.add({name:'不再收录',dataUrl:PNG}).item
+  assert.equal(lib.blacklist(blockItem.id),true)
+  assert.equal(lib.count(),0)
+  assert.equal(existsSync(path.join(lib.dir,blockItem.file)),false)
+  assert.equal(lib.dataUrlOf(blockItem),null,'在途发送也不能读取被拉黑图片')
+  assert.throws(()=>lib.add({dataUrl:PNG}),/黑名单/)
+  const blockedReboot=createStickers({dir:lib.dir,logger})
+  assert.equal(blockedReboot.isBlocked(blockItem.hash),true)
+  assert.equal(blockedReboot.blacklistEntries()[0].name,'不再收录')
+  assert.throws(()=>blockedReboot.add({dataUrl:PNG,origin:'learned'}),/黑名单/)
+  const editable=blockedReboot.add({dataUrl:replacement}).item
+  assert.throws(()=>blockedReboot.update(editable.id,{dataUrl:PNG}),/黑名单/)
+  assert.equal(blockedReboot.unblock(blockItem.hash),true)
+  assert.equal(blockedReboot.add({dataUrl:PNG}).duplicated,false)
+
   // 标记解析
   const r1 = extractStickerMarkers('走啦\n[贴纸: 猫猫]\n明天见')
   assert.deepEqual(r1.queries, ['猫猫'])

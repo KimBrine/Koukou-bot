@@ -455,6 +455,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     }),
     'GET /api/stickers': async () => ({
       items: stickers ? stickers.list() : [],
+      blacklist: stickers?.blacklistEntries?.() || [],
       enabled: Boolean(config.stickersEnabled),
       learned: stickers && typeof stickers.learned === 'function' ? stickers.learned() : 0,
       scenes: STICKER_SCENES,
@@ -983,6 +984,16 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       if (!stickers) throw new Error('表情包库未启用')
       const ok = stickers.remove(String(payload?.id || ''))
       return { ok, count: stickers.count() }
+    },
+    async 'sticker-blacklist'(payload) {
+      if (!stickers) throw new Error('表情包库未启用')
+      if (!stickers.blacklist(String(payload?.id || ''))) throw new Error('找不到这张表情包')
+      return { ok:true, count:stickers.count() }
+    },
+    async 'sticker-unblock'(payload) {
+      if (!stickers) throw new Error('表情包库未启用')
+      if (!stickers.unblock(String(payload?.hash || ''))) throw new Error('找不到这条黑名单')
+      return { ok:true }
     },
     async 'sticker-send'(payload) {
       if (!stickers) throw new Error('表情包库未启用')

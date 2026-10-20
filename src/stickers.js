@@ -38,6 +38,11 @@ export function parseDataUrl(dataUrl) {
 export function createStickers({ dir, logger, now = () => Date.now() }) {
   mkdirSync(dir, { recursive: true })
   const indexFile = path.join(dir, 'stickers.json')
+  const blacklistFile = path.join(dir, 'blacklist.json')
+  // 读取失败时停止初始化，不能把损坏的黑名单当成空名单重新采集。
+  let blocked = existsSync(blacklistFile) ? JSON.parse(readFileSync(blacklistFile, 'utf8')) : []
+  if (!Array.isArray(blocked) || blocked.some(x => !/^[a-f0-9]{64}$/.test(x?.hash))) throw new Error('表情包黑名单格式错误，请恢复备份')
+  const isBlocked = hash => blocked.some(x => x.hash === hash)
   let items = []
   try {
     if (existsSync(indexFile)) {
@@ -59,7 +64,7 @@ export function createStickers({ dir, logger, now = () => Date.now() }) {
     item.lastContexts = Array.isArray(raw.lastContexts) ? raw.lastContexts.slice(0, 8) : []
     return item
   }
-  items = items.map(normalizeItem)
+  items = items.map(normalizeItem).filter(x => !isBlocked(x.hash))
   const list = () => items.slice().sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0))
   const get = (id) => items.find((x) => x.id === id) || null
   const fileOf = (item) => path.join(dir, item.file)
@@ -67,6 +72,7 @@ export function createStickers({ dir, logger, now = () => Date.now() }) {
   function add({ name, keywords, scenes, dataUrl, origin, source, description } = {}) {
     const { mime, buffer } = parseDataUrl(dataUrl)
     const hash = createHash('sha256').update(buffer).digest('hex')
+    if (isBlocked(hash)) throw new Error('这张图片已在表情包黑名单中，请先解除黑名单')
     const exists = items.find((x) => x.hash === hash)
     const label = String(name || '').trim().slice(0, 40)
     if (exists) {
@@ -102,8 +108,26 @@ export function createStickers({ dir, logger, now = () => Date.now() }) {
     const idx = items.findIndex((x) => x.id === id)
     if (idx < 0) return false
     const [item] = items.splice(idx, 1)
+    try { save() } catch(error) { items.splice(idx, 0, item); throw error }
     try { unlinkSync(path.join(dir, item.file)) } catch { /* 文件可能已被手工删除 */ }
-    save()
+    return true
+  }
+
+  function blacklist(id) {
+    const item = get(id)
+    if (!item) return false
+    const next = [...blocked.filter(x => x.hash !== item.hash), {hash:item.hash, name:item.name, blockedAt:now()}]
+    writeJsonAtomic(blacklistFile, next)
+    blocked = next
+    // 先保存黑名单，再移除索引和图片；重启及正在进行的学习都不能重新收录。
+    remove(id)
+    return true
+  }
+  function unblock(hash) {
+    const next = blocked.filter(x => x.hash !== hash)
+    if (next.length === blocked.length) return false
+    writeJsonAtomic(blacklistFile, next)
+    blocked = next
     return true
   }
 
@@ -118,6 +142,7 @@ export function createStickers({ dir, logger, now = () => Date.now() }) {
     let newFile=null
     if(dataUrl){
       const {mime,buffer}=parseDataUrl(dataUrl),hash=createHash('sha256').update(buffer).digest('hex')
+      if(isBlocked(hash))throw new Error('这张图片已在表情包黑名单中，请先解除黑名单')
       if(items.some(x=>x.id!==id&&x.hash===hash))throw new Error('这张图片已存在于另一条表情包，请编辑已有条目')
       newFile=`${hash.slice(0,16)}.${ALLOWED[mime]}`
       if(newFile!==item.file)writeFileSync(path.join(dir,newFile),buffer)
@@ -214,14 +239,15 @@ export function createStickers({ dir, logger, now = () => Date.now() }) {
   }
 
   function dataUrlOf(item) {
-    if (!item) return null
+    if (!item || isBlocked(item.hash)) return null
     try {
       const buf = readFileSync(fileOf(item))
       return `base64://${buf.toString('base64')}`
     } catch { return null }
   }
 
-  return { dir, list, get, add, remove, update, find, pick, random, noteUsage, summary, dataUrlOf, count: () => items.length,
+  return { dir, list, get, add, remove, update, find, pick, random, noteUsage, summary, dataUrlOf, blacklist, unblock, isBlocked,
+    blacklistEntries: () => blocked.map(x=>({...x})).sort((a,b)=>b.blockedAt-a.blockedAt), count: () => items.length,
     learned: () => items.filter((x) => x.origin === 'learned').length }
 }
 
