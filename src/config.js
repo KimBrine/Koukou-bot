@@ -334,14 +334,18 @@ export function loadConfig() {
     // 在回复末尾显示本次"思考耗时"（默认关；开了方便直观看到模型快慢）
     replyTimingEnabled: ['1', 'true'].includes(String(env.REPLY_TIMING_ENABLED ?? '0').trim().toLowerCase()),
     stickersEnabled: !['0', 'false'].includes(String(env.STICKERS_ENABLED ?? '1').trim().toLowerCase()),
-    // 主动发表情包的概率（百分比）：0 = 只有模型明确要求时才发
-    stickerAutoRate: Math.min(1, Math.max(0, num('STICKER_AUTO_RATE', 0) / 100)),
+    // 主动发表情包的概率（百分比）：0 = 不配图，模型点名也遵守概率
+    stickerAutoRate: Math.min(1, Math.max(0, num('STICKER_AUTO_RATE', 35) / 100)),
     // 从独立指定的群学习表情包，留空不采集，不继承聊天白名单
     stickerLearnGroups: new Set(String(env.STICKER_LEARN_GROUPS ?? '').split(/[,，\s]+/).filter(x => /^\d+$/.test(x) && Number(x) > 0).map(Number)),
     stickerLearnEnabled: ['1', 'true'].includes(String(env.STICKER_LEARN_ENABLED ?? '0').trim().toLowerCase()),
     // 每小时最多学习几张，防止刷屏式采集和 API 花销
     stickerLearnPerHour: Math.max(0, Math.min(60, Math.floor(num('STICKER_LEARN_PER_HOUR', 6)))),
     // 单条回复最多发几张，避免刷屏
+    stickerSendScope: ['all','whitelist','selected','private'].includes(env.STICKER_SEND_SCOPE) ? env.STICKER_SEND_SCOPE : 'all',
+    stickerSendGroups: new Set(String(env.STICKER_SEND_GROUPS ?? '').split(/[,，\s]+/).filter(x => /^\d+$/.test(x) && Number(x)>0).map(Number)),
+    stickerPickMode: ['context','model','random'].includes(env.STICKER_PICK_MODE) ? env.STICKER_PICK_MODE : 'context',
+    stickerCooldownSeconds: Math.max(0, Math.min(86400, num('STICKER_COOLDOWN_SECONDS', 0))),
     stickerMaxPerReply: Math.max(1, Math.min(3, Math.floor(num('STICKER_MAX_PER_REPLY', 1)))),
     temperature: Math.min(2, Math.max(0, num('TEMPERATURE', 1.2))),
     maxTokens: Math.max(1, Math.floor(num('MAX_TOKENS', 500))),

@@ -28,6 +28,7 @@ const scripts = [
   'test-summary-unrestricted.mjs',
   'test-model-catalog.mjs',
   'test-stickers.mjs',
+  'test-sticker-send.mjs',
   'test-sticker-learn.mjs',
   'test-summary-request-recovery.mjs',
   'test-quiet-greetings.mjs',

@@ -46,18 +46,27 @@ function setup({config={},getMsg,forwards={},chat,chatSettings,rateLimiter,visio
 const lastUser=t=>t.requests.at(-1)[1].at(-1).content
 const shape=t=>t.requests.at(-1)[0].match(/【本次回复的形态要求[^]*?(?=\n\n【|$)/)?.[0]
 try {
-  await test('随机发表情为0仍可由模型选库内图，标签不泄漏、纯文字装饰限制不挡图',async()=>{
+  await test('表情包必须配文字，模型选图不能绕过0概率；只有标记时先修正文案',async()=>{
     const item={id:'sticker',name:'猫猫问号'}
     const stickers={count:()=>1,summary:()=>item.name,find:q=>q===item.name?item:null,pick:()=>item,dataUrlOf:()=> 'base64://eA=='}
-    const t=setup({stickers,config:{stickersEnabled:true,stickerMaxPerReply:1,stickerAutoRate:0},chat:()=> '[贴纸: 猫猫问号]'})
+    let calls=0
+    const t=setup({stickers,config:{stickersEnabled:true,stickerMaxPerReply:1,stickerAutoRate:1},chat:()=> ++calls===1?'[贴纸: 猫猫问号]':'有点疑惑呀 [贴纸: 猫猫问号]'})
     await t.bot.handleMessage(t.event([at(),text('啊？')]))
-    assert.equal(t.sent.length,1);assert.equal(t.sent[0][0].type,'image');assert.equal(t.sent[0][0].data.sub_type,1)
+    assert.equal(t.sent.length,2);assert.equal(typeof t.sent[0],'string');assert.equal(t.sent[1][0].type,'image');assert.equal(t.sent[1][0].data.sub_type,1)
+    assert.doesNotMatch(t.sent[0],/贴纸/)
     const prompt=t.requests[0][0]
     assert.match(prompt,/明确例外/);assert.ok(prompt.lastIndexOf('【表情包发送规则】')>prompt.lastIndexOf('【本条回复的装饰】'))
-    assert.equal(t.memory.get('g'+group).at(-1).content,'[表情包]')
-    const n=setup({stickers,config:{stickersEnabled:true,stickerMaxPerReply:1,stickerAutoRate:0},chat:()=> '正常聊呀'})
+    assert.match(t.memory.get('g'+group).at(-1).content,/有点疑惑.*\n\[表情包\]/)
+    const n=setup({stickers,config:{stickersEnabled:true,stickerMaxPerReply:1,stickerAutoRate:0},chat:()=> '正常聊呀 [贴纸: 猫猫问号]'})
     await n.bot.handleMessage(n.event([at(),text('你好')]))
-    assert.equal(n.sent.length,1);assert.equal(typeof n.sent[0],'string','不选图且随机率0时不强行补图')
+    assert.equal(n.sent.length,1);assert.equal(typeof n.sent[0],'string','显式标签也不能绕过0概率')
+    const bad=setup({stickers,config:{stickersEnabled:true,stickerAutoRate:1},chat:()=> '[贴纸: 猫猫问号]'})
+    await bad.bot.handleMessage(bad.event([at(),text('啊？')]))
+    assert.equal(bad.sent.length,0,'模型修正后仍无文字，不能单独发图片')
+    const unconfirmed=setup({stickers,config:{stickersEnabled:true,stickerAutoRate:1},chat:()=> '你好呀 [贴纸: 猫猫问号]'})
+    unconfirmed.onebot.sendGroup=async(g,msg)=>{unconfirmed.sent.push(msg);return {}}
+    await unconfirmed.bot.handleMessage(unconfirmed.event([at(),text('你好')]))
+    assert.equal(unconfirmed.sent.length,1,'文字发送未收到消息编号时，不能继续发图片')
   })
   await test('/Q仅私聊或当前外层@触发，标记有边界且不改变全局模式', async()=>{
     assert.equal(isQuestionMode('/Q 推导',{isPrivate:true}),true)
