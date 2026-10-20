@@ -471,7 +471,7 @@ logger.info(`管理员（ADMIN_USERS）：${config.adminUsers.length ? config.ad
   const cmds = typeof customCommands?.all === 'function' ? customCommands.all() : []
   const sched = cmds.filter((c) => c.scheduleEnabled && (c.scheduleTimes || []).length).length
   logger.info(`自定义指令：${cmds.length} 条${sched ? `（其中 ${sched} 条带定时推送）` : ''}`)
-  logger.info(`表情包：${stickers.count()} 张${config.stickersEnabled ? '' : '（已关闭）'}${config.stickerLearnEnabled ? `｜群聊学习开启（每小时 ${config.stickerLearnPerHour} 张）` : ''}${config.stickerAutoRate > 0 ? `｜主动发 ${Math.round(config.stickerAutoRate * 100)}%` : ''}`)
+  logger.info(`表情包：${stickers.count()} 张${config.stickersEnabled ? '' : '（已关闭）'}${config.stickerLearnEnabled ? `｜群聊学习开启（每小时 ${config.stickerLearnPerHour} 张）` : ''}${config.stickerAutoRate > 0 ? `｜主动发 ${Math.round(config.stickerAutoRate * 100)}%` : ''}${stickerTagLLM ? `｜打标 ${stickerTagLLM.model}` : ''}`)
 }
 
 dailySummary.schedule()
