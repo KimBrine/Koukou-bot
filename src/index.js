@@ -218,7 +218,23 @@ const stickerFilterLLM = config.deepseekApiKey ? new DeepSeekClient({
   timeoutMs: Math.max(config.timeoutMs, 180000), maxRetries: config.maxRetries,
   maxConcurrency: 1, logger, label: '表情包初筛(DeepSeek Flash)',
 }) : null
-const stickerTagLLM = createSummaryVisionClient({ config: { ...config, summaryUnrestricted: true }, logger })
+// 打标优先用 DashScope；没有 Key 时回退到 DeepSeek 读图（实测 1 秒、描述准确），
+// 这样表情包学习不需要额外申请 DashScope。
+const stickerTagLLM = config.dashscopeApiKey
+  ? createSummaryVisionClient({ config: { ...config, summaryUnrestricted: true }, logger })
+  : (config.deepseekApiKey ? new DeepSeekClient({
+      apiKey: config.deepseekApiKey,
+      baseUrl: config.deepseekBaseUrl,
+      model: config.visionModel || 'deepseek-flash',
+      reasoningEffort: config.deepseekReasoningEffort,
+      temperature: 0.2,
+      maxTokens: config.maxTokens,
+      timeoutMs: config.timeoutMs,
+      maxRetries: config.maxRetries,
+      maxConcurrency: 1,
+      logger,
+      label: '表情包打标(DeepSeek)',
+    }) : null)
 const stickerLearner = createStickerLearner({ config, logger, onebot, stickers,
   filterLLM: stickerFilterLLM, tagLLM: stickerTagLLM, imageCache: sharedImageCache })
 const commandCenter = createCommandCenter({file:path.join(config.dataDir,'command-center.json'),customCommands,config,logger,llm})
