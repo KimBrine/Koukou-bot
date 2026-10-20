@@ -1,11 +1,4 @@
 // 纯文字帮助：不调用模型、不生成合并记录；正常功能清单保持在单条消息预算内。
-const GROUPS = [
-  ['🧠 聊天与解题', ['question', 'music']],
-  ['📝 群聊报告', ['summary']],
-  ['🎈 轻松互动', ['request-sticker', 'request-poke', 'poke', 'auto-plus-one']],
-  ['🛡 群聊管理', ['self-recall', 'self-mute', 'owner-mute', 'whole-mute', 'id-check', 'id-check-kick']],
-  ['📌 帮助与记忆', ['help', 'clear-memory']],
-]
 const DETAILS = {
   question: ['/Q 题目或问题', '只对本轮认真讲解；支持题目图片。群里须明确@我，单独引用不触发。'],
   music: ['点歌 浮光 周深', '也可“点歌 歌曲ID / 完整链接”；默认网易云，QQ音乐请注明。'],
@@ -27,31 +20,24 @@ const oneLine = (v, max) => String(v || '').replace(/[\r\n\u0000-\u001f]/g, ' ')
 
 export function formatCommandHelp({ builtins = [], custom = [], isPrivate = false } = {}) {
   const blocks = ['📖 指令与互动指南\n仅列出当前会话已启用、符合范围与额外权限的功能。']
-  const byId = new Map(builtins.map(c => [c.id, c])), seen = new Set()
+  let number = 0
   const entry = c => {
     const [example, note] = DETAILS[c.id] || [oneLine(c.trigger, 90), oneLine(c.description, 80)]
-    return `• ${oneLine(c.name, 45)}${c.adminOnly ? '〔机器人管理员〕' : ''}\n  用法：${example}\n  ${note}`
+    return `${++number}. ${oneLine(c.name, 45)}${c.adminOnly ? '〔机器人管理员〕' : ''}\n  用法：${example}\n  ${note}`
   }
-  for (const [title, ids] of GROUPS) {
-    const commands = ids.map(id => byId.get(id)).filter(Boolean)
-    if (!commands.length) continue
-    commands.forEach(c => seen.add(c.id))
-    blocks.push(title + '\n' + commands.map(entry).join('\n\n'))
-  }
-  const rest = builtins.filter(c => !seen.has(c.id))
-  if (rest.length) blocks.push('🔧 其他功能\n' + rest.map(entry).join('\n\n'))
+  blocks.push(...builtins.map(entry))
   const footer = ['💡 使用提示', isPrivate ? '私聊直接发送请求即可。' : '群里的文字请求请@我；拍头像、自动+1按各自事件触发。', '群管理操作另核验：群主，或同时担任本群管理员的机器人管理员；QQ权限与接口限制仍适用。'].join('\n')
   // 预留尾部提示，避免大量自定义规则把帮助拆成多条；不截断一条指令的说明。
   if (custom.length) {
-    const lines = ['🧩 自定义指令']
+    const lines = []
     let shown = 0
     for (const c of custom) {
-      const line = `• ${oneLine(c.name, 30)}${c.adminOnly ? '〔机器人管理员〕' : ''}\n  ${c.event === 'poke' ? '拍机器人头像' : oneLine(c.trigger, 65)}${c.responseMode === 'ai' ? '（AI回复）' : ''}`
+      const line = `${number + 1}. ${oneLine(c.name, 30)}${c.adminOnly ? '〔机器人管理员〕' : ''}\n  ${c.event === 'poke' ? '拍机器人头像' : oneLine(c.trigger, 65)}${c.responseMode === 'ai' ? '（AI回复）' : ''}`
       if ([...blocks, ...lines, line, footer].join('\n\n').length > 1650) break
-      lines.push(line); shown++
+      lines.push(line); shown++; number++
     }
     if (shown < custom.length) lines.push(`另有${custom.length - shown}条自定义规则，可在控制台“指令中心”查看。`)
-    blocks.push(lines.join('\n'))
+    blocks.push(lines.join('\n\n'))
   }
   blocks.push(footer)
   return blocks.join('\n\n')

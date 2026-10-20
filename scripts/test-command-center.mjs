@@ -35,15 +35,15 @@ function fixture({musicSearch,stickers}={}){
 let messageId=1000
 const evt=(text,groupId=200000002,userId=200000011,direct=true)=>({post_type:'message',message_type:'group',group_id:groupId,user_id:userId,message_id:messageId++,time:Date.now()/1000,sender:{nickname:'测试群友'},message:[...(direct?[{type:'at',data:{qq:'200000010'}}]:[]),{type:'text',data:{text}}]})
 try{
- await test('帮助按用途分组并以单条普通消息发送，大量自定义规则不挤掉使用提示',async()=>{
+ await test('帮助连续编号、空行分隔并以单条普通消息发送，大量自定义规则不挤掉使用提示',async()=>{
   const t=fixture()
   for(const id of ['self-recall','self-mute','owner-mute','whole-mute'])t.commandCenter.saveBuiltin({...t.commandCenter.get(id),enabled:true,scope:'group',groups:[200000002]})
   t.commandCenter.saveBuiltin({...t.commandCenter.get('request-poke'),enabled:true})
   await t.bot.handleMessage(evt('/help'))
   assert.equal(t.sent.length,1,'完整帮助仅调用一次普通消息发送')
   const out=t.sent[0].text;assert.equal(typeof out,'string')
-  for(const title of ['🧠 聊天与解题','📝 群聊报告','🎈 轻松互动','🛡 群聊管理','📌 帮助与记忆','💡 使用提示'])assert.ok(out.includes(title))
-  assert.match(out,/用法：点歌 浮光 周深/);assert.match(out,/\n\n🎈/)
+  assert.match(out,/1\. 认真解题/);assert.match(out,/\n\n2\. 点歌/);assert.match(out,/💡 使用提示/);assert.doesNotMatch(out,/🧠 聊天与解题|🛡 群聊管理|🎈 轻松互动/)
+  assert.match(out,/用法：点歌 浮光 周深/);assert.match(out,/\n\n3\. 请求发送表情包/)
   assert.doesNotMatch(out,/\[CQ:forward|\[CQ:node/)
   const many=formatCommandHelp({builtins:t.commandCenter.all(),custom:Array.from({length:200},(_,i)=>({name:'规则'+i+'很长的说明'.repeat(20),trigger:'/测试'.repeat(30)}))})
   assert.equal(splitLongMessage(many).length,1);assert.match(many,/另有\d+条自定义规则/);assert.match(many,/💡 使用提示/)
