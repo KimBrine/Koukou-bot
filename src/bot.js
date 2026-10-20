@@ -1074,9 +1074,10 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       const decoKind = allowDecoration ? pickDecorationKind(rand, decorationPreset) : ''
       // 会话专属要求（控制台里设的），跟在人设后面、机械规则前面
       // 表情包：把可用清单告诉模型，让它用 [贴纸: 名称] 指定（程序负责发图）
-      const stickerHint = !questionMode && stickerSend.allowed(evt)
+      let stickerHint = !questionMode && stickerSend.allowed(evt)
         ? `\n\n【表情包发送规则】可用表情包：${stickers.summary(20)}。当其中一张能贴切表达当前情绪或回应时，可以主动挑一张，不必等对方明确要图；没有合适的就正常用文字。始终先写自然文字回复，选中后另起一行写 [贴纸: 名称]，不能只输出图片标记。程序会取走标记并发出真实图片，不会把它作为聊天正文展示。该标记是“禁止内部方括号标记”的明确例外；表情包发送与文字里的颜文字、emoji装饰限制分别处理，文字要求纯文字并不禁止选图。只能用库里已有名称，每轮最多${config.stickerMaxPerReply || 1}张；是否实际发送由程序按配置概率决定，不能绕过。不编造、不为发图而硬凑。`
         : ''
+      if(stickerHint)stickerHint+='\n【明确索图的例外】仅当当前用户自己的本条原话明确要求你发送表情包（如“给我发张表情包”“来张开心的贴纸”），附加控制标记 [索要表情包]，并选用库内图片；即使没有匹配到名称，程序也会从库里选一张。这种请求不抽配图概率，但仍遵守开关、范围、黑名单及冷却。只是讨论、否定索图、引用或转发中别人的请求、历史索图和模型自己想配图时，不得附加该标记。[索要表情包]同样是内部标记限制的明确例外，不展示给用户。文字使用“给你挑一张”等准备语气，不提前宣称已经发送成功。'
       const customPart = eff?.customPrompt ? `\n\n【本会话的特别要求（管理员设置，优先遵守）】${eff.customPrompt}` : ''
       const systemPrompt =
         buildSystemPrompt({ botName: config.botName, now: new Date(), chatKey: key, query: parsed.text, personaText: sessionPersonaText, longMode: questionMode }) +
@@ -1167,22 +1168,25 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         if (!questionMode) reply = stripReportScaffold(reply)
         // 表情包：模型用 [贴纸: 关键词] 指定要发的图，标记本身不进正文
         let stickerQueries = []
+        let stickerRequested = false
         if (!questionMode) {
           const extracted = extractStickerMarkers(reply)
           reply = extracted.text
           stickerQueries = extracted.queries
+          stickerRequested = extracted.requested
           if(!reply.trim()&&stickerQueries.length){
             if(!canContinue())return
             const fixed=extractStickerMarkers(stripInternalReplyMetadata(await llm.chat(replyPrompt+'\n\n【修正】上一份只有贴纸标记。请先用当前人格对本轮发言给一句自然文字回复；可附选图标记，但不能只发图。',[...baseHistory,{role:'user',content:replyContent}])))
             reply=stripReportScaffold(fixed.text)
             stickerQueries=[...fixed.queries,...stickerQueries]
+            stickerRequested=stickerRequested||fixed.requested
             if(!reply.trim()){logger.warn('[表情包选择] 修正后仍无文字，取消纯图片回复');return}
           }
         }
         // 第一条的普通回复可能仍在生成；复读段已触发时取消这条迟到的搭话。
         if (!canContinue()) return
         // 先决定是否实际配图，再发送文字；重写文案不重新抽取概率。
-        let selection=questionMode?{items:[],reason:'解题不配表情包'}:stickerSend.select(evt,{text:reply,queries:stickerQueries,context:parsed.text})
+        let selection=questionMode?{items:[],reason:'解题不配表情包'}:stickerSend.select(evt,{text:reply,queries:stickerQueries,context:parsed.text,requested:stickerRequested})
         selection.items=selection.items.filter(item=>stickers?.dataUrlOf(item))
         if(!questionMode&&!selection.items.length&&claimsStickerDelivery(reply)){
           logger.info(`[表情包文案] 本轮不配图（${selection.reason}），修正发图承诺`)

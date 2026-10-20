@@ -9,6 +9,10 @@ let hits=0
 for(let i=0;i<100;i++){value=i/100;if(policy.select(event,{text:'文字',queries:['猫猫']}).items.length)hits++}
 assert.equal(hits,35,'模型点名也只按35%配图')
 value=0;assert.equal(policy.select(event,{text:' '}).items.length,0)
+value=.99;assert.equal(policy.select(event,{text:'给你挑一张',requested:true}).items.length,1)
+config.stickerAutoRate=0
+assert.equal(policy.select(event,{text:'给你挑一张',requested:true}).items.length,1,'明确索图不受0自动概率限制')
+config.stickerAutoRate=.35;value=0
 config.stickerSendScope='whitelist';assert.equal(policy.allowed({...event,group_id:2}),false)
 config.stickerSendScope='selected';config.stickerSendGroups=new Set([2]);assert.equal(policy.allowed(event),false)
 config.stickerSendScope='private';assert.equal(policy.allowed(event),false);assert.equal(policy.allowed({message_type:'private'}),true)
@@ -16,6 +20,7 @@ config.stickerSendScope='all';config.stickerCooldownSeconds=60
 policy.begin(event);assert.equal(policy.select(event,{text:'文字'}).items.length,0)
 now+=60000;assert.equal(policy.select(event,{text:'文字'}).items.length,1)
 config.stickerPickMode='model';assert.equal(policy.select(event,{text:'文字'}).items.length,0)
+assert.equal(policy.select(event,{text:'给你挑一张',requested:true}).items.length,1,'明确索图即使没点名也选库中图片')
 assert.equal(policy.select(event,{text:'文字',queries:['猫猫','猫猫']}).items.length,1)
 config.stickerPickMode='random';assert.equal(policy.select(event,{text:'文字'}).items.length,1)
 config.stickersEnabled=false;assert.equal(policy.allowed(event),false)

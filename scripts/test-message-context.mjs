@@ -76,6 +76,11 @@ try {
     const failedRepair=setup({stickers,config:{stickersEnabled:true,stickerAutoRate:0},chat:()=> '图片来啦，收好'})
     await failedRepair.bot.handleMessage(failedRepair.event([at(),text('来张表情包')]))
     assert.equal(failedRepair.sent.length,1);assert.match(failedRepair.sent[0],/没有配图/)
+    const requested=setup({stickers,config:{stickersEnabled:true,stickerAutoRate:0},chat:()=> '给你挑一张呀 [索要表情包][贴纸: 猫猫问号]'})
+    await requested.bot.handleMessage(requested.event([at(),text('给我发张表情包')]))
+    assert.equal(requested.sent.length,2);assert.equal(requested.sent[1][0].type,'image')
+    assert.doesNotMatch(requested.sent[0],/索要表情包|贴纸/)
+    assert.match(requested.requests[0][0],/只是讨论、否定索图/)
   })
   await test('/Q仅私聊或当前外层@触发，标记有边界且不改变全局模式', async()=>{
     assert.equal(isQuestionMode('/Q 推导',{isPrivate:true}),true)
