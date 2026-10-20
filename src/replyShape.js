@@ -111,9 +111,10 @@ export function planReply({
     const lines = Math.max(1, maxLines)
     return { targetLen: target, lines, budget: lines * lineMaxChars, perLineCap: lineMaxChars, lineMaxChars, longMode: true }
   }
-  // 设了最小预算时：行数按预算分配（每行至少约 20 字），最多到 maxLines 条
+  // 设了最小预算时：行数仍然按对方消息长度自然决定（1~maxLines），
+  // 最小预算只保证“有这么多字可说”，不是“必须拆成几条发”。
   if (minBudget > 0) {
-    const lines = Math.max(1, Math.min(maxLines, Math.max(1, Math.floor(minBudget / 20))))
+    const lines = matchEnabled ? pickLineCount(target, { maxLines, lineMaxChars, rand }) : 1
     const budget = Math.max(minBudget, Math.min(lines * lineMaxChars, Math.round(target * 1.15) + 8))
     // 最小预算的语义是“至少给这么多”，不是“最多只能这么多”：
     // 单行仍可写到单行上限，否则模型刚说到一半就被 … 截断。
