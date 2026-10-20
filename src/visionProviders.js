@@ -36,7 +36,7 @@ export function createVisionProviders({ file, logger, legacy } = {}) {
   function add({ name, baseUrl, apiKey, model } = {}) {
     const url = normalizeUrl(baseUrl)
     if (!/^https?:\/\//i.test(url)) throw new Error('接口地址要以 http:// 或 https:// 开头')
-    if (!apiKey && !String(apiKey || '').trim()) throw new Error('请填写 API Key')
+    if (!String(apiKey || '').trim()) throw new Error('请填写 API Key')
     const item = { id: 'vp_' + randomUUID().slice(0, 6), name: String(name || '').trim().slice(0, 30) || '自定义识图', baseUrl: url, apiKey: String(apiKey).trim(), model: String(model || '').trim() }
     items.push(item); save()
     return list().find((x) => x.id === item.id)
