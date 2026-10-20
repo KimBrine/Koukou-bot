@@ -696,6 +696,14 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       const isPrivate = evt.message_type === 'private'
       const groupId = evt.group_id
 
+      const parsed = parseMessage(evt.message ?? evt.raw_message, onebot.selfId)
+      // 表情包学习：独立指定群里别人发的图，按配置自动收录（异步，不影响回复）
+      if (!isPrivate && config.stickerLearnEnabled && stickerLearner && parsed.images.length > 0) {
+        stickerLearner
+          .learnFromMessage({ images: parsed.images, groupId, senderName: evt.sender?.card || evt.sender?.nickname, text: parsed.text })
+          .catch((err) => logger.warn(`[表情包学习] ${err.message}`))
+      }
+
       // 静音群在普通聊天流程开始前返回；独立的原生互动已在上方处理。
       //
       // 为什么必须放在最前面、而不是只靠 decideReply：那样只能挡住"普通回复"，
@@ -717,7 +725,6 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         return
       }
 
-      const parsed = parseMessage(evt.message ?? evt.raw_message, onebot.selfId)
       // 在引用/资料异步读取之前固定到达时的历史；后到的插话仍存档，但不能混进这轮旧请求。
       const snapshotRelevant=isPrivate||config.whitelistGroups.has(Number(groupId))||parsed.atBot||parsed.replyId
       const historyAtArrival=snapshotRelevant?memory.get(conversationKey).slice(-(config.historyLimit||99)):[]
@@ -751,12 +758,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       const incomingLen = measureText(parsed.text.replace(/\[合并聊天记录\]/g, '')) || (parsed.images.length > 0 ? 6 : 0)
       if (!parsed.text && !replyToBot && !muteFollowup&&!selfFollowup) return
       if (!parsed.text) parsed.text = '[回复引用消息]'
-      // 表情包学习：白名单群里别人发的图，按配置自动收录（异步，不影响回复）
-      if (!isPrivate && config.stickerLearnEnabled && stickerLearner && parsed.images.length > 0) {
-        stickerLearner
-          .learnFromMessage({ images: parsed.images, groupId, senderName: evt.sender?.card || evt.sender?.nickname, text: parsed.text })
-          .catch((err) => logger.warn(`[表情包学习] ${err.message}`))
-      }
+
 
       const commandContext={isPrivate,groupId,userId:evt.user_id,direct:directReply,event:'message',text:parsed.text}
       const selfResult=!muteFollowup&&selfActions.applies(evt,parsed,selfFollowup)?await selfActions.handle(evt,parsed,{followup:selfFollowup,canReply:samePersona,replyPrompt:()=>{
@@ -1214,7 +1216,8 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
             const file = item ? stickers.dataUrlOf(item) : null
             if (!file) { logger.warn(`[表情包] 「${q}」在库里找不到，跳过`); continue }
             try {
-              const segments = [{ type: 'image', data: { file } }]
+              if (!canContinue()) break
+              const segments = [{ type: 'image', data: { file, sub_type: 1 } }]
               if (evt.message_type === 'private') await onebot.sendPrivate(evt.user_id, segments)
               else await onebot.sendGroup(evt.group_id, segments)
               logger.info(`[表情包] 发送「${item.name}」到 ${evt.message_type === 'private' ? '私聊' : '群 ' + evt.group_id}`)

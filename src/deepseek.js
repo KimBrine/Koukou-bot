@@ -70,17 +70,13 @@ export class DeepSeekClient {
       // 偶发空回复（模型把预算花在推理上、或响应被截断）在这里重试一次：
       // 不然这条消息就被静默丢掉了，群里看起来像"机器人没反应"。
       for (let attempt = 0; attempt < 2; attempt++) {
-        // 第一次按配置；如果空回复且开了思考，第二次强制关闭思考——思考吃光 token 预算时能救回来
-        const effortForAttempt = attempt === 0
-          ? undefined
-          : (this.reasoningEffort !== undefined && this.reasoningEffort !== 'none' ? 'none' : undefined)
         const data = await this.#post({
           model: this.model,
           messages: [{ role: 'system', content: systemPrompt }, ...messages],
           temperature: Number.isFinite(temperature)?Math.max(0,Math.min(2,temperature)):this.temperature,
           max_tokens: outputBudget,
           stream: false,
-        }, signal, effortForAttempt)
+        }, signal)
         const finishReason = data?.choices?.[0]?.finish_reason
         if (finishReason === 'content_filter') {
           const err = new Error(`${this.label} 内容检查未通过`)
@@ -95,9 +91,9 @@ export class DeepSeekClient {
         const content = data?.choices?.[0]?.message?.content
         if (typeof content === 'string' && content.trim() !== '') return content.trim()
         lastErr = new Error(`${this.label} 返回内容为空`)
-        this.logger.warn(`[空回复诊断] finish=${finishReason ?? '-'} 输出token=${data?.usage?.completion_tokens ?? '-'} 推理token=${data?.usage?.completion_tokens_details?.reasoning_tokens ?? '-'} max_tokens=${outputBudget ?? '-'} 思考=${effortForAttempt ?? this.reasoningEffort ?? '未发送'}`)
+        this.logger.warn(`[空回复诊断] finish=${finishReason ?? '-'} 输出token=${data?.usage?.completion_tokens ?? '-'} 推理token=${data?.usage?.completion_tokens_details?.reasoning_tokens ?? '-'} max_tokens=${outputBudget ?? '-'} 思考=${this.reasoningEffort ?? '未发送'}`)
         if (attempt === 0) {
-          this.logger.warn(`${this.label} 返回内容为空，1 秒后关闭思考重试一次`)
+          this.logger.warn(`${this.label} 返回内容为空，1 秒后按原思考强度重试一次`)
           await sleep(1000, signal)
         }
       }

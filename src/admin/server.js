@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
@@ -12,6 +13,7 @@ import { applyConversationSettings, resetConversationMemory } from '../conversat
 import { writeTextAtomic } from '../stateFile.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const stamp = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const UI_FILE = path.join(__dirname, 'ui.html')
 
 /**
@@ -98,7 +100,8 @@ const EDITABLE = [
   { key: 'DEEPSEEK_REASONING_EFFORT', label: 'DeepSeek 思考强度', hint: 'none / low / high / max；留空 = 不发送。统一用于对话、指令理解与识图；max 更慢更贵', live: true, type: 'text' },
   { key: 'REPLY_TIMING_ENABLED', label: '显示思考耗时', hint: '1 开启：每条回复末尾附加「（想了 X.X 秒）」；0 关闭（日志里始终有记录）', live: true, type: 'text' },
   { key: 'STICKERS_ENABLED', label: '表情包库', hint: '1 开启，0 关闭；开启后模型可用 [贴纸: 名称] 指定发图', live: true, type: 'text' },
-  { key: 'STICKER_LEARN_ENABLED', label: '从群聊学习表情包', hint: '1 开启：白名单群里别人发的图会自动收藏并打标签；0 关闭', live: true, type: 'text' },
+  { key: 'STICKER_LEARN_ENABLED', label: '从群聊学习表情包', hint: '仅从指定学习群采集；DeepSeek Flash初筛、Qwen复核打标签，普通图片不入库', live: true, type: 'text' },
+  { key: 'STICKER_LEARN_GROUPS', label: '表情包学习群', hint: '仅所选群允许采集，可独立于聊天白名单；留空不采集', live: true, type: 'text' },
   { key: 'STICKER_LEARN_PER_HOUR', label: '每小时最多学习几张', hint: '0 = 不学；建议 3~10，避免刷屏式采集', live: true, type: 'number' },
   { key: 'STICKER_AUTO_RATE', label: '主动发表情概率(%)', hint: '0 = 只在模型明确要求时发；10 = 大约每十次回复补一张', live: true, type: 'number' },
   { key: 'DEEPSEEK_API_KEY', label: '模型 Key', live: true, type: 'secret' },
@@ -451,7 +454,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       enabled: Boolean(config.stickersEnabled),
       learned: stickers && typeof stickers.learned === 'function' ? stickers.learned() : 0,
       scenes: STICKER_SCENES,
-      learn: { enabled: Boolean(config.stickerLearnEnabled), perHour: config.stickerLearnPerHour },
+      learn: { enabled: Boolean(config.stickerLearnEnabled), perHour: config.stickerLearnPerHour, groups: [...(config.stickerLearnGroups || [])] },
       settings: { enabled: Boolean(config.stickersEnabled), autoRate: Math.round((config.stickerAutoRate || 0) * 100) },
     }),
     'GET /api/config': async () => {
@@ -480,9 +483,10 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     'GET /api/memory-detail': async (query) => {
       const key = String(query.key || '')
       const mem = readJsonSafe(config.memoryFile, {})
-      const recent = Array.isArray(mem[key]) ? mem[key].slice(-200) : []
+      const all = memory?.get?.(key) || (Array.isArray(mem[key]) ? mem[key] : [])
+      const recent = all.slice(-200)
       const d = typeof longMemory?.detail === 'function' ? longMemory.detail(key) : { summary: '', pending: [], updatedAt: 0 }
-      return { key, recent, longTerm: d.summary || '', updatedAt: d.updatedAt || 0, pending: d.pending || [] }
+      return { key, recent, recentOffset: Math.max(0, all.length - 200), revision: stamp(all), pendingRevision: stamp(d.pending || []), longTerm: d.summary || '', updatedAt: d.updatedAt || 0, pending: d.pending || [], paused: Boolean(d.paused), running: Boolean(d.running) }
     },
     'GET /api/longmemory': async (query) => ({
       key: query.key || null,
@@ -517,6 +521,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     if (key === 'DEEPSEEK_REASONING_EFFORT') return config.deepseekReasoningEffort ?? ''
     const cur = readEnvFile(envFile)[key]
     const map = {
+      STICKER_LEARN_GROUPS: () => [...(config.stickerLearnGroups || [])].join(','),
       WHITELIST_GROUPS: () => [...config.whitelistGroups].join(','),
       MUTED_GROUPS: () => [...(config.mutedGroups ?? new Set())].join(','),
       PROACTIVE_RATE: () => String(config.proactiveRate),
@@ -625,6 +630,9 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         break
       case 'STICKER_LEARN_ENABLED':
         config.stickerLearnEnabled = ['1', 'true'].includes(String(value ?? '').trim().toLowerCase())
+        break
+      case 'STICKER_LEARN_GROUPS':
+        config.stickerLearnGroups = new Set(String(value || '').split(/[,，\s]+/).filter(x => /^\d+$/.test(x) && Number(x) > 0).map(Number))
         break
       case 'STICKER_LEARN_PER_HOUR':
         config.stickerLearnPerHour = Math.max(0, Math.min(60, Math.floor(num(value, 6))))
@@ -955,7 +963,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       if (!item) throw new Error('表情包库里还没有图')
       const file = stickers.dataUrlOf(item)
       if (!file) throw new Error('图片文件读不到，可能已被删除')
-      await onebot.sendGroup(groupId, [{ type: 'image', data: { file } }])
+      await onebot.sendGroup(groupId, [{ type: 'image', data: { file, sub_type: 1 } }])
       logger?.info?.(`[控制台] 测试发送表情包「${item.name}」到群 ${groupId}`)
       return { ok: true, name: item.name }
     },
@@ -966,6 +974,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       if (!key) throw new Error('缺少会话 key')
       if (!Number.isInteger(index)) throw new Error('缺少要修改的条目')
       if (!content.trim()) throw new Error('内容不能为空')
+      if (payload?.revision !== stamp(memory.get(key))) throw new Error('记忆已更新，请刷新后再编辑')
       const item = memory.updateEntry(key, index, content)
       if (!item) throw new Error('这条记忆已经变化，请刷新后再试')
       logger?.info?.(`[控制台] 修改 ${key} 第 ${index + 1} 条近期记忆`)
@@ -976,10 +985,21 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       const index = Number(payload?.index)
       if (!key) throw new Error('缺少会话 key')
       if (!Number.isInteger(index)) throw new Error('缺少要删除的条目')
+      if (payload?.revision !== stamp(memory.get(key))) throw new Error('记忆已更新，请刷新后再删除')
       const ok = memory.removeEntry(key, index)
       if (!ok) throw new Error('这条记忆已经变化，请刷新后再试')
       logger?.info?.(`[控制台] 删除 ${key} 第 ${index + 1} 条近期记忆`)
       return { ok: true, remain: memory.count(key) }
+    },
+    async 'longmemory-pause'(payload) {
+      const key = String(payload?.key || '')
+      if (!key) throw new Error('缺少会话 key')
+      return { ok: true, ...longMemory.pause(key) }
+    },
+    async 'longmemory-resume'(payload) {
+      const key = String(payload?.key || '')
+      if (!key) throw new Error('缺少会话 key')
+      return { ok: true, ...longMemory.resume(key) }
     },
     async 'longmemory-update'(payload) {
       const key = String(payload?.key || '')
@@ -994,6 +1014,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       const index = Number(payload?.index)
       if (!key) throw new Error('缺少会话 key')
       if (typeof longMemory?.removePending !== 'function') throw new Error('当前版本不支持删除待整理')
+      if (payload?.revision !== stamp(longMemory.detail(key).pending)) throw new Error('待整理原文已更新，请刷新后再删除')
       const ok = longMemory.removePending(key, index)
       if (!ok) throw new Error('这条待整理已经变化，请刷新后再试')
       logger?.info?.(`[控制台] 丢弃 ${key} 第 ${index + 1} 条待整理原文`)

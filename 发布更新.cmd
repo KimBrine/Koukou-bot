@@ -9,6 +9,10 @@ echo ==========================================
 echo.
 for /f "delims=" %%B in ('git rev-parse --abbrev-ref HEAD') do set "BRANCH=%%B"
 echo 当前分支：%BRANCH%
+if not "%BRANCH%"=="dev" (
+  echo 请切换到 dev 再提交开发更新。main 仅由审核后的发布流程更新。
+  goto end
+)
 echo.
 echo [1/4] 当前改动：
 git status --short
@@ -32,22 +36,8 @@ if errorlevel 1 goto fail
 :push
 echo.
 echo [3/4] 推送到自己的仓库 origin ...
-git push origin %BRANCH%
+git push origin HEAD:dev
 if errorlevel 1 goto fail
-
-git remote get-url upstream >nul 2>&1
-if errorlevel 1 (
-  echo       （没有 upstream 远程，跳过）
-  goto done
-)
-echo.
-echo [4/4] 推送到上游 upstream ...
-git push upstream %BRANCH%
-if errorlevel 1 (
-  echo       推上游失败：可能没有权限，或上游同名分支有冲突。
-  echo       已经推到 origin，不影响你继续用。
-  goto done
-)
 
 :done
 echo.

@@ -201,7 +201,7 @@ const memoryLLM = new DeepSeekClient({
 const longMemory = createLongMemory({
   file: path.join(config.dataDir, 'long-memory.json'),
   logger,
-  llm: { chat: (prompt, messages) => memoryLLM.chat(prompt, messages) },
+  llm: { chat: (prompt, messages, options) => memoryLLM.chat(prompt, messages, options) },
   maxChars: config.longMemoryMaxChars,
   intervalMs: config.longMemoryIntervalMs,
 })
@@ -212,7 +212,15 @@ const customCommands = createCustomCommands({ file: path.join(config.dataDir, 'c
 
 // 表情包库：图片存 data/stickers，模型可用 [贴纸: 名称] 指定发送
 const stickers = createStickers({ dir: path.join(config.dataDir, 'stickers'), logger })
-const stickerLearner = createStickerLearner({ config, logger, onebot, stickers, visionLLM })
+const stickerFilterLLM = config.deepseekApiKey ? new DeepSeekClient({
+  apiKey: config.deepseekApiKey, baseUrl: config.deepseekBaseUrl, model: 'deepseek-flash',
+  reasoningEffort: 'max', temperature: 0.2, maxTokens: undefined,
+  timeoutMs: Math.max(config.timeoutMs, 180000), maxRetries: config.maxRetries,
+  maxConcurrency: 1, logger, label: '表情包初筛(DeepSeek Flash)',
+}) : null
+const stickerTagLLM = createSummaryVisionClient({ config: { ...config, summaryUnrestricted: true }, logger })
+const stickerLearner = createStickerLearner({ config, logger, onebot, stickers,
+  filterLLM: stickerFilterLLM, tagLLM: stickerTagLLM, imageCache: sharedImageCache })
 const commandCenter = createCommandCenter({file:path.join(config.dataDir,'command-center.json'),customCommands,config,logger,llm})
 
 // 联网搜索（百度千帆）：仅私聊与被@时可用，模型自行判断是否需要

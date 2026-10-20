@@ -710,9 +710,10 @@ function pageMemory(){
       '<div style="max-height:360px;overflow:auto;margin-top:8px">' + (recentRows || '<div class="mut">这个会话没有近期记忆。</div>') + '</div>',
       '</section>',
       '<section class="card"><h2>长期记忆 <span class="pill">' + (d.longTerm||'').length + ' 字</span>' + (d.updatedAt ? ' <span class="mut" style="font-size:12px">更新于 ' + esc(fmtTime(d.updatedAt)) + '</span>' : '') + '</h2>',
-      '<div class="note">可以直接改写摘要正文，保存后立刻生效。</div>',
-      '<textarea id="lmEdit" style="width:100%;min-height:160px;margin-top:8px" placeholder="还没有整理出长期记忆，可以直接写">' + esc(d.longTerm || '') + '</textarea>',
-      '<div class="flexbar"><button class="btn primary" id="lmSave">保存长期记忆</button><span class="mut" id="lmHint" style="font-size:12px"></span></div>',
+      '<div class="note">' + (d.paused ? '自动整理已暂停，可编辑。保存后保持暂停，新原文继续存档；恢复后才基于新摘要整理。' : (d.running ? '后台正在整理。请先暂停再编辑，旧任务会取消，迟到结果不会回写。' : '请先暂停自动整理再编辑。')) + '</div>',
+      '<button class="btn" id="lmPause">' + (d.paused ? '恢复自动整理' : '暂停整理并编辑') + '</button>',
+      '<textarea id="lmEdit"' + (d.paused ? '' : ' disabled') + ' style="width:100%;min-height:160px;margin-top:8px" placeholder="还没有整理出长期记忆，可以直接写">' + esc(d.longTerm || '') + '</textarea>',
+      '<div class="flexbar"><button class="btn primary" id="lmSave"' + (d.paused ? '' : ' disabled') + '>保存长期记忆</button><span class="mut" id="lmHint" style="font-size:12px"></span></div>',
       '</section>',
       '<section class="card"><h2>待整理 <span class="pill">' + (d.pending||[]).length + ' 条</span></h2>',
       '<div class="note">从近期窗口挤出来的原文，攒够会自动压缩进长期记忆；不想留的可以单条删掉。</div>',
@@ -765,7 +766,10 @@ function pageStickers(){
   const sceneList = stickerScenes || []
   const learn = stickerLearn || {}
   const settings = stickerSettings || {}
-  const groups = chats.filter(function(c){ return c.type === 'group' })
+  const groupMap = new Map(joinedGroups.map(g => [String(g.id), { id: String(g.id), name: g.name }]))
+  chats.filter(c => c.type === 'group').forEach(g => groupMap.set(String(g.id), g))
+  ;(learn.groups || []).forEach(id => { if (!groupMap.has(String(id))) groupMap.set(String(id), { id: String(id), name: '已指定群' }) })
+  const groups = [...groupMap.values()]
   const gopts = groups.map(function(g){ return '<option value="' + g.id + '">' + esc(g.name) + '（' + g.id + '）</option>' }).join('')
   const sceneChoices = sceneList.map(function(sc){
     return '<label style="font-size:12px;margin-right:10px;white-space:nowrap"><input type="checkbox" data-up-scene value="' + esc(sc.id) + '">' + esc(sc.name) + '</label>'
@@ -795,7 +799,9 @@ function pageStickers(){
     '<div class="row" style="margin-top:8px;display:flex;gap:8px;align-items:center"><span class="mut">主动发送概率</span><input id="stkAutoRate" type="number" min="0" max="100" value="' + (settings.autoRate || 0) + '" style="width:90px"><span class="mut">% （0 = 只在模型点名时发）</span></div>',
     '<div style="height:1px;background:var(--line,#e5e5e5);margin:10px 0"></div>',
     '<label style="display:flex;align-items:center;gap:8px;font-size:14px"><input type="checkbox" id="stkLearnToggle"' + (learn.enabled ? ' checked' : '') + '> 自动收藏群里别人发的表情包</label>',
-    '<div class="mut" style="margin-top:6px">开启后：白名单群里别人发的图会被收藏，视觉模型自动起名和打标签。已学习 ' + (stickerLearned || 0) + ' 张 / 共 ' + items.length + ' 张。</div>',
+    '<div class="mut" style="margin-top:6px">只学习下方选中的群，可选择非白名单群；不改变聊天回复范围。DeepSeek Flash初筛，Qwen复核并打标签；无法确认的图不收录。已学习 ' + (stickerLearned || 0) + ' 张 / 共 ' + items.length + ' 张。</div>',
+    '<div class="note">学习群（可多选；留空不学习）</div>',
+    (groups || []).map(function(g) { return '<label style="display:block;margin:8px 0"><input type="checkbox" data-stk-learn-group="' + esc(g.id) + '"' + ((learn.groups || []).map(String).includes(String(g.id)) ? ' checked' : '') + '> ' + esc(g.name || g.id) + ' (' + esc(g.id) + ')</label>' }).join(''),
     '<div class="row" style="margin-top:8px;display:flex;gap:8px;align-items:center">',
     '<span class="mut">每小时最多</span><input id="stkLearnPerHour" type="number" min="0" max="60" value="' + (learn.perHour || 0) + '" style="width:90px"><span class="mut">张</span>',
     '<button class="btn" id="stkLearnSave">保存学习设置</button>',
@@ -1035,6 +1041,7 @@ async function bind(){
     try {
       await api('/api/action/set-config', { key: 'STICKERS_ENABLED', value: enabled ? '1' : '0' })
       await api('/api/action/set-config', { key: 'STICKER_AUTO_RATE', value: String(autoRate) })
+      await api('/api/action/set-config', { key: 'STICKER_LEARN_GROUPS', value: Array.from(document.querySelectorAll('[data-stk-learn-group]:checked')).map(el => el.dataset.stkLearnGroup).join(',') })
       await api('/api/action/set-config', { key: 'STICKER_LEARN_ENABLED', value: on ? '1' : '0' })
       await api('/api/action/set-config', { key: 'STICKER_LEARN_PER_HOUR', value: String(perHour) })
       await load()
@@ -1099,7 +1106,7 @@ async function bind(){
     const text = await ask('修改这条记忆', '保存后立刻写回；机器人之后的回复会用改后的内容。', '保存', true, item.content)
     if (text === null || text === undefined) return
     try {
-      await api('/api/action/memory-update', { key: memoryDetail.key, index: idx, content: text })
+      await api('/api/action/memory-update', { key: memoryDetail.key, index: idx + (memoryDetail.recentOffset || 0), revision: memoryDetail.revision, content: text })
       await reloadMemoryDetail(memoryDetail.key)
       toast('已修改')
     } catch (e) { toast('修改失败：' + e.message, true) }
@@ -1110,7 +1117,7 @@ async function bind(){
     if (!item) { toast('这条记忆已经变化，请刷新', true); return }
     if (!await ask('删除这条记忆？', String(item.content).slice(0, 80) + '…', '删除')) return
     try {
-      await api('/api/action/memory-delete', { key: memoryDetail.key, index: idx })
+      await api('/api/action/memory-delete', { key: memoryDetail.key, index: idx + (memoryDetail.recentOffset || 0), revision: memoryDetail.revision })
       await reloadMemoryDetail(memoryDetail.key)
       toast('已删除这一条')
     } catch (e) { toast('删除失败：' + e.message, true) }
@@ -1119,11 +1126,19 @@ async function bind(){
     const idx = Number(el.dataset.pendingDel)
     if (!await ask('丢弃这条待整理原文？', '丢了就不会再进长期记忆。', '丢弃')) return
     try {
-      await api('/api/action/pending-delete', { key: memoryDetail.key, index: idx })
+      await api('/api/action/pending-delete', { key: memoryDetail.key, index: idx, revision: memoryDetail.pendingRevision })
       await reloadMemoryDetail(memoryDetail.key)
       toast('已丢弃')
     } catch (e) { toast('删除失败：' + e.message, true) }
   })
+  const lmPause = document.getElementById('lmPause')
+  if (lmPause) lmPause.onclick = async () => {
+    try {
+      if (memoryDetail.paused && !await ask('恢复自动整理？', '请先保存编辑内容。恢复后，新整理会基于已保存摘要合并原文。', '恢复')) return
+      await api('/api/action/' + (memoryDetail.paused ? 'longmemory-resume' : 'longmemory-pause'), { key: memoryDetail.key })
+      await reloadMemoryDetail(memoryDetail.key)
+    } catch(e) { toast(e.message, true) }
+  }
   const lmSave = document.getElementById('lmSave')
   if (lmSave) lmSave.onclick = async () => {
     const box = document.getElementById('lmEdit')
@@ -1132,7 +1147,7 @@ async function bind(){
     try {
       const r = await api('/api/action/longmemory-update', { key: memoryDetail.key, text: box.value })
       if (hint) hint.textContent = '已保存 ' + r.chars + ' 字'
-      toast('长期记忆已保存')
+      toast('长期记忆已保存，自动整理保持暂停')
       await load()
     } catch (e) { toast('保存失败：' + e.message, true) }
     lmSave.disabled = false

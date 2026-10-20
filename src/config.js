@@ -336,7 +336,8 @@ export function loadConfig() {
     stickersEnabled: !['0', 'false'].includes(String(env.STICKERS_ENABLED ?? '1').trim().toLowerCase()),
     // 主动发表情包的概率（百分比）：0 = 只有模型明确要求时才发
     stickerAutoRate: Math.min(1, Math.max(0, num('STICKER_AUTO_RATE', 0) / 100)),
-    // 从群聊自动学习表情包（只学白名单群、别人发的图）
+    // 从独立指定的群学习表情包，留空不采集，不继承聊天白名单
+    stickerLearnGroups: new Set(String(env.STICKER_LEARN_GROUPS ?? '').split(/[,，\s]+/).filter(x => /^\d+$/.test(x) && Number(x) > 0).map(Number)),
     stickerLearnEnabled: ['1', 'true'].includes(String(env.STICKER_LEARN_ENABLED ?? '0').trim().toLowerCase()),
     // 每小时最多学习几张，防止刷屏式采集和 API 花销
     stickerLearnPerHour: Math.max(0, Math.min(60, Math.floor(num('STICKER_LEARN_PER_HOUR', 6)))),

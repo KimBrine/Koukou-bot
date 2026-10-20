@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { createStickers, STICKER_SCENES } from '../src/stickers.js'
+import { createImageCache } from '../src/imageCache.js'
+import { parseMessage } from '../src/cq.js'
 import { createStickerLearner } from '../src/stickerLearn.js'
 
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
@@ -29,60 +31,41 @@ try {
   assert.equal(lib.pick('今天好累啊，不想上班').id, a.item.id, '相同语境应命中同一张')
   assert.equal(lib.pick('').id, a.item.id, '空语境退化为随机（库里只有一张）')
 
-  // ---- 自动学习 ----
-  const config = { stickerLearnEnabled: true, stickerLearnPerHour: 2 }
-  let visionCalls = 0
-  const visionLLM = {
-    async describeImages() {
-      visionCalls++
-      return '{"name":"猫猫震惊","keywords":["震惊","什么"],"scenes":["question"]}'
-    },
-  }
-  const fakeFetch = async () => ({
-    ok: true,
-    headers: { get: () => 'image/png' },
-    arrayBuffer: async () => bytes,
-  })
-  const learner = createStickerLearner({ config, logger, stickers: lib, visionLLM, fetchImpl: fakeFetch, now: () => 1000 })
+  const config = { stickerLearnEnabled: true, stickerLearnPerHour: 20, stickerLearnGroups: new Set([12345]) }
+  const cache = createImageCache({ dir: path.join(root, 'cache'), logger })
+  let downloads = 0, filters = 0, tags = 0, firstAccept = true, secondAccept = true
+  const filterLLM = { model: 'deepseek-flash', async describeImages() { filters++; return JSON.stringify({ isSticker: firstAccept }) } }
+  const tagLLM = { model: 'qwen-test', async describeImages() { tags++; return JSON.stringify({ isSticker: secondAccept, name: '猫猫震惊', keywords: ['震惊'], scenes: ['question'] }) } }
+  const fetchImpl = async url => ({ ok: true, headers: { get: key => key === 'content-type' ? 'image/png' : null },
+    arrayBuffer: async () => { downloads++; return Buffer.concat([bytes, Buffer.from(url)]) } })
+  const learner = createStickerLearner({ config, logger, stickers: lib, filterLLM, tagLLM, imageCache: cache, fetchImpl })
+  const msg = (name, groupId = 12345) => ({ groupId, images: [{ file: name, url: 'https://example.com/' + name }], text: '测试' })
+  assert.equal(await learner.learnFromMessage(msg('outside', 12346)), null)
+  assert.equal(downloads, 0, '未指定群不下载或调用模型；与白名单无关')
+  const item = await learner.learnFromMessage(msg('meme'))
+  assert.equal(item.name, '猫猫震惊'); assert.deepEqual(item.scenes, ['question'])
+  assert.equal(filters, 1); assert.equal(tags, 1)
+  await learner.learnFromMessage(msg('meme'))
+  assert.equal(downloads, 1); assert.equal(filters, 1); assert.equal(tags, 1, '已收录图复用缓存与标签')
+  firstAccept = false
+  assert.equal(await learner.learnFromMessage(msg('photo')), null)
+  assert.equal(tags, 1, 'Flash排除普通图片后不送Qwen')
+  firstAccept = true; secondAccept = false
+  assert.equal(await learner.learnFromMessage(msg('not-meme')), null)
+  assert.equal(tags, 2, 'Qwen复核排除，不能入库')
+  secondAccept = true
+  const off = createStickerLearner({ config: { ...config, stickerLearnGroups: new Set() }, stickers: lib, filterLLM, tagLLM, fetchImpl })
+  assert.equal(await off.learnFromMessage(msg('empty')), null, '默认空范围不采集')
+  const noVision = createStickerLearner({ config, stickers: lib, filterLLM, tagLLM: null, fetchImpl })
+  assert.equal(await noVision.learnFromMessage(msg('missing-model')), null, '缺少复核模型不收藏占位图')
+  config.stickerLearnPerHour = 0
+  assert.equal(await learner.learnFromMessage(msg('limit')), null)
+  config.stickerLearnPerHour = 20; config.stickerLearnEnabled = false
+  assert.equal(await learner.learnFromMessage(msg('off')), null)
+  assert.equal(parseMessage([{ type: 'image', data: { file: 'x', sub_type: 1 } }]).images[0].subType, 1)
+  assert.equal(parseMessage('[CQ:image,file=x,sub_type=0]').images[0].subType, 0)
+  console.log('表情包学习：指定群、两阶段筛选、图片排除、缓存、缺失模型、限流、图片类型检查通过。')
 
-  const before = lib.count()
-  const item = await learner.learnFromMessage({ images: [{ url: 'https://example.com/a.png' }], groupId: 831838803, senderName: '小明', text: '？？' })
-  assert.ok(item, '应该学到一张')
-  assert.equal(lib.count(), before + 1)
-  assert.equal(item.origin, 'learned')
-  assert.equal(item.name, '猫猫震惊')
-  assert.deepEqual(item.keywords, ['震惊', '什么'])
-  assert.deepEqual(item.scenes, ['question'])
-  assert.match(item.source, /831838803/)
-  assert.equal(visionCalls, 1)
-
-  // 同一张重复学习：不新增（哈希去重）
-  const dup = await learner.learnFromMessage({ images: [{ url: 'https://example.com/a.png' }], groupId: 831838803, senderName: '小明' })
-  assert.equal(lib.count(), before + 1, '重复图片不新增')
-  assert.equal(dup.name, '猫猫震惊')
-
-  // 每小时上限（已用 2 次）
-  const third = await learner.learnFromMessage({ images: [{ url: 'https://example.com/b.png' }], groupId: 831838803 })
-  assert.equal(third, null, '超出每小时上限应停止学习')
-
-  // 关闭学习后不学
-  const off = createStickerLearner({ config: { ...config, stickerLearnEnabled: false }, logger, stickers: lib, visionLLM, fetchImpl: fakeFetch })
-  assert.equal(await off.learnFromMessage({ images: [{ url: 'https://x/y.png' }] }), null)
-
-  // 没有视觉模型也能学（占位名）
-  const noVision = createStickerLearner({ config: { stickerLearnEnabled: true, stickerLearnPerHour: 5 }, logger, stickers: lib, visionLLM: null, fetchImpl: fakeFetch, now: () => 5000 })
-  const placeholder = await noVision.learnFromMessage({ images: [{ url: 'https://x/z.png' }], groupId: 1 })
-  assert.ok(placeholder)
-  assert.match(placeholder.name, /群友表情/)
-
-  // 非法图片类型直接跳过
-  const badType = createStickerLearner({
-    config: { stickerLearnEnabled: true, stickerLearnPerHour: 5 }, logger, stickers: lib, visionLLM,
-    fetchImpl: async () => ({ ok: true, headers: { get: () => 'text/html' }, arrayBuffer: async () => bytes }),
-  })
-  assert.equal(await badType.learnFromMessage({ images: [{ url: 'https://x/h.html' }] }), null)
-
-  console.log('表情包语境与自动学习检查通过：场景匹配 / 用法学习 / 选图 / 去重 / 限流 / 关闭开关。')
 } finally {
   rmSync(root, { recursive: true, force: true })
 }

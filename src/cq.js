@@ -73,7 +73,8 @@ export function parseMessage(raw, selfId, { preserveNewlines = false } = {}) {
     while ((m = imgRe.exec(raw)) !== null) {
       const file = /(?:^|,)file=([^,\]]+)/.exec(m[0])?.[1] ?? ''
       const url = /(?:^|,)url=([^,\]]+)/.exec(m[0])?.[1] ?? ''
-      images.push({ file: cqUnescape(file), url: cqUnescape(url) })
+      const sub = /(?:^|,)sub_type=([^,\]]+)/.exec(m[0])?.[1]
+      images.push({ file: cqUnescape(file), url: cqUnescape(url), ...(sub !== undefined ? { subType: Number(sub) } : {}) })
     }
     text = raw
       .replace(/\[CQ:image,[^\]]*\]/g, '[图片]')
@@ -102,7 +103,7 @@ export function parseMessage(raw, selfId, { preserveNewlines = false } = {}) {
           break
         case 'image':
           parts.push('[图片]')
-          images.push({ file: String(data.file ?? ''), url: String(data.url ?? '') })
+          images.push({ file: String(data.file ?? ''), url: String(data.url ?? ''), ...(data.sub_type !== undefined ? { subType: Number(data.sub_type) } : {}) })
           break
         case 'face': {
           // NapCat 对新版表情会给 raw.faceText（如 "/知识增加"）；经典小黄脸只有 id

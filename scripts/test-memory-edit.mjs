@@ -64,6 +64,31 @@ try {
   assert.equal(long.setSummary('gX', '新会话摘要').chars, '新会话摘要'.length)
   assert.equal(long.detail('gX').summary, '新会话摘要')
 
+  let release, signal, calls = 0
+  const racing = createLongMemory({ file: path.join(root, 'race.json'), logger,
+    llm: { chat: async (_, messages, options) => {
+      calls++; signal = options.signal
+      if (calls === 1) return await new Promise(resolve => { release = resolve })
+      assert.match(messages[0].content, /手动修订/)
+      return '基于手动修订合并的新摘要'
+    } } })
+  racing.addEvicted('g', [{ text: '原话一' }, { text: '原话二' }])
+  const pending = racing.summarize('g')
+  assert.equal(racing.detail('g').running, true)
+  racing.pause('g'); assert.equal(signal.aborted, true)
+  racing.setSummary('g', '手动修订')
+  racing.addEvicted('g', [{ text: '暂停期间新消息' }])
+  release('迟到旧摘要'); assert.equal(await pending, false)
+  assert.equal(racing.detail('g').summary, '手动修订')
+  assert.equal(racing.detail('g').pending.length, 3)
+  assert.equal(await racing.summarize('g'), false); assert.equal(calls, 1)
+  const reboot = createLongMemory({ file: path.join(root, 'race.json'), logger, llm: {} })
+  assert.equal(reboot.detail('g').paused, true, '重启保留暂停状态')
+  racing.resume('g'); assert.equal(await racing.summarize('g'), true)
+  assert.equal(racing.detail('g').summary, '基于手动修订合并的新摘要')
+  assert.equal(racing.detail('g').pending.length, 0)
+  console.log('长期记忆并发：暂停取消、迟到回写隔离、保留新原文、重启暂停与恢复检查通过。')
+
   console.log('记忆单条编辑检查通过：改正文 / 删单条 / 越界保护 / 落盘 / 摘要改写 / 丢弃待整理。')
 } finally {
   rmSync(root, { recursive: true, force: true })
