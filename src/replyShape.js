@@ -100,10 +100,16 @@ export function planReply({
   maxLines = 3,
   lineMaxChars = 40,
   matchEnabled = true,
+  longMode = false,
   backlogWeight = 0.35,
   rand = Math.random,
 } = {}) {
   const target = Math.max(0, Math.round(incomingLen + backlogLen * backlogWeight))
+  // 长回答模式：行数用满上限、预算用 行数×单行上限，不再按对方字数缩放
+  if (longMode) {
+    const lines = Math.max(1, maxLines)
+    return { targetLen: target, lines, budget: lines * lineMaxChars, perLineCap: lineMaxChars, lineMaxChars, longMode: true }
+  }
   const lines = matchEnabled ? pickLineCount(target, { maxLines, lineMaxChars, rand }) : 1
   // 预算：跟着对方长度走，再给几个字余量；下限 8 字（避免出现"嗯"这种没有信息的回复），
   // 上限 = 行数 × 单行上限（多行不代表可以无限长）

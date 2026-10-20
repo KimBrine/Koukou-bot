@@ -315,8 +315,10 @@ export function loadConfig() {
 
     // 回复长度自适应与多行回复（长度跟着对方走；以一行为主，偶尔 2~3 行，逐行分条发送）
     replyLengthMatch: String(env.REPLY_LENGTH_MATCH ?? '1').toLowerCase() !== '0' && String(env.REPLY_LENGTH_MATCH ?? '1').toLowerCase() !== 'false',
-    replyMaxLines: Math.max(1, Math.min(5, Math.floor(num('REPLY_MAX_LINES', 3)))),
-    replyLineMaxChars: Math.max(10, Math.min(200, Math.floor(num('REPLY_LINE_MAX_CHARS', 40)))),
+    // 长回答模式：开启后不再"跟着对方字数"压缩，允许写完整过程（解题/写代码时用）
+    replyLongMode: ['1', 'true'].includes(String(env.REPLY_LONG_MODE ?? '0').trim().toLowerCase()),
+    replyMaxLines: Math.max(1, Math.min(20, Math.floor(num('REPLY_MAX_LINES', 3)))),
+    replyLineMaxChars: Math.max(10, Math.min(1000, Math.floor(num('REPLY_LINE_MAX_CHARS', 40)))),
     // 分条发送之间的间隔（比首次"打字"短：第二条是想接着说的，不该等太久）
     lineGapMinMs: Math.max(0, Math.floor(num('LINE_GAP_MIN_MS', 500))),
     lineGapMaxMs: Math.max(0, Math.floor(num('LINE_GAP_MAX_MS', 1600))),

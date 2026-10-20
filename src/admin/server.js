@@ -48,7 +48,8 @@ const EDITABLE = [
   { key: 'EMOJI_KEEP_RATE', label: '装饰符号频率', hint: '表情与颜文字出现在多少比例的回复里；种类由人格或私有偏好决定', live: true, type: 'rate' },
   { key: 'HUMAN_DELAY_MIN_MS', label: '打字延迟下限(ms)', live: true, type: 'number' },
   { key: 'HUMAN_DELAY_MAX_MS', label: '打字延迟上限(ms)', live: true, type: 'number' },
-  { key: 'REPLY_LENGTH_MATCH', label: '回复长度自适应', hint: '1=跟着对方长度走 0=固定单行', live: true, type: 'bool' },
+  { key: 'REPLY_LENGTH_MATCH', label: '回复长度自适应', hint: '1=跟着对方长度走；0=不按对方字数缩放（行数仍取「最多分几行」）', live: true, type: 'bool' },
+  { key: 'REPLY_LONG_MODE', label: '长回答模式', hint: '开启：解题/写代码/讲过程时完整输出，不再跟着对方字数压缩；平时闲聊仍按上面两项', live: true, type: 'bool' },
   { key: 'REPLY_MAX_LINES', label: '最多分几行', live: true, type: 'number' },
   { key: 'REPLY_LINE_MAX_CHARS', label: '单行字数上限', live: true, type: 'number' },
   { key: 'LINE_GAP_MIN_MS', label: '分条间隔下限(ms)', live: true, type: 'number' },
@@ -660,6 +661,9 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         break
       case 'LINE_GAP_MAX_MS':
         config.lineGapMaxMs = Math.max(0, num(value, config.lineGapMaxMs))
+        break
+      case 'REPLY_LONG_MODE':
+        config.replyLongMode = ['1', 'true'].includes(String(value ?? '').trim().toLowerCase())
         break
       case 'REPLY_MAX_LINES':
         config.replyMaxLines = Math.max(1, Math.min(5, Math.floor(num(value, config.replyMaxLines))))

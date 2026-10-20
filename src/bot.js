@@ -1055,6 +1055,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         maxLines: eff?.replyMaxLines ?? config.replyMaxLines,
         lineMaxChars: eff?.lineMaxChars ?? config.replyLineMaxChars,
         matchEnabled: config.replyLengthMatch,
+        longMode: config.replyLongMode,
         rand, // 可注入的随机源（生产为 Math.random，测试可固定以保证确定性）
       })
       logger.debug(`[形态] 对方 ${incomingLen} 字 → 目标 ${plan.targetLen} 字｜${plan.lines} 行｜预算 ${plan.budget} 字`)
@@ -1177,7 +1178,8 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         // 这次要卖萌却因裁剪丢了装饰 → 按本次种类补一个（模型自己带了就不动，不做强制配对）
         if (allowDecoration) lines = ensureDecoration(lines, reply, { kind: decoKind, rand, preset: decorationPreset })
         // 装饰符号：这次允许就原样保留，不允许就清成纯文字（频率已在上面的提示里定好）
-        let finalLines = limitDecorationLines(lines, allowDecoration ? 1 : 0)
+        // 长回答模式下不做装饰清理：解题答案里的括号和等号不能被当成颜文字删掉
+        let finalLines = config.replyLongMode ? lines : limitDecorationLines(lines, allowDecoration ? 1 : 0)
         if (finalLines.length === 0) finalLines = lines.slice(0, 1)
         const thinkMs = Date.now() - genStartedAt
         if (config.replyTimingEnabled && thinkMs > 0 && finalLines.length > 0) {
