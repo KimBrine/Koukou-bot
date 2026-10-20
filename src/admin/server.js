@@ -51,7 +51,7 @@ const EDITABLE = [
   { key: 'HUMAN_DELAY_MIN_MS', label: '打字延迟下限(ms)', live: true, type: 'number' },
   { key: 'HUMAN_DELAY_MAX_MS', label: '打字延迟上限(ms)', live: true, type: 'number' },
   { key: 'REPLY_LENGTH_MATCH', label: '回复长度自适应', hint: '1=跟着对方长度走；0=固定单行。想要长回答请用 /Q', live: true, type: 'bool' },
-  { key: 'REPLY_MIN_BUDGET', label: '最小回复字数', hint: '0 = 完全跟随对方长度（上游默认）；例如 30：短问题也至少给 30 字，避免一句话被截断。解题请用 /Q', live: true, type: 'number' },
+  { key: 'REPLY_MIN_BUDGET', label: '最小回复字数', hint: '0 = 完全跟随对方长度（上游默认）；比如 120：短问题也有 120 字空间，并允许按模型分段最多发「最多分几行」条。解题请用 /Q', live: true, type: 'number' },
   { key: 'REPLY_MAX_LINES', label: '最多分几行', live: true, type: 'number' },
   { key: 'REPLY_LINE_MAX_CHARS', label: '单行字数上限', live: true, type: 'number' },
   { key: 'LINE_GAP_MIN_MS', label: '分条间隔下限(ms)', live: true, type: 'number' },

@@ -111,6 +111,13 @@ export function planReply({
     const lines = Math.max(1, maxLines)
     return { targetLen: target, lines, budget: lines * lineMaxChars, perLineCap: lineMaxChars, lineMaxChars, longMode: true }
   }
+  // 设了最小预算时：行数按预算分配（每行至少约 20 字），最多到 maxLines 条
+  if (minBudget > 0) {
+    const lines = Math.max(1, Math.min(maxLines, Math.max(1, Math.floor(minBudget / 20))))
+    const budget = Math.max(minBudget, Math.min(lines * lineMaxChars, Math.round(target * 1.15) + 8))
+    const perLineCap = Math.max(20, Math.min(lineMaxChars, Math.ceil(budget / lines) + 6))
+    return { targetLen: target, lines, budget, perLineCap, lineMaxChars }
+  }
   const lines = matchEnabled ? pickLineCount(target, { maxLines, lineMaxChars, rand }) : 1
   // 预算：跟着对方长度走，再给几个字余量；下限 8 字（避免出现"嗯"这种没有信息的回复），
   // 上限 = 行数 × 单行上限（多行不代表可以无限长）
