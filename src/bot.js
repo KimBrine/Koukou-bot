@@ -10,7 +10,7 @@ import { modelHistory } from './memory.js'
 import { buildReplyFocus } from './replyFocus.js'
 import { conversationRules } from './conversationRules.js'
 import { stripInternalReplyMetadata, REPLY_REPAIR_HINT } from './replySanitizer.js'
-import { parseSongRequest, searchSong } from './music.js'
+import { resolveMusicRequest, searchSong, musicPlatformName } from './music.js'
 import { parseMessage } from './cq.js'
 import { isBotAdmin, hasAdmins, adminHint } from './permissions.js'
 import { renderReply } from './customCommands.js'
@@ -292,7 +292,7 @@ const SEARCH_TOOLS = [{
   },
 }]
 
-export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, commandCenter, longMemory, stickers = null, stickerLearner = null, rand = Math.random }) {
+export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, commandCenter, longMemory, stickers = null, stickerLearner = null, musicSearch = searchSong, rand = Math.random }) {
   const imageCache = sharedImageCache ?? (config.dataDir && config.visionCacheEnabled !== false ? createImageCache({
     dir: path.join(config.dataDir, 'image-cache'),
     maxBytes: config.visionCacheMaxBytes,
@@ -912,6 +912,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         }
         const isAdmin = isBotAdmin(evt.user_id, config.adminUsers)
         const lines = ['📋 我能用的指令：', '', '【大家都能用】', '/help  打开这份指令列表', '/Q 问题  本轮认真解题（私聊或群里@我）']
+        lines.push('点歌 《歌名》 歌手 / 点歌 歌曲ID / 点歌 歌曲链接（默认网易云，可注明QQ音乐；群里需@我）')
         if (isAdmin) {
           lines.push('')
           lines.push('【管理员专属】')
@@ -1032,20 +1033,24 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         replyStillCurrent(onebot, evt, { latestOnly: !directReply }) && !autoPlusOne.wasTriggered(repetition)
       let musicNote = ''
       try {
-        const songQuery = directReply && !questionMode ? parseSongRequest(parsed.text, quoted?.text || '') : ''
+        const songQuery = directReply && !questionMode ? await resolveMusicRequest(parsed.text, quoted?.text || '',{llm}) : null
         if (songQuery) {
-          const song = await searchSong(songQuery)
+          if(!canContinue())return
+          if(songQuery.error){await sendTo(evt,songQuery.error);return}
+          const song = await musicSearch(songQuery)
           if (song && canContinue()) {
-            const card = [{ type: 'music', data: { type: '163', id: song.id } }]
+            const card = [{ type: 'music', data: { type: song.platform, id: song.id } }]
             const receipt=isPrivate ? await onebot.sendPrivate(evt.user_id, card) : await onebot.sendGroup(groupId, card)
             if(receipt?.message_id==null&&receipt?.data?.message_id==null)throw new Error('音乐名片未收到成功回执')
-            logger.info(`[点歌] 已发送《${song.name}》- ${song.artist || '未知歌手'}（搜索：${songQuery}）`)
-            musicNote = `\n（系统提示：刚刚已经发出《${song.name}》的音乐名片，别再声称发不了，用一句话自然回应即可。）`
+            logger.info(`[点歌] 已发送 ${musicPlatformName(song.platform)}《${song.name}》- ${song.artist || '未知歌手'}（ID ${song.id}）`)
+            musicNote = `\n（系统提示：刚刚已经发出${musicPlatformName(song.platform)}《${song.name}》—${song.artist}的音乐名片，ID ${song.id}。别再声称发不了，用一句话自然回应即可。）`
           } else {
-            logger.info(`[点歌] 没搜到「${songQuery}」`)
+            logger.info(`[点歌] 未匹配 ${musicPlatformName(songQuery.platform)} ${songQuery.id||songQuery.title} ${songQuery.artist}`)
+            if(canContinue())await sendTo(evt,`在${musicPlatformName(songQuery.platform)}没找到${songQuery.id?'歌曲ID '+songQuery.id:'《'+songQuery.title+'》'+(songQuery.artist?' — '+songQuery.artist:'')}的准确结果，请检查ID或换个歌名／歌手再试呀。`)
+            return
           }
         }
-      } catch (err) { logger.warn(`[点歌] 失败：${err.message}`) }
+      } catch (err) { logger.warn(`[点歌] 失败：${err.message}`);if(canContinue())await sendTo(evt,'这次没能查到并发出音乐名片，稍后再试一下呀。');return }
 
       const allImages = [...parsed.images, ...(quoted?.images ?? []), ...(forwarded?.images ?? []), ...(quotedForward?.images ?? [])]
       const activeVision=typeof visionLLM?.snapshot==='function'?visionLLM.snapshot():visionLLM
