@@ -121,7 +121,7 @@ export function planReply({
   const lines = matchEnabled ? pickLineCount(target, { maxLines, lineMaxChars, rand }) : 1
   // 预算：跟着对方长度走，再给几个字余量；下限 8 字（避免出现"嗯"这种没有信息的回复），
   // 上限 = 行数 × 单行上限（多行不代表可以无限长）
-  const budget = Math.max(Math.max(0, minBudget), Math.max(8, Math.min(lines * lineMaxChars, Math.round(target * 1.15) + 8)))
+  const budget = Math.max(8, Math.min(lines * lineMaxChars, Math.round(target * 1.15) + 8))
   const perLineCap = Math.max(8, Math.min(lineMaxChars, Math.ceil(budget / lines) + 6))
   return { targetLen: target, lines, budget, perLineCap, lineMaxChars }
 }
