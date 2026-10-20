@@ -7,13 +7,21 @@ import path from 'node:path'
 import { MemoryStore } from '../src/memory.js'
 import { createLongMemory } from '../src/longMemory.js'
 import { createAdminServer } from '../src/admin/server.js'
+import { createStickers } from '../src/stickers.js'
 const root = mkdtempSync(path.join(os.tmpdir(), 'koukou-dev-integration-'))
 const logger = { info(){}, warn(){}, error(){}, debug(){} }
 const memory = new MemoryStore({ file:path.join(root,'memory.json'), limit:500, logger })
 try {
   const longMemory = createLongMemory({ file:path.join(root,'long.json'), logger, llm:{chat:async()=> '摘要'} })
   const config = { rootDir:root, dataDir:root, memoryFile:memory.file, stickerLearnGroups:new Set([12345]) }
-  const admin = createAdminServer({ config, memory, longMemory, logger })
+  const stickers=createStickers({dir:path.join(root,'stickers'),logger})
+  const admin = createAdminServer({ config, memory, longMemory, logger, stickers })
+  const sample=stickers.add({name:'黑名单示例',dataUrl:'data:image/png;base64,eA=='}).item
+  await admin.actions['sticker-blacklist']({id:sample.id})
+  assert.equal((await admin.routes['GET /api/stickers']()).blacklist[0].hash,sample.hash)
+  assert.equal(stickers.count(),0)
+  await admin.actions['sticker-unblock']({hash:sample.hash})
+  assert.equal(stickers.isBlocked(sample.hash),false)
   for(let i=0;i<205;i++) memory.push('g','user','内容'+i,{time:Date.now()+i})
   const detail = await admin.routes['GET /api/memory-detail']({key:'g'})
   assert.equal(detail.recent.length,200); assert.equal(detail.recentOffset,5)
@@ -53,5 +61,8 @@ try {
   assert.match(editor,/SHA-256/);assert.match(editor,/stkPreviewDialog/)
   assert.ok(editor.includes('a'.repeat(64)));assert.ok(editor.includes('&lt;script&gt;'))
   assert.match(editor,/stkRulesSave/);assert.match(editor,/stkPickMode/)
+  assert.match(editor,/data-stk-block="sample"/)
+  const blockPage=vm.runInContext(`stickerBlacklist=[{hash:'b'.repeat(64),name:'<img onerror=bad>'}];pageStickers()`,context)
+  assert.match(blockPage,/data-stk-unblock=/);assert.ok(blockPage.includes('&lt;img onerror=bad&gt;'))
   console.log('控制台集成通过：200条偏移、并发编辑保护、暂停恢复、非白名单群多选和页面渲染。')
 } finally { memory.flush(); rmSync(root,{recursive:true,force:true}) }

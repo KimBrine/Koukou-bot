@@ -47,6 +47,11 @@ try {
   assert.equal(filters, 1); assert.equal(tags, 1)
   await learner.learnFromMessage(msg('meme'))
   assert.equal(downloads, 1); assert.equal(filters, 1); assert.equal(tags, 1, '已收录图复用缓存与标签')
+  lib.blacklist(item.id)
+  assert.equal(await learner.learnFromMessage(msg('meme')),null)
+  assert.equal(filters,1);assert.equal(tags,1,'黑名单图片不重复识别或重新入库')
+  assert.equal(downloads,1,'缓存仍可复用，不必为了黑名单重复下载')
+  lib.unblock(item.hash)
   firstAccept = false
   assert.equal(await learner.learnFromMessage(msg('photo')), null)
   assert.equal(tags, 1, 'Flash排除普通图片后不送Qwen')

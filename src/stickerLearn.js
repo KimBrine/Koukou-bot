@@ -53,6 +53,7 @@ export function createStickerLearner({ config, logger, onebot, stickers, filterL
       if (!loaded?.part || !allowed(groupId)) continue
       const dataUrl = loaded.part.image_url.url
       const hash = loaded.hash || createHash('sha256').update(Buffer.from(dataUrl.split(',')[1], 'base64')).digest('hex')
+      if (stickers.isBlocked?.(hash)) continue
       const existing = stickers.list().find(item => item.hash === hash)
       if (existing) return existing
       const describe = async () => {
@@ -68,7 +69,7 @@ export function createStickerLearner({ config, logger, onebot, stickers, filterL
         return JSON.stringify(tag)
       }
       const tag = json(imageCache && loaded.hash ? await imageCache.describe([loaded.hash], scope, describe) : await describe())
-      if (!allowed(groupId) || tag?.isSticker !== true) continue
+      if (!allowed(groupId) || stickers.isBlocked?.(hash) || tag?.isSticker !== true) continue
       const out = stickers.add({ name: String(tag.name).slice(0, 20),
         keywords: Array.isArray(tag.keywords) ? tag.keywords.join(' ') : String(tag.keywords || ''),
         scenes: Array.isArray(tag.scenes) ? tag.scenes : [], dataUrl, origin: 'learned',
