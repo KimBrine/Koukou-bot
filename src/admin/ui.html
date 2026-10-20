@@ -300,6 +300,13 @@ function pageOverview(){
     const chat = chats.find(x => String(x.id) === String(g.groupId))
     return '<tr><td>' + esc(chat?.name || ('群 ' + g.groupId)) + '</td><td class="mut">' + g.groupId + '</td><td>' + g.count + '</td></tr>'
   }).join('')
+  const quickCard = [
+    '<section class="card" style="margin-bottom:18px"><h2>常用开关</h2>',
+    '<label class="switch" style="display:flex;align-items:center;gap:10px;margin:6px 0"><input type="checkbox" id="quickLong"' + (configFlag('REPLY_LONG_MODE') ? ' checked' : '') + '> <span>长回答（解题模式）：完整写过程，不按对方字数压缩</span></label>',
+    '<label class="switch" style="display:flex;align-items:center;gap:10px;margin:6px 0"><input type="checkbox" id="quickTiming"' + (configFlag('REPLY_TIMING_ENABLED') ? ' checked' : '') + '> <span>显示思考耗时：回复末尾附「（想了 X.X 秒）」</span></label>',
+    '<div class="mut" style="margin-top:6px">改完立刻生效，不用重启</div>',
+    '</section>'
+  ].join('')
   const admins = (state?.config?.adminUsers || [])
   const adminCard = [
     '<section class="card" style="margin-bottom:18px"><h2>管理员（最高权限）</h2>',
@@ -309,7 +316,7 @@ function pageOverview(){
     '<div class="mut" style="margin-top:8px">当前管理员：' + (admins.length ? admins.map(esc).join('、') : '未配置（群总结等沿用公开范围；清除记忆须显式配置管理员）') + '</div>',
     '</section>'
   ].join('')
-    return adminCard + `
+    return quickCard + adminCard + `
   <div class="hero"><span class="hero-status">${dot(b.online === true)} ${accountStatusText(b)}</span>
     <h1>机器人工作台</h1><div class="sub"><span id="updatedAt">${new Date().toLocaleTimeString('zh-CN',{hour12:false})}</span> 更新 · 集中管理运行状态与操作</div></div>
   <div class="grid g3">${cards.map(([k,v,s]) => `<div class="card"><h3>${k}</h3><div class="kpi">${v}</div><div class="note">${s||''}</div></div>`).join('')}</div>
@@ -889,6 +896,21 @@ async function bind(){
     adminSaveBtn.disabled = false
   }
   if(page === 'commands') CommandCenterUI.bind({api,toast,load,render,ask})
+  // 工作台快捷开关
+  const quickLong = document.getElementById('quickLong')
+  if (quickLong) quickLong.onchange = async () => {
+    try {
+      await api('/api/action/set-config', { key: 'REPLY_LONG_MODE', value: quickLong.checked ? '1' : '0' })
+      toast(quickLong.checked ? '已开启长回答模式' : '已关闭长回答模式')
+    } catch (e) { toast('保存失败：' + e.message, true) }
+  }
+  const quickTiming = document.getElementById('quickTiming')
+  if (quickTiming) quickTiming.onchange = async () => {
+    try {
+      await api('/api/action/set-config', { key: 'REPLY_TIMING_ENABLED', value: quickTiming.checked ? '1' : '0' })
+      toast(quickTiming.checked ? '已开启耗时显示' : '已关闭耗时显示')
+    } catch (e) { toast('保存失败：' + e.message, true) }
+  }
   // 模型：供应商预填 / 自动检测 / 下拉即生效
   const mpProvider = document.getElementById('mpProvider')
   if (mpProvider) mpProvider.onchange = () => {
