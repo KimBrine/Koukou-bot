@@ -49,4 +49,20 @@ assert.equal((await baidu('q')).summary, '百度总结')
 
 assert.equal(createWebSearch({ provider: 'off' }), null, 'off 必须返回 null')
 
-console.log('联网搜索检查通过：通义 API / 千帆兼容 / 必应兜底 / 缓存 / 关闭开关')
+
+let dsCalls = 0
+const fakeDeepseek = async (url, init) => {
+  dsCalls++
+  const body = JSON.parse(init.body)
+  assert.equal(body.query, '今天新闻')
+  return { ok: true, status: 200, json: async () => ({ results: [{ title: 'D1', url: 'https://d.example', summary: 'DeepSeek 摘要' }] }) }
+}
+const ds = createWebSearch({ deepseekApiKey: 'd', provider: 'deepseek', fetchImpl: fakeDeepseek })
+const rds = await ds('今天新闻')
+assert.equal(rds.provider, 'deepseek')
+assert.equal(rds.refs.length, 1)
+assert.ok(rds.summary.includes('DeepSeek 摘要'))
+assert.equal(ds.providerName, 'deepseek')
+assert.equal(dsCalls, 1)
+
+console.log('联网搜索检查通过：DeepSeek 搜索 / 通义 API / 千帆兼容 / 必应兜底 / 缓存 / 关闭开关')

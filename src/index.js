@@ -299,12 +299,21 @@ const commandCenter = createCommandCenter({file:path.join(config.dataDir,'comman
 // 联网搜索：仅私聊与被@时可用，由模型自己判断这句话要不要搜
 const webSearchState = { enabled: config.webSearchEnabled !== false, model: config.webSearchModel, provider: config.webSearchProvider }
 let webSearchImpl = null
+function resolveSearchProvider(configured, model) {
+  const forced = String(configured || 'auto').toLowerCase()
+  if (forced === 'off' || forced === 'baidu' || forced === 'bing') return forced
+  const m = String(model || '').toLowerCase()
+  if (m === 'deepseek' || m.startsWith('deepseek-')) return 'deepseek'
+  if (m === 'bing') return 'bing'
+  return 'dashscope'
+}
 function rebuildWebSearch() {
   webSearchImpl = createWebSearch({
     apiKey: config.baiduApiKey,
     dashscopeApiKey: config.dashscopeApiKey,
+    deepseekApiKey: config.deepseekApiKey,
     dashscopeModel: webSearchState.model,
-    provider: webSearchState.enabled ? webSearchState.provider : 'off',
+    provider: webSearchState.enabled ? resolveSearchProvider(webSearchState.provider, webSearchState.model) : 'off',
     timeoutMs: 20000,
     logger,
   })
@@ -523,7 +532,7 @@ if (config.mutedGroups && config.mutedGroups.size > 0) {
     .join('｜')
   logger.info(`白名单群主动搭话概率：${desc || `全局 ${Math.round(config.proactiveRate * 100)}%`}（冷却 ${Math.round(config.proactiveCooldownMs / 1000)}s）`)
 }
-logger.info(webSearch.isEnabled ? `联网搜索已启用（${{baidu:'百度千帆',dashscope:'通义千问 API',bing:'必应网页兜底'}[webSearch.providerName] || webSearch.providerName}，私聊/被@时由模型自行决定要不要搜）` : '联网搜索未启用（控制台已关闭，或 WEB_SEARCH_PROVIDER=off）')
+logger.info(webSearch.isEnabled ? `联网搜索已启用（${{baidu:'百度千帆',deepseek:'DeepSeek 搜索',dashscope:'通义千问 API',bing:'必应网页兜底'}[webSearch.providerName] || webSearch.providerName}，私聊/被@时由模型自行决定要不要搜）` : '联网搜索未启用（控制台已关闭，或 WEB_SEARCH_PROVIDER=off）')
 logger.info(commandCenter.enabled('poke') ? `拍一拍回应已启用（冷却 ${Math.round(config.pokeCooldownMs / 1000)}s，语料 poke-replies.txt）` : '拍一拍回应未启用（POKE_REPLY_ENABLED=0）')
 logger.info(commandCenter.enabled('auto-plus-one') ? '自动+1已启用：仅白名单群，两条连续相同文字消息（可夹QQ自带表情）后原生跟一次；图片/纯表情不跟读，不受静音/安静时段限制，不调用模型' : '自动+1未启用（AUTO_PLUS_ONE_ENABLED=0）')
 logger.info(config.longMemoryEnabled

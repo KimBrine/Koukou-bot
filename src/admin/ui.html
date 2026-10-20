@@ -638,10 +638,11 @@ function pageHumanize(){
 }
 function webSearchCard(){
   const info = webSearchInfo || {}
-  const presets = ['qwen-plus','qwen-max','qwen-turbo','qwen3-max','qwen-flash']
+  const presets = ['deepseek','qwen-plus','qwen-max','qwen-turbo','qwen3-max','qwen-flash','bing']
   const cur = info.model || 'qwen-plus'
   if (presets.indexOf(cur) < 0) presets.unshift(cur)
-  const opts = presets.map(function(m){ return '<option value="' + esc(m) + '"' + (m === cur ? ' selected' : '') + '>' + esc(m) + '</option>' }).join('')
+  const label = { deepseek: 'DeepSeek 搜索（自带引擎）', bing: '必应网页（免密钥兜底）' }
+  const opts = presets.map(function(m){ return '<option value="' + esc(m) + '"' + (m === cur ? ' selected' : '') + '>' + esc(label[m] || m) + '</option>' }).join('')
   return '<section class="card"><h2>联网搜索</h2>'
     + '<div class="note">开着的时候由机器人自己判断这句话要不要搜，闲聊不会调用。搜索走通义千问联网 API（用 DashScope Key）。</div>'
     + '<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:10px 0"><input type="checkbox" id="wsEnabled"' + (info.enabled ? ' checked' : '') + '> 允许联网搜索</label>'

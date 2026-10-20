@@ -74,6 +74,7 @@ export function createWebSearch(options) {
   const opts = options || {}
   const apiKey = opts.apiKey
   const dashscopeApiKey = opts.dashscopeApiKey
+  const deepseekApiKey = opts.deepseekApiKey
   const dashscopeModel = opts.dashscopeModel || 'qwen-plus'
   const baseUrl = opts.baseUrl || 'https://qianfan.baidubce.com/v2/ai_search'
   const timeoutMs = opts.timeoutMs || 20000
@@ -113,6 +114,39 @@ export function createWebSearch(options) {
       return { summary: text, refs: [], provider: 'dashscope' }
     } catch (err) {
       if (err && err.name === 'AbortError') throw new Error('通义搜索超时')
+      throw err
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  async function searchDeepseek(query) {
+    const controller = new AbortController()
+    const timer = setTimeout(function () { controller.abort() }, timeoutMs)
+    try {
+      const res = await fetchImpl('https://api.deepseek.com/v1/tools/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + deepseekApiKey },
+        body: JSON.stringify({ query: String(query).slice(0, 128), count: 5, ori_question: String(query).slice(0, 128) }),
+        signal: controller.signal,
+      })
+      if (!res.ok) {
+        const detail = String(await res.text().catch(function () { return '' })).slice(0, 200)
+        throw new Error('DeepSeek 搜索 HTTP ' + res.status + '：' + detail)
+      }
+      const data = await res.json()
+      const refs = (data.results || []).slice(0, 5).map(function (r) {
+        return {
+          title: r.title || '',
+          url: r.url || '',
+          date: r.date || '',
+          snippet: String(r.summary || r.snippet || '').slice(0, 500),
+        }
+      })
+      if (!refs.length) throw new Error('DeepSeek 没有搜到结果')
+      return { summary: refsSummary(refs), refs: refs, provider: 'deepseek' }
+    } catch (err) {
+      if (err && err.name === 'AbortError') throw new Error('DeepSeek 搜索超时')
       throw err
     } finally {
       clearTimeout(timer)
@@ -184,18 +218,23 @@ export function createWebSearch(options) {
 
   const hasBaidu = Boolean(apiKey)
   const hasDashscope = Boolean(dashscopeApiKey)
+  const hasDeepseek = Boolean(deepseekApiKey)
   let runner
   let providerName
-  if (mode === 'baidu') {
+  if (mode === 'deepseek') {
+    providerName = hasDeepseek ? 'deepseek' : (hasBaidu ? 'baidu' : (hasDashscope ? 'dashscope' : 'bing'))
+  } else if (mode === 'baidu') {
     providerName = hasBaidu ? 'baidu' : (hasDashscope ? 'dashscope' : 'bing')
   } else if (mode === 'dashscope') {
     providerName = hasDashscope ? 'dashscope' : (hasBaidu ? 'baidu' : 'bing')
   } else if (mode === 'bing') {
     providerName = 'bing'
   } else {
-    providerName = hasBaidu ? 'baidu' : (hasDashscope ? 'dashscope' : 'bing')
+    providerName = hasBaidu ? 'baidu' : (hasDeepseek ? 'deepseek' : (hasDashscope ? 'dashscope' : 'bing'))
   }
-  runner = providerName === 'baidu' ? searchBaidu : (providerName === 'dashscope' ? searchDashscope : searchBing)
+  runner = providerName === 'baidu' ? searchBaidu
+    : (providerName === 'dashscope' ? searchDashscope
+    : (providerName === 'deepseek' ? searchDeepseek : searchBing))
 
   const webSearch = async function (query) {
     const q = String(query || '').trim().slice(0, 400)
