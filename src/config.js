@@ -152,11 +152,7 @@ export function loadConfig() {
     deepseekModel: String(env.DEEPSEEK_MODEL ?? 'deepseek-chat'),
     // 界面上的供应商选择，只用于预填地址；真正生效的是 baseUrl + model
     modelProvider: String(env.MODEL_PROVIDER ?? 'deepseek').trim().toLowerCase(),
-    // 思考强度：''（不发送）/ low / medium / high，对应 OpenAI 兼容的 reasoning_effort
-    reasoningEffort: (() => {
-      const v = String(env.MODEL_REASONING_EFFORT ?? '').trim().toLowerCase()
-      return ['low', 'medium', 'high'].includes(v) ? v : ''
-    })(),
+    deepseekReasoningEffort: String(env.DEEPSEEK_REASONING_EFFORT ?? '').trim().toLowerCase() || undefined,
 
     // 视觉模型（通义千问 DashScope，OpenAI 兼容模式），用于读图/表情包
     // 用哪个服务商读图：deepseek（实测快 21 倍）或 dashscope。见 src/index.js 顶部的实测数据。
@@ -191,6 +187,7 @@ export function loadConfig() {
     summaryMaxMessages: Math.max(50, Math.min(2000, Math.floor(num('SUMMARY_MAX_MESSAGES', 600)))),
     summaryBotUsers: String(env.SUMMARY_BOT_USERS??'').split(/[\s,，]+/).filter(id=>/^\d{1,15}$/.test(id)),
     summaryUnrestricted: /^(?:1|true)$/i.test(String(env.SUMMARY_UNRESTRICTED??'0')),
+    summaryRequestTimeoutSeconds: Math.max(60, Math.min(3600, Math.floor(num('SUMMARY_REQUEST_TIMEOUT_SECONDS', 900)))),
     summaryModel: String(env.SUMMARY_MODEL ?? '').trim() || null,
     // 总结模型提供方：deepseek | dashscope（DashScope/通义千问在长文总结上更稳，不会把预算烧在推理里）
     summaryProvider: String(env.SUMMARY_PROVIDER ?? 'deepseek').toLowerCase(),
@@ -308,6 +305,7 @@ export function loadConfig() {
     // 两条消息间隔不够时，最多等这么久再发（超过就放弃这条）——等一等是为了拟人，丢消息才是事故
     rateLimitWaitMaxMs: Math.max(0, Math.floor(num('RATE_LIMIT_WAIT_MAX_MS', 8000))),
     quietHours: String(env.QUIET_HOURS ?? '').trim(),
+    quietGreetingsEnabled: /^(1|true)$/i.test(String(env.QUIET_GREETINGS_ENABLED??'0')),
     // 安静时段是否"彻底静音"（默认是）：连被 @ 和私聊都不回。
     // 为什么默认开：真人睡着时不回任何消息，"凌晨被@就秒回"是很容易被看出的机器人特征。
     // 设 0 则退回旧行为：安静时段只是不主动搭话，被 @ 仍回。

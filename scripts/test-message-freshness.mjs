@@ -77,7 +77,8 @@ try {
     const [prompt, messages] = t.requests[0]
     assert.match(prompt, /优先衔接当前话题/)
     assert.match(messages[0].content, /登录补读；历史消息/)
-    assert.equal(messages.at(-1).content, '【群友甲】今天活动怎么报名')
+    assert.match(messages.at(-1).content, /^【群友甲】今天活动怎么报名\n/);
+    const target=JSON.parse(messages.at(-1).content.match(/本轮定位数据 ([\s\S]*)】$/)[1]);assert.equal(target.text,'今天活动怎么报名');assert.equal(target.precedingDialogueWithThisSender.length,0)
     assert.ok(messages.every(m => Object.keys(m).sort().join(',') === 'content,role'))
   })
   await test('旧消息迟到不排在新话题之后；按发送时间存储并保留到重启后', async () => {

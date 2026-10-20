@@ -26,8 +26,8 @@ export class DeepSeekClient {
     this.logger = logger
     this.label = label
     this.enableThinking = enableThinking
-    // 思考强度：''=不发送；low/medium/high → reasoning_effort
-    this.reasoningEffort = ['low', 'medium', 'high'].includes(String(reasoningEffort || '').toLowerCase()) ? String(reasoningEffort).toLowerCase() : ''
+    if (reasoningEffort !== undefined && !['none','low','high','max'].includes(reasoningEffort)) throw new Error('不支持的 DeepSeek 思考强度')
+    this.reasoningEffort = reasoningEffort
     this.active = 0
     this.queue = []
     this.concurrencyLimit = maxConcurrency
@@ -189,8 +189,10 @@ export class DeepSeekClient {
   /** 带重试的底层请求，返回解析后的 JSON */
   async #post(body, signal) {
     if (typeof this.enableThinking === 'boolean') body = { ...body, enable_thinking: this.enableThinking }
-    // 思考强度：只在配置了 low/medium/high 时才附加，避免影响不支持该字段的服务商
-    if (this.reasoningEffort) body = { ...body, reasoning_effort: this.reasoningEffort }
+    // DeepSeek 与千问参数不同；由调用方按服务商显式传入，不能混用。
+    if (this.reasoningEffort !== undefined) body = { ...body,
+      thinking: {type: this.reasoningEffort === 'none' ? 'disabled' : 'enabled'},
+      reasoning_effort: this.reasoningEffort }
     let lastError = null
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
       signal?.throwIfAborted()

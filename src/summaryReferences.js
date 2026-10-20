@@ -1,3 +1,4 @@
+import { summaryRequestTimeout } from './summaryRequests.js'
 import { expandForwardRecords } from './forwardRecords.js'
 import { DeepSeekClient, isQwenHybridModel } from './deepseek.js'
 import { selectRelevantSummaryReferences } from './summaryReferenceSelection.js'
@@ -10,7 +11,7 @@ export function createSummaryVisionClient({ config, logger }) {
   if (!config.dashscopeApiKey) return null
   const model = config.summaryVisionModel || config.dashscopeModel
   return new DeepSeekClient({ apiKey: config.dashscopeApiKey, baseUrl: config.dashscopeBaseUrl, model,
-    temperature: 0.2, maxTokens: config.summaryUnrestricted?undefined:500, timeoutMs: config.summaryUnrestricted?0:20000, maxRetries: 0,
+    temperature: 0.2, maxTokens: config.summaryUnrestricted?undefined:500, timeoutMs: summaryRequestTimeout(config, 20000), maxRetries: config.summaryUnrestricted?1:0,
     maxConcurrency: config.summaryConcurrency || 2, logger, label: '总结资料读图(通义千问)',
     enableThinking: isQwenHybridModel(model) ? (config.dashscopeThinking ?? false) : undefined })
 }
@@ -34,7 +35,10 @@ export async function prepareSummaryReferences({ records, onebot, visionLLM, ima
   const selected = candidates.slice(0, count).map(item => item.record)
   const parts = [], seen = new Set(), images = new Map(), forwardCache = new Map()
   const cachedOnebot = { getForwardMsg(id, timeout) {
-    if (!forwardCache.has(id)) forwardCache.set(id, Promise.resolve().then(() => onebot.getForwardMsg(id, timeout)))
+    if (!forwardCache.has(id)) {
+      const pending=Promise.resolve().then(() => onebot.getForwardMsg(id, timeout))
+      forwardCache.set(id,pending);pending.catch(()=>{if(forwardCache.get(id)===pending)forwardCache.delete(id)})
+    }
     return forwardCache.get(id)
   } }
   let used = 0

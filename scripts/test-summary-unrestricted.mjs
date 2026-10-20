@@ -46,10 +46,10 @@ try{
   const p=profileSummaryContent(Array.from({length:2500},(_,i)=>({text:'讨论'+i})));p.unrestricted=true
   assert.equal(summaryTopicPolicy(p).max,Infinity);assert.match(formatSummaryContentGuide(p),/不设固定条数上限/);assert.doesNotMatch(formatSummaryContentGuide(p),/Infinity/)
  })
- await test('宽裕模式的转发读取不使用短时限，但仍保留防循环与取消能力',async()=>{
+ await test('宽裕模式的转发读取没有总时限，但单次仍检测无响应并保留防循环与取消能力',async()=>{
   const timeouts=[]
   const result=await expandForwardRecords({message:[{type:'forward',data:{id:'card'}}],onebot:{async getForwardMsg(id,timeout){timeouts.push(timeout);await new Promise(resolve=>setTimeout(resolve,15));return {messages:[{sender:{nickname:'引用者'},message:[{type:'text',data:{text:'引用内容'}}]}]}}},unrestrictedWait:true,timeoutMs:1,requestTimeoutMs:1,logger})
-  assert.equal(result.failed,false);assert.deepEqual(timeouts,[0]);assert.match(result.text,/引用内容/)
+  assert.equal(result.failed,false);assert.deepEqual(timeouts,[15000]);assert.match(result.text,/引用内容/)
  })
  await test('完整生成路径在条数设置为50时仍输入全部千余条与长消息末尾',async()=>{
   const dir=mkdtempSync(path.join(os.tmpdir(),'summary-unrestricted-'))
@@ -61,7 +61,7 @@ try{
    const config={dataDir:dir,summaryEnabled:true,summaryGroups:[101],whitelistGroups:new Set([101]),summaryUnrestricted:true,summaryMaxMessages:50,summaryUserRows:1,summaryTaskTimeoutMinutes:2}
    const summary=createDailySummary({config,logger,onebot:{selfId:'999',async getGroupMsgHistory(g,seq,timeout){historyTimeouts.push(timeout);return {messages:packets}}},llm:{async chat(prompt,messages){inputs.push(messages[0].content);return body}}})
    await summary.runSummary(101,{dryRun:true})
-   assert.ok(inputs.length>=1);assert.match(inputs[0],/原始消息1/);assert.match(inputs[0],/原始消息1099/);assert.match(inputs[0],/唯一末尾证据/);assert.equal((inputs[0].match(/原始消息/g)||[]).length,1099);assert.ok(historyTimeouts.every(t=>t===0));assert.equal(summary.isRunning(101),false)
+   assert.ok(inputs.length>=1);assert.match(inputs[0],/原始消息1/);assert.match(inputs[0],/原始消息1099/);assert.match(inputs[0],/唯一末尾证据/);assert.equal((inputs[0].match(/原始消息/g)||[]).length,1099);assert.ok(historyTimeouts.every(t=>t===60000));assert.equal(summary.isRunning(101),false)
   }finally{assert.equal(path.dirname(dir),os.tmpdir());rmSync(dir,{recursive:true,force:true})}
  })
  console.log(`${passed} unrestricted-summary cases passed; no external services.`)

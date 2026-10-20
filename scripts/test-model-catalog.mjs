@@ -8,11 +8,12 @@ assert.equal(normalizeProvider('DeepSeek').id, 'deepseek')
 assert.equal(normalizeProvider('不存在的').id, 'custom', '未知供应商退回自定义')
 
 // 思考强度
-assert.deepEqual(REASONING_LEVELS.map(l => l.id), ['', 'low', 'medium', 'high'])
+assert.deepEqual(REASONING_LEVELS.map(l => l.id), ['', 'none', 'low', 'high', 'max'])
 assert.equal(normalizeReasoning('HIGH'), 'high')
 assert.equal(normalizeReasoning('关闭'), '', '不认识的取值一律当作关闭')
 assert.deepEqual(reasoningPayload(''), {})
-assert.deepEqual(reasoningPayload('medium'), { reasoning_effort: 'medium' })
+assert.deepEqual(reasoningPayload('max'), { reasoning_effort: 'max', thinking: { type: 'enabled' } })
+assert.deepEqual(reasoningPayload('none'), { reasoning_effort: 'none', thinking: { type: 'disabled' } })
 
 // 自动检测：OpenAI 风格
 const fake = (status, payload) => async () => ({

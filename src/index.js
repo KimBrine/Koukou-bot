@@ -1,3 +1,4 @@
+import { summaryRequestTimeout } from './summaryRequests.js'
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import os from 'node:os'
@@ -23,6 +24,8 @@ import { createCustomCommandSchedule } from './customCommandSchedule.js'
 import { createTargetWatch } from './targetWatch.js'
 import { createChatSettings } from './chatSettings.js'
 import { createDailyPing } from './dailyPing.js'
+import { createQuietGreetings } from './quietGreetings.js'
+import { createPersonaGreetingLibrary } from './personaGreetings.js'
 import { createAdminServer } from './admin/server.js'
 import { createRateLimiter } from './humanize.js'
 import { createChatPromptBuilder } from './chatPrompt.js'
@@ -123,9 +126,9 @@ const llm = new DeepSeekClient({
   timeoutMs: config.timeoutMs,
   maxRetries: config.maxRetries,
   maxConcurrency: config.maxConcurrency,
-  reasoningEffort: config.reasoningEffort,
   logger,
   label: 'DeepSeek',
+  reasoningEffort: config.deepseekReasoningEffort,
 })
 
 // 视觉模型：消息带图片/表情包时先把图读成文字描述，再交给对话模型写人设回复。
@@ -151,6 +154,7 @@ if (config.visionProvider === 'deepseek' ? config.deepseekApiKey : config.dashsc
     maxConcurrency: config.maxConcurrency,
     logger,
     label: isDeepseek ? 'DeepSeek 视觉' : '通义千问VL',
+    reasoningEffort: isDeepseek ? config.deepseekReasoningEffort : undefined,
     enableThinking: !isDeepseek && isQwenHybridModel(config.dashscopeModel) ? config.dashscopeThinking : undefined,
   })
 }
@@ -165,11 +169,12 @@ const summaryLLM = new DeepSeekClient({
   model: config.summaryModel || llm.model,
   temperature: 1.0,
   maxTokens: config.summaryUnrestricted ? undefined : config.summaryMaxTokens,
-  timeoutMs: config.summaryUnrestricted ? 0 : Math.max(config.timeoutMs, 180000),
+  timeoutMs: summaryRequestTimeout(config, Math.max(config.timeoutMs, 180000)),
   maxRetries: config.maxRetries,
   maxConcurrency: config.summaryConcurrency,
   logger,
   label: useQwenForSummary ? '总结模型(通义千问)' : '总结模型(DeepSeek)',
+  reasoningEffort: useQwenForSummary ? undefined : config.deepseekReasoningEffort,
   enableThinking: useQwenForSummary && isQwenHybridModel(config.summaryModel) ? config.dashscopeThinking : undefined,
 })
 
@@ -191,7 +196,7 @@ const memoryLLM = new DeepSeekClient({
   apiKey: summaryLLM.apiKey, baseUrl: summaryLLM.baseUrl, model: summaryLLM.model,
   temperature: summaryLLM.temperature, maxTokens: config.summaryMaxTokens,
   timeoutMs: Math.max(config.timeoutMs,180000), maxRetries: summaryLLM.maxRetries, maxConcurrency: 1,
-  enableThinking: summaryLLM.enableThinking, logger, label: '长期记忆模型',
+  enableThinking: summaryLLM.enableThinking, reasoningEffort: summaryLLM.reasoningEffort, logger, label: '长期记忆模型',
 })
 const longMemory = createLongMemory({
   file: path.join(config.dataDir, 'long-memory.json'),
@@ -277,6 +282,11 @@ const runtimeStats = {
 
 const bot = createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt: systemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, commandCenter, longMemory })
 
+// 固定语库调度不使用模型；语库与人格正文绑定，发送状态与迁移语库分开保存。
+const personaGreetings=createPersonaGreetingLibrary({file:path.join(config.dataDir,'persona-greetings.json'),logger})
+const quietGreetings=createQuietGreetings({config,onebot,chatSettings,memory,logger,library:personaGreetings,
+  file:path.join(config.dataDir,'quiet-greetings-state.json')})
+
 // 本地控制台：机器人自己托管界面，用 Edge/Chrome 的 app 模式窗口打开就像一个桌面应用
 let adminServer = null
 if (config.adminEnabled) {
@@ -291,6 +301,7 @@ if (config.adminEnabled) {
     longMemory,
     runtimeStats,
     dailyPing,
+    quietGreetings, personaGreetings,
     bot,
     customCommands,
     llm,
@@ -347,6 +358,7 @@ function shutdown() {
   logger.info('正在关闭，保存记忆…')
   memory.flush()
   bot.flush()
+  quietGreetings.stop()
   customSchedule.stop()
   dailySummary.stop()
   onebot.stop()
@@ -359,7 +371,7 @@ process.on('unhandledRejection', (err) => logger.error(`未处理的 Promise 拒
 process.on('uncaughtException', (err) => logger.error(`未捕获异常：${err?.stack || err}`))
 
 logger.info('===== DeepSeek × QQ 机器人启动 =====')
-logger.info(`模型：${config.deepseekModel}`)
+logger.info(`模型：${config.deepseekModel}｜DeepSeek思考强度：${config.deepseekReasoningEffort ?? '服务端默认'}`)
 logger.info(
   visionLLM
     ? `视觉模型已启用：${config.visionProvider === 'deepseek' ? config.visionModel || 'deepseek-flash' : config.dashscopeModel} @ ${
@@ -398,7 +410,7 @@ logger.info(targetWatch.enabled
   : '盯人回复未启用（TARGET_WATCH_ENABLED=0）')
 logger.info(`反检测/拟人化：装饰符号保留 ${Math.round(config.emojiKeepRate * 100)}%｜打字延迟 ${config.humanDelayMinMs}-${config.humanDelayMaxMs}ms｜每会话每小时：主动/盯人 ≤${config.rateLimitPerHour} 条、被@或私聊 ≤${config.rateLimitAtPerHour} 条、间隔 ≥${Math.round(config.rateLimitMinGapMs / 1000)}s（不够时最多等 ${Math.round((config.rateLimitWaitMaxMs ?? 8000) / 1000)}s，不丢消息）｜${config.quietHours ? `安静时段 ${config.quietHours}（${config.quietHoursBlockAll ? '彻底静音：连被@和私聊都不回' : '只挡主动搭话，被@仍回'}）` : '安静时段未启用'}`)
 logger.info(`群聊报告：${config.summarySendMode === 'forward' ? '合并转发成「聊天记录」卡片（失败自动退回逐条）' : '按空行逐条发送'}｜卡片最多 ${config.summaryMaxBlocks} 条｜统计数字由代码精确计算`)
-logger.info(`总结调度：最多 ${config.summaryConcurrency} 群并行准备｜${config.summaryUnrestricted?'宽裕模式：不设本地输入取样、输出token及准备超时上限':`单群准备时限 ${config.summaryTaskTimeoutMinutes} 分钟`}｜报告发送串行，群间至少间隔 5 秒`)
+logger.info(`总结调度：最多 ${config.summaryConcurrency} 群并行准备｜${config.summaryUnrestricted?`宽裕模式：不设本地输入取样、输出token及总准备时限；单次模型等待${config.summaryRequestTimeoutSeconds}秒`:`单群准备时限 ${config.summaryTaskTimeoutMinutes} 分钟`}｜报告发送串行，群间至少间隔 5 秒`)
 logger.info(`总结转发资料：先筛选群内关联再展开嵌套记录，仅作低权重参考｜读图 ${summaryVisionLLM ? `${summaryVisionLLM.model}（通义千问）` : '未启用，缺少 DashScope Key'}｜每份最多 ${config.summaryReferenceMaxImages} 张参考图片`)
 logger.info(config.replyLengthMatch
   ? `回复长度自适应：跟着对方长度走｜最多 ${config.replyMaxLines} 行、单行 ≤${config.replyLineMaxChars} 字｜行间补句间隔 ${config.lineGapMinMs}-${config.lineGapMaxMs}ms｜多行时逐行分条发送`
@@ -409,6 +421,7 @@ logger.info(config.adminEnabled
   : '机器人控制台未启用（ADMIN_ENABLED=0）')
 logger.info(`会话独立设置：${chatSettings.keys().length} 个会话有单独配置（data/chat-settings.json）`)
 logger.info(`定时指令：${dailyPing.describe()}`)
+logger.info(`固定语库早晚安：${config.quietGreetingsEnabled?'已启用（不调用AI）':'未启用'}；语库就绪 ${quietGreetings.status().groups.filter(g=>g.ready).length}/${quietGreetings.status().groups.length} 群`)
 if (config.idCheckEnabled) {
   const where = config.idCheckGroups.length > 0 ? config.idCheckGroups.join(', ') : '（未限制群）'
   const who =
@@ -427,5 +440,6 @@ dailySummary.schedule()
 if (config.longMemoryEnabled) longMemory.start()
 targetWatch.start()
 dailyPing.schedule()
+quietGreetings.start()
 
 onebot.run().catch((err) => logger.error(`OneBot 运行失败：${err.message}`))

@@ -36,6 +36,7 @@ const EDITABLE = [
   { key: 'PROACTIVE_RATE', label: '全局主动搭话概率', hint: '未单独配置的群使用这个百分比', live: true, type: 'rate' },
   { key: 'PROACTIVE_RATE_PER_GROUP', label: '按群独立概率', hint: '给指定群设置默认概率；移除后沿用全局。会话单独设置优先。', live: true, type: 'text', wide: true },
   { key: 'PROACTIVE_COOLDOWN_MS', label: '主动搭话冷却(ms)', hint: '同一个群两条主动消息的最小间隔', live: true, type: 'number' },
+  { key: 'QUIET_GREETINGS_ENABLED', label: '白名单群早晚安', hint: '按各群安静时段与人格固定语库随机发送，不调用AI；晚安只在开始边界触发，早安在结束后首次确认在线时触发。遵守会话总开关与静音名单。', live: false, type: 'bool' },
   { key: 'QUIET_HOURS', label: '安静时段', hint: '如 01:00-07:00；留空=不启用。默认停止普通聊天（连被@也不回）；拍一拍、自动 +1 单独控制', live: true, type: 'text' },
   {
     key: 'QUIET_HOURS_BLOCK_ALL',
@@ -69,7 +70,8 @@ const EDITABLE = [
   { key: 'SUMMARY_TIMES', label: '报告时间', hint: 'HH:mm，逗号分隔可多个', live: false, type: 'text' },
   { key: 'SUMMARY_GROUPS', label: '报告目标群', hint: '留空=用白名单群', live: false, type: 'text' },
   { key: 'SUMMARY_SEND_MODE', label: '报告发送方式', hint: '先按空行分段；forward=合并转发卡片，split=逐段发送', live: false, type: 'text' },
-  { key: 'SUMMARY_UNRESTRICTED', label: '群总结宽裕模式', hint: '开启后使用完整主聊天记录，不设置本地输出token、固定话题数量或生成等待超时。下面的消息条数、输出token和准备时限暂不生效；模型服务商自身容量与网络限制仍然存在。', live: false, type: 'bool' },
+  { key: 'SUMMARY_UNRESTRICTED', label: '群总结宽裕模式', hint: '开启后使用完整主聊天记录，不设置本地输出token、固定话题数量或整份总结总时限；单次请求仍有故障等待检测。下面的消息条数、输出token和准备时限暂不生效；模型服务商自身容量与网络限制仍然存在。', live: false, type: 'bool' },
+  { key: 'SUMMARY_REQUEST_TIMEOUT_SECONDS', label: '单次模型等待（秒）', hint: '宽裕模式使用，60～3600，默认900（15分钟）。每次尝试分别计时，超时有限重试；整份总结无总时限。非流式接口无法区分正常思考和连接卡住，可按需加大。', live: false, type: 'number' },
   { key: 'SUMMARY_BOT_USERS', label: '已知机器人 QQ（选题降权）', hint: '逗号分隔。机器人的播报不算真人讨论；原始消息统计保持完整。默认不预置账号。', live: false, type: 'text' },
   { key: 'SUMMARY_MAX_MESSAGES', label: '报告消息条数上限', live: false, type: 'number' },
   { key: 'SUMMARY_MAX_TOKENS', label: '总结输出 token 上限', hint: '500～16000；控制总结篇幅，与普通聊天的输出上限分开设置', live: false, type: 'number' },
@@ -92,7 +94,7 @@ const EDITABLE = [
   { key: 'MODEL_PROVIDER', label: '模型供应商', hint: 'deepseek / dashscope / openai / moonshot / zhipu / custom；只影响界面预填，实际以接口地址为准', live: true, type: 'text' },
   { key: 'DEEPSEEK_BASE_URL', label: '接口地址（Base URL）', hint: 'OpenAI 兼容地址，例如 https://api.deepseek.com', live: true, type: 'text', wide: true },
   { key: 'DEEPSEEK_MODEL', label: '对话模型', hint: '建议先用「自动检测模型」拿到列表再选', live: true, type: 'text' },
-  { key: 'MODEL_REASONING_EFFORT', label: '思考强度', hint: '留空 = 不发送；low / medium / high = 发送 reasoning_effort', live: true, type: 'text' },
+  { key: 'DEEPSEEK_REASONING_EFFORT', label: 'DeepSeek 思考强度', hint: 'none / low / high / max；留空 = 不发送。统一用于对话、指令理解与识图；max 更慢更贵', live: true, type: 'text' },
   { key: 'STICKERS_ENABLED', label: '表情包库', hint: '1 开启，0 关闭；开启后模型可用 [贴纸: 名称] 指定发图', live: true, type: 'text' },
   { key: 'STICKER_LEARN_ENABLED', label: '从群聊学习表情包', hint: '1 开启：白名单群里别人发的图会自动收藏并打标签；0 关闭', live: true, type: 'text' },
   { key: 'STICKER_LEARN_PER_HOUR', label: '每小时最多学习几张', hint: '0 = 不学；建议 3~10，避免刷屏式采集', live: true, type: 'number' },
@@ -191,7 +193,7 @@ function validateGroupConfig(key, value) {
   }
 }
 
-export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, bot, customCommands, commandCenter, llm, stickers, restartBot }) {
+export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, quietGreetings, personaGreetings, bot, customCommands, commandCenter, llm, stickers, restartBot }) {
   // 本实例自己的 .env（并行跑两个实例时，写死 rootDir\.env 会改到另一个实例的配置上）
   const envFile = config.envFile || path.join(config.rootDir, '.env')
   const logFile = path.join(config.logDir || path.join(config.rootDir, 'logs'), 'bot.log')
@@ -361,6 +363,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         selfId: onebot?.selfId ?? null,
         nickname: onebot?.nickname ?? null,
         model: config.deepseekModel,
+        deepseekReasoningEffort: config.deepseekReasoningEffort ?? null,
         // 必须跟着 VISION_PROVIDER 走：只报 dashscopeModel 的话，
         // 明明已经切到 DeepSeek 读图，控制台还显示 qwen，看起来像没生效。
         visionModel: (() => {
@@ -388,6 +391,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         proactiveRatePerGroup: [...(config.proactiveRatePerGroup ?? new Map())].map(([g, r]) => ({ groupId: g, rate: r })),
         emojiKeepRate: config.emojiKeepRate,
         quietHours: config.quietHours,
+        quietGreetings: quietGreetings?.status?.() ?? {enabled:false,groups:[]},
         replyMaxLines: config.replyMaxLines,
         lineMaxChars: config.replyLineMaxChars,
         activePersona: config.activePersona || '',
@@ -396,6 +400,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         summaryFallbackEnabled: config.summaryFallbackEnabled,
         summaryGroups: config.summaryGroups,
         summaryUnrestricted: Boolean(config.summaryUnrestricted),
+        summaryRequestTimeoutSeconds: config.summaryRequestTimeoutSeconds ?? 900,
         summaryActiveLimits: {maxMessages:config.summaryUnrestricted?null:config.summaryMaxMessages,maxOutputTokens:config.summaryUnrestricted?null:config.summaryMaxTokens,taskTimeoutMinutes:config.summaryUnrestricted?null:config.summaryTaskTimeoutMinutes},
         targetWatch: targetWatch?.enabled ? { group: targetWatch.groupId, user: targetWatch.userId, pending: targetWatch.pendingCount?.() ?? 0 } : null,
       },
@@ -432,7 +437,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         provider: config.modelProvider || 'deepseek',
         baseUrl: config.deepseekBaseUrl,
         model: config.deepseekModel,
-        reasoning: config.reasoningEffort || '',
+        reasoning: config.deepseekReasoningEffort || '',
         hasKey: Boolean(config.deepseekApiKey),
       },
     }),
@@ -496,6 +501,8 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
   }
 
   function fieldEffective(key) {
+    if (key === 'QUIET_GREETINGS_ENABLED') return config.quietGreetingsEnabled?'1':'0'
+    if (key === 'DEEPSEEK_REASONING_EFFORT') return config.deepseekReasoningEffort ?? ''
     const cur = readEnvFile(envFile)[key]
     const map = {
       WHITELIST_GROUPS: () => [...config.whitelistGroups].join(','),
@@ -509,6 +516,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       SUMMARY_MODEL: () => String(config.summaryModel),
       SUMMARY_BOT_USERS: () => (config.summaryBotUsers||[]).join(','),
       SUMMARY_UNRESTRICTED: () => config.summaryUnrestricted?'1':'0',
+      SUMMARY_REQUEST_TIMEOUT_SECONDS: () => String(config.summaryRequestTimeoutSeconds ?? 900),
       SUMMARY_VISION_MODEL: () => String(config.summaryVisionModel),
       SUMMARY_REFERENCE_MAX_IMAGES: () => String(config.summaryReferenceMaxImages),
       SUMMARY_CONCURRENCY: () => String(config.summaryConcurrency),
@@ -589,10 +597,11 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       case 'MODEL_PROVIDER':
         config.modelProvider = String(value || '').trim().toLowerCase()
         break
-      case 'MODEL_REASONING_EFFORT': {
+      case 'DEEPSEEK_REASONING_EFFORT': {
+        // 上游语义：'' = 不发送；none/low/high/max 才会带上 thinking + reasoning_effort
         const v = String(value || '').trim().toLowerCase()
-        const level = ['low', 'medium', 'high'].includes(v) ? v : ''
-        config.reasoningEffort = level
+        const level = ['none', 'low', 'high', 'max'].includes(v) ? v : undefined
+        config.deepseekReasoningEffort = level
         if (llm) llm.reasoningEffort = level
         break
       }
@@ -698,11 +707,13 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         const value = String(raw ?? '')
         if (/[\r\n]/.test(value)) throw new Error(`${field.label} 不能包含换行`)
         validateGroupConfig(key, value)
+        if (key === 'DEEPSEEK_REASONING_EFFORT' && !['','none','low','high','max'].includes(value)) throw new Error('DeepSeek 思考强度应为默认、关闭、low、high或max')
         if (field.type === 'rate' && (!Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 1)) {
           throw new Error(`${field.label} 应在 0～1 之间`)
         }
         if (field.type === 'number' && !Number.isFinite(Number(value))) throw new Error(`${field.label} 需要填写数字`)
         if (key === 'SUMMARY_MAX_TOKENS' && (!Number.isInteger(Number(value)) || Number(value) < 500 || Number(value) > 16000)) throw new Error('总结输出 token 上限应为 500～16000 的整数')
+        if (key === 'SUMMARY_REQUEST_TIMEOUT_SECONDS' && (!Number.isInteger(Number(value)) || Number(value) < 60 || Number(value) > 3600)) throw new Error('单次模型等待应为60～3600秒的整数')
         if (key === 'SUMMARY_CONCURRENCY' && (!Number.isInteger(Number(value)) || Number(value) < 1 || Number(value) > 3)) throw new Error('同时生成的群数应为 1～3 的整数')
         if (key === 'SUMMARY_TASK_TIMEOUT_MINUTES' && (!Number.isInteger(Number(value)) || Number(value) < 2 || Number(value) > 30)) throw new Error('单群准备时限应为 2～30 分钟的整数')
         if (key === 'SUMMARY_REFERENCE_MAX_IMAGES' && (!Number.isInteger(Number(value)) || Number(value) < 0 || Number(value) > 12)) throw new Error('每份总结参考图片上限应为 0～12 的整数')
@@ -773,6 +784,29 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       const content = config.persona || buildSystemPrompt({ botName: config.botName || 'Koukou' })
       return { name, filename: `Koukou-${safe}-人格.txt`, content }
     },
+    async 'export-persona-package'(payload) {
+      const {buildSystemPrompt}=await import('../persona.js')
+      const name=String(payload?.name||config.activePersona||config.botName||'默认人格')
+      const content=payload?.content??(config.persona||quietGreetings?.defaultPersona?.()||buildSystemPrompt({botName:config.botName,now:new Date('2000-01-01T00:00:00Z')}))
+      if(typeof content!=='string'||!content.trim()||content.length>262144)throw Error('人格正文无效')
+      const safe=name.replace(/[\\/:*?"<>|\u0000-\u001f]/g,'_').slice(0,60)
+      const bundle={format:'koukou-persona',version:1,name,content,greetings:personaGreetings?.exportFor(content)??null}
+      return {filename:`Koukou-${safe}-人格.json`,content:JSON.stringify(bundle,null,2)}
+    },
+    async 'send-morning-greetings'() {
+      if(!quietGreetings)throw Error('早晚安未加载')
+      return quietGreetings.catchUpMorning()
+    },
+    async 'get-greeting-library'(payload) {
+      const content=String(payload?.content??config.persona??'')
+      return {library:personaGreetings?.exportFor(content)??null}
+    },
+    async 'save-greeting-library'(payload) {
+      if(!personaGreetings)throw Error('人格语库未加载')
+      const content=payload?.content
+      if(typeof content!=='string'||!content.trim()||content.length>262144)throw Error('请先填写有效的人格正文')
+      return {ok:true,library:personaGreetings.set(content,payload.library)}
+    },
     async 'import-persona'(payload) {
       const name = String(payload?.name ?? '').trim()
       if (typeof payload?.content !== 'string') throw Error('人格内容必须是纯文本')
@@ -783,6 +817,11 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       if (content.length > 262144 || content.includes('\u0000')) throw Error('人格文件过大或不是纯文本')
       const file = personaPath(name)
       if (existsSync(file) || listPersonas().some(p => p.name.toLowerCase() === name.toLowerCase())) throw Error('同名人格已存在，请修改名称；原人格不会被覆盖')
+      if(payload?.greetings){
+        if(!personaGreetings)throw Error('人格语库未加载')
+        personaGreetings.validateImport(content,payload.greetings)
+        personaGreetings.set(content,payload.greetings)
+      }
       mkdirSync(personaDir, { recursive: true })
       writeFileSync(file, content, { encoding: 'utf8', flag: 'wx' })
       return { ok: true, name, content }

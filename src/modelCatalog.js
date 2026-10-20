@@ -16,10 +16,11 @@ export const PROVIDERS = [
 
 /** 思考强度：空字符串表示不发送参数，交给服务商默认行为 */
 export const REASONING_LEVELS = [
-  { id: '', name: '关闭（不发送思考参数，响应最快）' },
+  { id: '', name: '默认（不发送思考参数）' },
+  { id: 'none', name: '关闭思考（DeepSeek）' },
   { id: 'low', name: '低（少量思考）' },
-  { id: 'medium', name: '中（平衡）' },
-  { id: 'high', name: '高（思考更久，更慢也更贵）' },
+  { id: 'high', name: '高（思考更多）' },
+  { id: 'max', name: '最高（最慢最贵）' },
 ]
 
 export function normalizeProvider(id) {
@@ -32,10 +33,11 @@ export function normalizeReasoning(level) {
   return REASONING_LEVELS.some((l) => l.id === key) ? key : ''
 }
 
-/** 请求体里要附加的思考参数（目前统一用 OpenAI 的 reasoning_effort 字段） */
+/** 请求体里要附加的思考参数；none = 显式关闭，其余为开启 */
 export function reasoningPayload(level) {
   const normalized = normalizeReasoning(level)
-  return normalized ? { reasoning_effort: normalized } : {}
+  if (!normalized) return {}
+  return { reasoning_effort: normalized, thinking: { type: normalized === 'none' ? 'disabled' : 'enabled' } }
 }
 
 function friendlyStatus(status) {
