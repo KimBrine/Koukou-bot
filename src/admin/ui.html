@@ -302,9 +302,15 @@ function pageOverview(){
   }).join('')
   const quickCard = [
     '<section class="card" style="margin-bottom:18px"><h2>常用开关</h2>',
-    '<label class="switch" style="display:flex;align-items:center;gap:10px;margin:6px 0"><input type="checkbox" id="quickLong"' + (configFlag('REPLY_LONG_MODE') ? ' checked' : '') + '> <span>长回答（解题模式）：完整写过程，不按对方字数压缩</span></label>',
-    '<label class="switch" style="display:flex;align-items:center;gap:10px;margin:6px 0"><input type="checkbox" id="quickTiming"' + (configFlag('REPLY_TIMING_ENABLED') ? ' checked' : '') + '> <span>显示思考耗时：回复末尾附「（想了 X.X 秒）」</span></label>',
-    '<div class="mut" style="margin-top:6px">改完立刻生效，不用重启</div>',
+    '<div style="display:flex;align-items:center;gap:12px;margin:10px 0">',
+      '<label class="switch"><input type="checkbox" id="quickLong"' + (configFlag('REPLY_LONG_MODE') ? ' checked' : '') + '><i></i></label>',
+      '<div><b>长回答（解题模式）</b><div class="mut" style="font-size:12px">完整写过程，不按对方字数压缩</div></div>',
+    '</div>',
+    '<div style="display:flex;align-items:center;gap:12px;margin:10px 0">',
+      '<label class="switch"><input type="checkbox" id="quickTiming"' + (configFlag('REPLY_TIMING_ENABLED') ? ' checked' : '') + '><i></i></label>',
+      '<div><b>显示思考耗时</b><div class="mut" style="font-size:12px">回复末尾附「（想了 X.X 秒）」</div></div>',
+    '</div>',
+    '<div class="mut" style="margin-top:8px;font-size:12px">开关状态实时显示，改完立刻生效，不用重启</div>',
     '</section>'
   ].join('')
   const admins = (state?.config?.adminUsers || [])
