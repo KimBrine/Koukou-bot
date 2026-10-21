@@ -765,14 +765,16 @@ function pageStickers(){
     const badge = s.origin === 'learned' ? '<span class="pill" style="background:#2a7;color:#fff">学习</span>' : ''
     return '<article data-stk-card="' + esc(s.id) + '" style="border:1px solid var(--line,#ddd);border-radius:14px;padding:16px;flex:1 1 300px;min-width:260px;max-width:420px">' +
       '<button class="btn" data-stk-preview="' + esc(s.id) + '" style="width:100%;padding:0" aria-label="预览 ' + esc(s.name) + '"><img data-stk-thumb="' + esc(s.id) + '" src="/api/sticker-file?id=' + encodeURIComponent(s.id) + '&scope=' + encodeURIComponent(stickerPersona?.token || '') + '&hash=' + encodeURIComponent(s.hash || '') + '" style="width:100%;height:180px;object-fit:contain;border-radius:10px;background:#0002" alt="' + esc(s.name) + '"></button>' +
-      '<div style="margin:10px 0">' + badge + ' <span class="mut">' + Math.ceil((s.size || 0)/1024) + ' KB · ' + esc(s.mime) + ' · 用过 ' + (s.usage || 0) + ' 次</span></div>' +
+      '<div style="margin:10px 0">' + badge + ' <b style="font-size:15px">' + esc(s.name) + '</b> <span class="mut">' + Math.ceil((s.size || 0)/1024) + ' KB · 用过 ' + (s.usage || 0) + ' 次</span></div>' +
+      '<details style="margin-top:6px"><summary style="cursor:pointer">详情 / 编辑</summary>' +
       '<label>名称<input data-stk-name="' + esc(s.id) + '" value="' + esc(s.name) + '" maxlength="40" style="width:100%;margin:6px 0"></label>' +
       '<label>标签<input data-stk-kw="' + esc(s.id) + '" value="' + esc((s.keywords || []).join(' ')) + '" placeholder="空格或逗号分隔" style="width:100%;margin:6px 0"></label>' +
       '<label>描述<textarea data-stk-desc="' + esc(s.id) + '" maxlength="1000" rows="3" placeholder="画面内容、适合什么时候用；会供模型参考" style="width:100%;margin:6px 0">' + esc(s.description || '') + '</textarea></label>' +
       '<details style="margin:8px 0"><summary>适用场景</summary><div style="line-height:1.8">' + boxes + '</div></details>' +
       '<label>替换图片<input data-stk-file="' + esc(s.id) + '" type="file" accept="image/png,image/jpeg,image/webp,image/gif" style="width:100%;margin:6px 0"></label><div class="mut">选择后点击保存；保留条目，重新计算哈希。最多4MB。</div>' +
       '<label style="display:block;margin-top:8px">SHA-256<input readonly data-stk-hash="' + esc(s.id) + '" value="' + esc(s.hash || '') + '" style="width:100%;font-family:monospace;font-size:12px;margin:6px 0"></label>' +
-      '<div class="flexbar"><button class="btn primary" data-stk-save="' + esc(s.id) + '">保存修改</button><button class="btn" data-stk-copy="' + esc(s.id) + '">复制哈希</button><button class="btn" data-stk-del="' + esc(s.id) + '">仅删除</button><button class="btn" data-stk-block="' + esc(s.id) + '">拉入黑名单并删除</button></div></article>'
+      '<div class="flexbar"><button class="btn primary" data-stk-save="' + esc(s.id) + '">保存修改</button><button class="btn" data-stk-copy="' + esc(s.id) + '">复制哈希</button><button class="btn" data-stk-del="' + esc(s.id) + '">仅删除</button><button class="btn" data-stk-block="' + esc(s.id) + '">拉入黑名单并删除</button></div>' +
+      '</details></article>'
   }).join('')
   return [
     '<h1>表情包</h1><p class="note">当前图库：' + esc(stickerPersona?.name || '默认人格') + ' · 图库、标签、使用记录和黑名单按人格分开；自动学习与配图跟随会话人格。切换后不会混用，原图库保留。</p><div class="sub">给每张图起名、打关键词和语境；机器人按语境挑图，模型也能用 [贴纸: 名称] 点名要。</div>',
