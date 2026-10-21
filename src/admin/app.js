@@ -180,10 +180,23 @@ function paintUpdates(){
   const link=document.getElementById('versionLink');if(link){link.hidden=u?.status!=='available';if(u?.url)link.href=u.url}
 }
 async function refreshUpdates(force=false){
-  if(updateChecking)return;updateChecking=true;
-  const button=document.getElementById('checkUpdate');if(button)button.disabled=true;
-  try{updateInfo=await api(force?'/api/action/check-update':'/api/updates',force?{}:undefined)}catch(e){updateInfo={...updateInfo,status:'error',message:e.message}}
-  finally{updateChecking=false;paintUpdates();if(button)button.disabled=false}
+  if(updateChecking)return
+  updateChecking=true
+  const button=document.getElementById('checkUpdate')
+  const status=document.getElementById('versionStatus')
+  if(button){button.disabled=true;button.textContent='检查中…'}
+  if(force&&status)status.textContent='正在检查…'
+  if(force)toast('正在检查更新…')
+  try{
+    const timeout=new Promise(function(_,reject){setTimeout(function(){reject(new Error('检查超时（网络不通）'))},25000)})
+    updateInfo=await Promise.race([api(force?'/api/action/check-update':'/api/updates',force?{}:undefined),timeout])
+  }catch(e){updateInfo={...updateInfo,status:'error',message:e.message}}
+  finally{
+    updateChecking=false
+    if(button){button.disabled=false;button.textContent='检查更新'}
+    paintUpdates()
+    if(force)toast(updateStatusText())
+  }
 }
 function versionCard(){
   const ver = updateInfo?.currentVersion || state?.version || ''
@@ -194,7 +207,7 @@ function versionCard(){
     '</div><div class="version-foot"><span id="versionChecked" class="mut">' + esc(checked) + '</span><details class="version-help"><summary>更新说明</summary><p class="mut">自动检查 GitHub 正式标签（最多 100 个），缓存 6 小时；手动检查间隔至少 30 秒。检查失败不代表已是最新。更新前请备份私有配置与数据；这里不会自动安装。</p></details></div></section>'
 }
 
-function pageOverview(){
+function overviewCards(){
   const b = state?.bot ?? {}
   const c = state?.counters ?? {}
   const t = state?.today ?? {}
@@ -208,13 +221,21 @@ function pageOverview(){
     ['已运行', fmtUptime(state?.uptimeSec || 0), 'PID ' + (state?.pid ?? '—')],
     ['今日已记录消息', (t.total ?? 0) + ' 条', '自本次启动：收到 ' + (c.received||0) + ' / 回复 ' + (c.replied||0)],
   ]
-  const perGroup = (t.perGroup || []).map(g => {
+  return '<div class="grid g3" id="kpiGrid">' + cards.map(([k,v,s]) => '<div class="card"><h3>' + k + '</h3><div class="kpi">' + v + '</div><div class="note">' + (s || '') + '</div></div>').join('') + '</div>'
+}
+function overviewTodayRows(){
+  const t = state?.today ?? {}
+  return (t.perGroup || []).map(g => {
     const chat = chats.find(x => String(x.id) === String(g.groupId))
     return '<tr><td>' + esc(chat?.name || ('群 ' + g.groupId)) + '</td><td class="mut">' + g.groupId + '</td><td>' + g.count + '</td></tr>'
-  }).join('')
+  }).join('') || '<tr><td colspan="3" class="mut">今天还没有记录到消息</td></tr>'
+}
+function pageOverview(){
+  const b = state?.bot ?? {}
+  const dot = (ok) => '<span class="dot ' + (ok ? 'ok' : 'bad') + '"></span>'
   const quickCard = [
     '<section class="card" style="margin-bottom:18px"><h2>常用开关</h2>',
-    '<div class="note"><b>/Q 解题模式（单次启用）</b><br>私聊发送 /Q 问题，或在群里 @机器人并带 /Q。认真讲解过程，支持题目图片；下一条未带 /Q 的消息恢复普通聊天。</div>',
+    '<div class="note"><b>/Q 解题模式（单次启用）</b><br>私聊发送 /Q 问题，或在群里 @机器人 并带 /Q。认真讲解过程，支持题目图片；下一条未带 /Q 的消息恢复普通聊天。</div>',
     '<div style="display:flex;align-items:center;gap:12px;margin:10px 0">',
       '<label class="switch"><input type="checkbox" id="quickTiming"' + (configFlag('REPLY_TIMING_ENABLED') ? ' checked' : '') + '><i></i></label>',
       '<div><b>显示思考耗时</b><div class="mut" style="font-size:12px">仅 /Q 解题回复末尾附「（想了 X.X 秒）」；普通聊天不显示</div></div>',
@@ -239,26 +260,22 @@ function pageOverview(){
     '<div class="mut" style="margin-top:8px">当前管理员：' + (admins.length ? admins.map(esc).join('、') : '未配置（群总结等沿用公开范围；清除记忆须显式配置管理员）') + '</div>',
     '</section>'
   ].join('')
-    return quickCard + adminCard + versionCard() + `
-  <div class="hero"><span class="hero-status">${dot(b.online === true)} ${accountStatusText(b)}</span>
-    <h1>机器人工作台</h1><div class="sub"><span id="updatedAt">${new Date().toLocaleTimeString('zh-CN',{hour12:false})}</span> 更新 · 集中管理运行状态与操作</div></div>
-  <div class="grid g3">${cards.map(([k,v,s]) => `<div class="card"><h3>${k}</h3><div class="kpi">${v}</div><div class="note">${s||''}</div></div>`).join('')}</div>
-  <div class="section-head"><h2>常用操作</h2><span class="note">操作作用于当前机器人</span></div>
-  <div class="card">
-    <div class="toolgroup"><button class="btn primary" data-act="poke-target">检查盯人目标</button>
-      <button class="btn" data-act="summary">生成群聊报告</button>
-      <button class="btn" data-act="clear-alert">清除掉线提醒</button></div>
-    <details class="advanced-box"><summary>维护与定时指令</summary>
-      <div class="toolgroup advanced"><button class="btn" data-act="restart-bot">重启机器人</button>
-        <button class="btn" data-act="restart-napcat">重启 NapCat</button>
-        <button class="btn" data-act="daily-ping">立即发定时指令 (@示例机器人)</button></div>
-    </details>
-  </div>
-  <div class="section-head"><h2>今日各群已记录消息</h2><span class="note">本地记录，供运行监测</span></div>
-  <div class="card">${perGroup ? `<table><tr><th>群聊</th><th>群号</th><th>已记录</th></tr>${perGroup}</table>` : '<div class="empty">今天还没有捕获到群消息</div>'}</div>`
+  return '<div class="hero"><span class="hero-status" id="heroStatus">' + dot(b.online === true) + ' ' + accountStatusText(b) + '</span>' +
+    '<h1>机器人工作台</h1><div class="sub"><span id="updatedAt">' + new Date().toLocaleTimeString('zh-CN',{hour12:false}) + '</span> 更新 · 集中管理运行状态与操作</div></div>' +
+    overviewCards() +
+    '<div class="section-head"><h2>常用操作</h2><span class="note">操作作用于当前机器人</span></div>' +
+    '<div class="card"><div class="toolgroup"><button class="btn primary" data-act="poke-target">检查盯人目标</button>' +
+      '<button class="btn" data-act="summary">生成群聊报告</button>' +
+      '<button class="btn" data-act="clear-alert">清除掉线提醒</button></div>' +
+    '<details class="advanced-box"><summary>维护与定时指令</summary><div class="toolgroup advanced"><button class="btn" data-act="restart-bot">重启机器人</button>' +
+      '<button class="btn" data-act="restart-napcat">重启 NapCat</button>' +
+      '<button class="btn" data-act="daily-ping">立即发定时指令 (@示例机器人)</button></div></details></div>' +
+    quickCard +
+    adminCard +
+    '<div class="section-head"><h2>今日各群已记录消息</h2><span class="note">本地记录，供运行监测</span></div>' +
+    '<div class="card"><table class="tbl"><thead><tr><th>群</th><th>群号</th><th>条数</th></tr></thead><tbody id="todayGroups">' + overviewTodayRows() + '</tbody></table></div>' +
+    versionCard()
 }
-
-// ── 页面：会话 ──────────────────────────────────────────
 function proactiveSettingsPatch(box){
   const enabled=box.querySelector('[data-f="proactiveEnabled"]')
   if(!enabled)return {}
@@ -1924,19 +1941,15 @@ async function refreshStateUI() {
     if(page==='chats')refreshSummaryControls()
     if (page === 'commands') { const r=await api('/api/custom-commands'); CommandCenterUI.updateDiagnostics(r.poke) }
     if (page === 'overview') {
-      // 正在输入时不要重绘：每 3 秒一次的全页重绘会把还没保存的输入清掉
-      const mainEl = document.getElementById('main')
-      const focused = document.activeElement
-      const typing = focused && mainEl?.contains(focused) && /^(INPUT|TEXTAREA|SELECT)$/.test(focused.tagName)
-      const adminBox = document.getElementById('adminUsersInput')
-      const dirtyAdmin = adminBox && adminBox.value.trim() !== (state?.config?.adminUsers || []).join(',')
-      if (typing || dirtyAdmin) return
-      const oldY = window.scrollY
-      const detailsOpen = document.querySelector('.advanced-box')?.open
-      render()
-      const details = document.querySelector('.advanced-box')
-      if (details) details.open = Boolean(detailsOpen)
-      window.scrollTo(0, oldY)
+      // 只原位更新数字，不整页重绘：整页重绘会把输入框、展开的折叠块和滚动位置全部冲掉
+      const grid = document.getElementById('kpiGrid')
+      if (grid) grid.outerHTML = overviewCards()
+      const tbody = document.getElementById('todayGroups')
+      if (tbody) tbody.innerHTML = overviewTodayRows()
+      const updated = document.getElementById('updatedAt')
+      if (updated) updated.textContent = new Date().toLocaleTimeString('zh-CN',{hour12:false})
+      const hero = document.getElementById('heroStatus')
+      if (hero) hero.innerHTML = '<span class="dot ' + (state.bot.online === true ? 'ok' : 'bad') + '"></span> ' + accountStatusText(state.bot)
     }
   } catch(e) {
     state = { ...state, bot:{ ...state?.bot, online:false, connected:false, onebotConnected:false, qqOnline:null, statusError:'控制台未响应' } }

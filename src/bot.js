@@ -15,7 +15,7 @@ import { parseMessage } from './cq.js'
 import { isBotAdmin, hasAdmins, adminHint } from './permissions.js'
 import { renderReply } from './customCommands.js'
 import { extractStickerMarkers } from './stickers.js'
-import { SUMMARY_RE, CLEAR_RE, HELP_RE } from './commandCenter.js'
+import { SUMMARY_RE, CLEAR_RE, HELP_RE, SEND_FILE_RE, SEND_LINK_RE } from './commandCenter.js'
 import { formatCommandHelp } from './commandHelp.js'
 import { createGroupMute } from './groupMute.js'
 import { createSelfActions } from './selfActions.js'
@@ -820,6 +820,41 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       if(requestedFeature){
         if(!featureAllowed(requestedFeature)){await sendTo(evt,'这个指令在当前会话未启用，或需要机器人管理员权限。');return}
         featurePolicy={id:requestedFeature,snapshot:JSON.stringify(commandCenter?.get(requestedFeature))}
+      }
+      const sendText = String(parsed.text || '').trim()
+      const sendFileMatch = SEND_FILE_RE.exec(sendText)
+      const sendLinkMatch = sendFileMatch ? null : SEND_LINK_RE.exec(sendText)
+      if (sendFileMatch || sendLinkMatch) {
+        const sendId = sendFileMatch ? 'send-file' : 'send-link'
+        if (!commandCenter || !commandCenter.allows(sendId, commandContext)) {
+          if (directReply) await sendTo(evt, '这个指令需要机器人管理员权限。')
+          return
+        }
+        const targetType = (sendFileMatch || sendLinkMatch)[1]
+        const targetId = Number((sendFileMatch || sendLinkMatch)[2])
+        if (sendFileMatch) {
+          const filePath = path.resolve(sendFileMatch[3].trim().replace(/^"|"$/g, ''))
+          if (!existsSync(filePath) || !statSync(filePath).isFile()) { await sendTo(evt, '文件不存在：' + filePath); return }
+          const st = statSync(filePath)
+          if (st.size > 200 * 1024 * 1024) { await sendTo(evt, '文件超过 200MB，未发送'); return }
+          try {
+            if (targetType === '群') await onebot.api('upload_group_file', { group_id: targetId, file: filePath, name: path.basename(filePath) })
+            else await onebot.api('upload_private_file', { user_id: targetId, file: filePath, name: path.basename(filePath) })
+            await sendTo(evt, '已发送文件：' + path.basename(filePath))
+          } catch (err) { await sendTo(evt, '文件发送失败：' + err.message) }
+          return
+        }
+        const url = sendLinkMatch[3]
+        const title = String(sendLinkMatch[4] || url).trim()
+        const segment = [{ type: 'share', data: { url, title, content: title } }]
+        try {
+          if (targetType === '群') await onebot.sendGroup(targetId, segment)
+          else await onebot.sendPrivate(targetId, segment)
+          await sendTo(evt, '已发送链接：' + title)
+        } catch (err) {
+          try { await sendTo(evt, title + ' ' + url) } catch { await sendTo(evt, '链接发送失败：' + err.message) }
+        }
+        return
       }
       const selfResult=!questionMode&&!muteFollowup&&selfActions.applies(evt,parsed,selfFollowup)?await selfActions.handle(evt,parsed,{followup:selfFollowup,quotedRaw,canReply:samePersona,replyPrompt:()=>{
         const personaText=sessionPersona(config,chatSettings?.get?.(conversationKey)?.persona||'').text

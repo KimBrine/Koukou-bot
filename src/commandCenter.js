@@ -9,6 +9,8 @@ import {ID_CHECK_CMD_RE,ID_CHECK_KICK_CMD_RE} from './idCheck.js'
 export const SUMMARY_RE=/^\s*[\/／]?\s*(今日总结|每日总结|群总结|群聊总结)\s*(?:d\s*)?(\d{1,2})?\s*[。！!~～]?\s*$/i
 export const CLEAR_RE=/^[\/／]\s*(?:清除记忆|清空记忆|重置记忆)\s*(全部|all)?\s*[。！!~～.…]*$/i
 export const HELP_RE=/^[\/／]\s*(?:help|帮助|指令|命令)\s*[。！!~～.…]*$/i
+export const SEND_FILE_RE=/^[\/／]\s*发文件\s*(群|私聊)\s+(\d{5,15})\s+(.+?)\s*$/i
+export const SEND_LINK_RE=/^[\/／]\s*发链接\s*(群|私聊)\s+(\d{5,15})\s+(\S+)(?:\s+([\s\S]+))?\s*$/i
 const DEFINITIONS=[
   {id:'question',name:'认真解题（单轮 /Q）',trigger:'/Q 问题（私聊或群里@机器人）',description:'仅本轮完整讲解、推导及看题图；下一轮恢复聊天。思考耗时显示只在本模式使用，仍沿用会话总开关、静音和模型设置',ai:'required'},
   {id:'music',name:'点歌音乐名片',trigger:'点歌 歌名 歌手 / 歌曲ID / 完整歌曲链接',description:'私聊或群里@/引用机器人点歌；默认网易云，也支持QQ音乐。复杂自然语言可能调用AI解析，核对平台及歌手后发送名片；收到成功回执才生成回应',ai:'required'},
@@ -24,6 +26,8 @@ const DEFINITIONS=[
   {id:'request-poke',name:'请求拍一拍群成员',trigger:'@机器人 拍一拍 指定成员',description:'仅白名单群，任何成员可请求拍自己或其他指定成员；支持@、昵称、引用与近期上下文，实际成功后按当前人格回复一句话',ai:'required',groupAction:true,whitelistOnly:true},
   {id:'owner-mute',name:'群管理自然语言禁言',trigger:'@机器人 禁言/解禁 指定成员',description:'所选群的群主，或同时拥有本群管理权限的已配置机器人管理员，可指定成员、引用发言人或明确上下文对象，支持批量与数学时长；默认一分钟，超过30天不执行',ai:'required',management:true},
   {id:'self-mute',name:'自助自然语言禁言',trigger:'@机器人 禁言我 十分钟',description:'仅所选群，由本人主动申请禁言自己；AI 理解当前请求，默认一分钟，超过30天不执行，不能替别人申请',ai:'required',management:true},
+  {id:'send-file',name:'发送文件',trigger:'/发文件 群/私聊 号码 服务器文件路径',description:'机器人管理员可用：把服务器上存在的文件上传到指定群或私聊，单文件上限 200MB；路径按机器人所在机器解析',ai:'none',protected:true,pattern:SEND_FILE_RE},
+  {id:'send-link',name:'发送链接卡片',trigger:'/发链接 群/私聊 号码 网址 [标题]',description:'机器人管理员可用：把网址以链接卡片发到指定群或私聊，失败自动回退成文字链接',ai:'none',protected:true,pattern:SEND_LINK_RE},
   {id:'whole-mute',name:'全员禁言开关',trigger:'@机器人 开启/关闭全员禁言',description:'所选群的群主，或同时拥有本群管理权限的已配置机器人管理员，可要求切换 QQ 原生全员禁言，不设置发言频率；暂不支持原生时段计划。此处开关只控制指令能力，不改变 QQ 当前禁言状态',ai:'required',management:true},
 ]
 const plain = d => {const {pattern,...rest}=d;return rest}
@@ -40,7 +44,7 @@ export function createCommandCenter({file,customCommands,config,logger,llm,now=D
   try {if(existsSync(file)){const value=JSON.parse(readFileSync(file,'utf8'));if(value.version!==1)throw Error('版本不支持');overrides=value.builtins||{}}}
   catch(err){throw Error(`指令中心设置读取失败：${err.message}`)}
   function base(d) {
-    const enabled=d.management||d.groupAction?false:d.id==='poke'?Boolean(config.pokeEnabled):d.id==='auto-plus-one'?config.autoPlusOneEnabled===true:d.id==='id-check-kick'?Boolean(config.idCheckKickEnabled):d.id==='id-check'?Boolean(config.idCheckEnabled):true
+    const enabled=(d.id==='send-file'||d.id==='send-link')?false:d.management||d.groupAction?false:d.id==='poke'?Boolean(config.pokeEnabled):d.id==='auto-plus-one'?config.autoPlusOneEnabled===true:d.id==='id-check-kick'?Boolean(config.idCheckKickEnabled):d.id==='id-check'?Boolean(config.idCheckEnabled):true
     const specific=d.id.startsWith('id-check')&&config.idCheckGroups?.length
     return {...plain(d),enabled,scope:d.management||d.groupAction||specific?'group':d.id==='auto-plus-one'||d.id.startsWith('id-check')?'groups':'all',groups:specific?[...config.idCheckGroups]:[],adminOnly:Boolean(d.protected || (d.id==='summary'&&hasAdmins(config.adminUsers))),naturalLanguage:false,responseMode:'fixed',aiPrompt:'根据当前人格，用一句简短自然的话回应对方拍一拍。',...overrides[d.id],...(d.protected?{adminOnly:true,naturalLanguage:false}:{}),...(d.whitelistOnly?{scope:'groups',groups:[],adminOnly:false}:d.id==='self-recall'?{adminOnly:false}:{})}
   }
