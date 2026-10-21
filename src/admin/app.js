@@ -798,11 +798,18 @@ function backupCard(){
 function svgChart(list, series, { mode = 'line', height = 160, percent = false } = {}){
   const w = 580, padL = 34, padR = 10, padT = 12, padB = 24
   const innerW = w - padL - padR, innerH = height - padT - padB
-  const maxRaw = Math.max(1, ...list.flatMap(function(d){ return series.map(function(s){ return s.get(d) || 0 }) }))
-  const max = percent ? Math.max(100, Math.ceil(maxRaw / 10) * 10) : Math.ceil(maxRaw * 1.1)
+  const maxRaw = Math.max(0, ...list.flatMap(function(d){ return series.map(function(s){ return s.get(d) || 0 }) }))
+  // 取“好看”的整数上限：1/2/5 × 10^n；百分比至少留到 100，超过 100 时跟着放大
+  const niceMax = function(v){
+    if (!(v > 0)) return 1
+    const exp = Math.pow(10, Math.floor(Math.log10(v)))
+    const n = v / exp
+    return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * exp
+  }
+  const max = percent ? niceMax(Math.max(100, maxRaw)) : niceMax(maxRaw * 1.05)
   const step = list.length > 1 ? innerW / (list.length - 1) : innerW
   const x = function(i){ return padL + (list.length > 1 ? i * step : innerW / 2) }
-  const y = function(v){ return padT + innerH - (v / max) * innerH }
+  const y = function(v){ return Math.max(padT, Math.min(padT + innerH, padT + innerH - ((Number(v) || 0) / max) * innerH)) }
   const grid = [0, 0.25, 0.5, 0.75, 1].map(function(r){
     const yy = padT + innerH * (1 - r)
     return '<line x1="' + padL + '" y1="' + yy + '" x2="' + (w - padR) + '" y2="' + yy + '" stroke="rgba(148,163,184,.18)" stroke-width="1"></line>' +
