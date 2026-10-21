@@ -82,9 +82,18 @@ export function createLongMemory({ file, logger, llm, maxChars = 1500, intervalM
 注明事实由谁在何时说出；不把猜测当事实、不把机器人语气或角色扮演当成人物事实。保留有用的玩笑与梗，但去掉寒暄和重复。
 容量不足时优先保留稳定偏好、未完成约定和结论，再保留近期重要事件。允许写“未知”，不要补编。不加开场白。`
       try {
-        const merged = String(await llm.chat(prompt, [{ role: 'user', content: `【已有记忆】\n${item.summary || '（暂无）'}\n\n【新增原话】\n${lines}` }], { signal: controller.signal }) ?? '').trim()
+        let merged = String(await llm.chat(prompt, [{ role: 'user', content: `【已有记忆】\n${item.summary || '（暂无）'}\n\n【新增原话】\n${lines}` }], { signal: controller.signal }) ?? '').trim()
         if (revision !== version(key) || store.get(key) !== item) return false
-        if (!merged || merged.length > maxChars) throw new Error('摘要为空或超过预算，原批次保留')
+        if (!merged) throw new Error('摘要为空，原批次保留待重试')
+        if (merged.length > maxChars) {
+          // 模型偶尔不太守字数：先请它压缩一次，仍超就按上限截断，避免整批永远卡住
+          try {
+            const shorter = String(await llm.chat('请在不新增事实的前提下压缩下面的记忆笔记，保留日期、姓名、否定和未完成事项。', [{ role: 'user', content: `把这段压到 ${Math.floor(maxChars * 0.9)} 字以内：\n${merged}` }], { signal: controller.signal }) ?? '').trim()
+            if (shorter && shorter.length <= maxChars) merged = shorter
+          } catch {}
+          if (merged.length > maxChars) merged = merged.slice(0, maxChars)
+          logger?.info?.('长期记忆超限，已压缩到 ' + merged.length + ' 字')
+        }
         const next = { summary: merged, pending: item.pending.slice(batch.length), updatedAt: Date.now() }
         writeJsonAtomic(file, { ...Object.fromEntries(store), [key]: next })
         Object.assign(item, next)

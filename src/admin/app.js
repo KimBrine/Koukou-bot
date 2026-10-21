@@ -1635,8 +1635,12 @@ async function bind(){
   }
   // 记忆浏览：查看 / 单条改删 / 摘要编辑 / 清空
   const reloadMemoryDetail = async (key) => {
-    memoryDetail = await api('/api/memory-detail?key=' + encodeURIComponent(key))
-    render()
+    let lastErr = null
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try { memoryDetail = await api('/api/memory-detail?key=' + encodeURIComponent(key)); render(); return }
+      catch (err) { lastErr = err; await new Promise(function(resolve){ setTimeout(resolve, 300) }) }
+    }
+    throw lastErr
   }
   document.querySelectorAll('[data-memfold]').forEach(el => el.onclick = () => {
     const type = el.dataset.memfold
