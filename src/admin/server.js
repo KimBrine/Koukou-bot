@@ -434,6 +434,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         napcatPortNumber: onebotPort,
       },
       today: todayStats(),
+      summaryProgress: dailySummary?.progress?.all?.() || [],
       replies: replyStats,
       today_replies: runtimeStats?.todayReplies ?? null,
       counters: {
@@ -1291,6 +1292,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       return { ok: true, killed: 'old-instances-then-start', dir, task }
     },
     async summary(payload) {
+      if(payload?.groupId!=null&&payload.groupId!==''&&(!/^\d{1,15}$/.test(String(payload.groupId))||!Number.isSafeInteger(Number(payload.groupId))||Number(payload.groupId)<=0))throw new Error('群号无效')
       if (payload?.missingOnly === true) {
         if (!dailySummary || !config.summaryFallbackEnabled) throw new Error('请先启用群总结和漏发补发')
         dailySummary.checkScheduled('23:30', undefined, { earlyFallback: true,
@@ -1300,8 +1302,15 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       }
       const groups = payload.groupId ? [Number(payload.groupId)] : config.summaryGroups.length ? config.summaryGroups : [...config.whitelistGroups]
       if (!dailySummary) throw new Error('日报模块未启用')
-      dailySummary.trigger(groups, { days: Math.max(1, Math.min(30, Number(payload.days) || 1)) })
-      return { ok: true, groups }
+      const busy=groups.filter(g=>dailySummary.isRunning(g))
+      await dailySummary.trigger(groups, { days: Math.max(1, Math.min(30, Number(payload.days) || 1)) })
+      return { ok: true, groups, busy, progress:dailySummary.progress?.all?.()||[] }
+    },
+    async 'summary-ack'(payload) {
+      if(!/^\d{1,15}$/.test(String(payload.groupId))||!payload.jobId)throw new Error('请指定群号和任务编号')
+      if(!dailySummary?.progress)throw new Error('日报模块未启用')
+      const acknowledged=dailySummary.progress.acknowledge(Number(payload.groupId),String(payload.jobId))
+      return {ok:true,acknowledged,progress:dailySummary.progress.all()}
     },
     async say(payload) {
       const key = String(payload.key || '')

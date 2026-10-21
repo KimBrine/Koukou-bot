@@ -14,6 +14,40 @@ const PAGES = [
 let page = location.hash.replace('#','') || 'overview'
 if (!PAGES.some(p => p[0] === page)) page = 'overview'
 let state = null
+const summaryRequests = new Set()
+function summaryControls(groupId){return `<div class="summary-controls" data-summary-group="${Number(groupId)}" aria-label="群总结操作与进度"></div>`}
+function summaryControlsHTML(groupId){
+  const job=(state?.summaryProgress||[]).find(j=>Number(j.groupId)===Number(groupId))||{status:'idle'}
+  const busy=summaryRequests.has(Number(groupId))||job.status==='generating'
+  const status=job.status||'idle',terminal=['success','failed'].includes(status)
+  const label=summaryRequests.has(Number(groupId))?'正在启动…':({idle:'空闲中',generating:'生成中',success:'生成成功',failed:'生成失败'}[status]||'空闲中')
+  const time=terminal&&job.finishedAt?new Date(job.finishedAt).toLocaleString('zh-CN',{hour12:false}):''
+  return `<button class="btn sm" data-summary-start="${Number(groupId)}" ${busy?'disabled':''} title="生成今天截至当前的群总结，完成后直接发送到本群">${busy?'正在生成…':'生成今日总结'}</button><span class="summary-state ${esc(status)}" role="status">${label}</span>${terminal?`<button class="summary-dismiss" data-summary-ack="${Number(groupId)}" data-job-id="${esc(job.jobId)}" aria-label="已阅读并关闭本群总结结果" title="已阅读，关闭此结果">×</button>`:''}<small class="summary-detail">${esc(job.message||'生成完成后会直接发送到本群。')}${time?' · '+esc(time):''}</small>`
+}
+function refreshSummaryControls(){
+  document.querySelectorAll('[data-summary-group]').forEach(box=>{
+    const groupId=Number(box.dataset.summaryGroup),html=summaryControlsHTML(groupId)
+    if(box.dataset.summaryView===html)return
+    box.innerHTML=html;box.dataset.summaryView=html
+    box.querySelector('[data-summary-start]').onclick=()=>startGroupSummary(groupId)
+    const ack=box.querySelector('[data-summary-ack]')
+    if(ack)ack.onclick=async()=>{
+      ack.disabled=true
+      try{const r=await api('/api/action/summary-ack',{groupId,jobId:ack.dataset.jobId});state.summaryProgress=r.progress;refreshSummaryControls();if(!r.acknowledged)toast('任务状态已变化，请查看最新结果')}
+      catch(e){toast(e.message,true);ack.disabled=false}
+    }
+  })
+}
+async function startGroupSummary(groupId){
+  if(summaryRequests.has(groupId))return
+  summaryRequests.add(groupId);refreshSummaryControls()
+  try{
+    const r=await api('/api/action/summary',{groupId,days:1})
+    state.summaryProgress=r.progress||state.summaryProgress
+    toast(r.busy?.includes(groupId)?'这个群已有总结正在生成，请查看旁边的进度':'已启动今日总结，完成后会发送到本群')
+  }catch(e){toast('未能启动群总结：'+e.message,true)}
+  finally{summaryRequests.delete(groupId);refreshSummaryControls()}
+}
 let updateInfo = null, updateChecking = false
 let chats = []
 let configItems = []
@@ -208,6 +242,12 @@ function pageOverview(){
 }
 
 // ── 页面：会话 ──────────────────────────────────────────
+function proactiveSettingsPatch(box){
+  const enabled=box.querySelector('[data-f="proactiveEnabled"]')
+  if(!enabled)return {}
+  const rate=box.querySelector('[data-f="proactiveRate"]')
+  return {proactiveEnabled:enabled.checked,proactiveRate:box.querySelector('[data-global="proactiveRate"]')?.checked?null:Number(rate.value)}
+}
 function chatRow(c){
   const r = c.raw || {}, e = c.effective || {}
   const open = openChats.has(c.key) ? ' open' : ''
@@ -228,21 +268,22 @@ function chatRow(c){
       <span class="mut">${c.id}</span>
       ${c.inWhitelist ? '<span class="badge whitelist">白名单</span>' : ''}
       ${r.enabled === false ? '<span class="badge restart">已停用</span>' : ''}
-      ${r.proactiveEnabled === false ? '<span class="badge restart">不主动</span>' : ''}
+      ${c.type === 'group' && r.proactiveEnabled === false ? '<span class="badge restart">不主动</span>' : ''}
       <span style="flex:1"></span>
       <span class="mut" style="font-size:12px">今日 ${c.msgToday} 条 · 记忆 ${c.memory} 条${c.replies?(' · 已回 '+c.replies):''}</span>
       ${c.type === 'group' ? `<button class="btn sm ${c.inWhitelist ? 'danger' : ''}" data-whitelist="${c.inWhitelist ? 'remove' : 'add'}" data-group="${c.id}">${c.inWhitelist ? '移出白名单' : '加入白名单'}</button>` : ''}
+      ${c.type === 'group' ? summaryControls(c.id) : ''}
       <span class="mut">▾</span>
     </div>
     <div class="body">
-      <div class="frow"><label>聊天开关</label><div><label class="switch"><input type="checkbox" data-f="enabled" ${r.enabled === false ? '' : 'checked'}><i></i></label> <span class="mut">关掉后停止普通聊天；拍一拍、自动 +1 在“回复行为”单独控制</span></div></div>
-      <div class="frow"><label>被 @ / 引用时回复</label><div><label class="switch"><input type="checkbox" data-f="atReplyEnabled" ${r.atReplyEnabled === false ? '' : 'checked'}><i></i></label> <span class="mut">引用机器人自己的发言也视为直接对话，无需另加 @</span></div></div>
-      <div class="frow"><label>允许主动搭话</label><div><label class="switch"><input type="checkbox" data-f="proactiveEnabled" ${r.proactiveEnabled === false ? '' : 'checked'}><i></i></label> <span class="mut">仅在白名单群里有效${override('proactiveEnabled')}</span></div></div>
+      <div class="frow"><label>聊天开关</label><div><label class="switch"><input type="checkbox" data-f="enabled" ${r.enabled === false ? '' : 'checked'}><i></i></label> <span class="mut">${c.type==='group'?'关掉后停止普通聊天；拍一拍、自动 +1 在“回复行为”单独控制':'关掉后停止普通私聊回复；拍一拍在“回复行为”单独控制'}</span></div></div>
+      <div class="frow"><label>${c.type==='group'?'被 @ / 引用时回复':'回复私聊消息'}</label><div><label class="switch"><input type="checkbox" data-f="atReplyEnabled" ${r.atReplyEnabled === false ? '' : 'checked'}><i></i></label> <span class="mut">${c.type==='group'?'引用机器人自己的发言也视为直接对话，无需另加 @':'收到私聊消息时回复，不按群聊主动搭话概率抽取'}</span></div></div>
+      ${c.type==='group'?`<div class="frow"><label>允许主动搭话</label><div><label class="switch"><input type="checkbox" data-f="proactiveEnabled" ${r.proactiveEnabled === false ? '' : 'checked'}><i></i></label> <span class="mut">仅在白名单群里有效${override('proactiveEnabled')}</span></div></div>
       <div class="frow"><label>主动搭话概率</label><div>
         <div class="row"><input type="range" min="0" max="1" step="0.01" data-f="proactiveRate" value="${rateVal}">
         <span class="pill" data-show="proactiveRate">${(rateVal*100).toFixed(0)}%</span>
         <label class="mut" style="font-size:12px"><input type="checkbox" data-global="proactiveRate" ${r.proactiveRate===null||r.proactiveRate===undefined?'checked':''}> ${rateOrigin}(${(defaultRate*100).toFixed(0)}%)</label><a href="#humanize" class="mut" style="font-size:12px">修改默认值</a></div>
-      </div></div>
+      </div></div>`:''}
       <div class="frow"><label>装饰符号频率</label><div>
         <div class="row"><input type="range" min="0" max="1" step="0.01" data-f="emojiKeepRate" value="${emojiVal}">
         <span class="pill" data-show="emojiKeepRate">${(emojiVal*100).toFixed(0)}%</span>
@@ -290,7 +331,7 @@ function pageChats(){
   <h1>会话管理</h1><div class="sub">为每个群聊或私聊设置回复方式。保存后即时生效。</div>
   <section class="card group-manager" aria-label="白名单群聊管理">
     <div class="section-head"><div><h2>白名单群聊 <span class="badge whitelist">${whitelist.length} 个群</span></h2><div class="note">机器人可以在这些群主动搭话，概率在「回复行为」中设置。</div></div><button class="btn primary" id="importWhitelist">＋ 添加 / 导入白名单群</button></div>
-    <div class="group-list">${whitelist.map(g => `<div class="group-item"><div class="group-identity"><strong>${esc(g.name)}</strong><small>群号 ${g.id}</small></div><button class="btn sm" data-open-chat="g${g.id}">会话设置</button><button class="btn danger sm" data-whitelist="remove" data-group="${g.id}">移出白名单</button></div>`).join('') || '<div class="empty">还没有白名单群，点击右上方按钮添加。</div>'}</div>
+    <div class="group-list">${whitelist.map(g => `<div class="group-item"><div class="group-identity"><strong>${esc(g.name)}</strong><small>群号 ${g.id}</small></div>${summaryControls(g.id)}<button class="btn sm" data-open-chat="g${g.id}">会话设置</button><button class="btn danger sm" data-whitelist="remove" data-group="${g.id}">移出白名单</button></div>`).join('') || '<div class="empty">还没有白名单群，点击右上方按钮添加。</div>'}</div>
     <div class="note" style="margin-top:12px">移出后停止主动搭话；聊天记录和会话设置保留，被 @ 回复与定时任务按各自设置执行。</div>
   </section>
   <div class="card">
@@ -781,6 +822,7 @@ function render(){
 }
 
 async function bind(){
+  refreshSummaryControls()
   const checkUpdate=document.getElementById('checkUpdate');if(checkUpdate)checkUpdate.onclick=()=>refreshUpdates(true)
   if(page==='stickers'){
     stickerControlsDirty=false
@@ -861,8 +903,7 @@ async function bind(){
     const patch = {
       enabled: q('enabled').checked,
       atReplyEnabled: q('atReplyEnabled').checked,
-      proactiveEnabled: q('proactiveEnabled').checked,
-      proactiveRate: isGlobal('proactiveRate') ? null : Number(q('proactiveRate').value),
+      ...proactiveSettingsPatch(box),
       emojiKeepRate: isGlobal('emojiKeepRate') ? null : Number(q('emojiKeepRate').value),
       replyMaxLines: isGlobal('replyMaxLines') ? null : Number(q('replyMaxLines').value),
       lineMaxChars: isGlobal('replyMaxLines') ? null : Number(q('lineMaxChars').value),
@@ -1495,7 +1536,7 @@ async function doSummary(){
   const groupId = document.getElementById('sumGroup') ? document.getElementById('sumGroup').value : null
   const days = Number(document.getElementById('sumDays')?.value || 1)
   if (!await ask('生成并发送群聊报告？', '目标：' + (groupId ? '群 ' + groupId : '配置中的所有目标群') + '，范围：近 ' + days + ' 天。生成完成后会直接发送。', '开始生成')) return
-  try { const r = await api('/api/action/summary', { groupId, days }); toast('已开始生成（群 ' + (r.groups||[]).join(',') + '），约 1~3 分钟') }
+  try { const r = await api('/api/action/summary', { groupId, days }); state.summaryProgress=r.progress||state.summaryProgress; refreshSummaryControls(); toast('已启动（群 ' + (r.groups||[]).join(',') + '），可在会话管理查看进度；消息多时可能需要较长时间') }
   catch(e){ toast(e.message, true) }
 }
 async function refreshLogs(){
@@ -1573,6 +1614,7 @@ async function refreshStateUI() {
   try {
     state = await api('/api/state')
     updateSideStatus(state.bot)
+    if(page==='chats')refreshSummaryControls()
     if (page === 'commands') { const r=await api('/api/custom-commands'); CommandCenterUI.updateDiagnostics(r.poke) }
     if (page === 'overview') {
       // 正在输入时不要重绘：每 3 秒一次的全页重绘会把还没保存的输入清掉

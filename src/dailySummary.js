@@ -11,6 +11,7 @@ import { profileSummaryContent, formatSummaryContentGuide, selectSummaryRecords,
 import { createSummarySchedule, ambiguousSummarySend } from './summarySchedule.js'
 import { createSummaryDeadline, createSummarySendQueue } from './summaryJobs.js'
 import { prepareSummaryReferences } from './summaryReferences.js'
+import { createSummaryProgress } from './summaryProgress.js'
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const pad2 = (n) => String(n).padStart(2, '0')
@@ -172,6 +173,7 @@ export function mergeRecords(history, captured, startSec, endSec = Infinity) {
 
 export function createDailySummary({ config, logger, onebot, llm, visionLLM, imageCache, loadImage, buildSummaryPromptFn = buildSummaryPrompt }) {
   const running = new Set()
+  const progress = createSummaryProgress({file:existsSync(config.dataDir)?path.join(config.dataDir,'summary-progress.json'):null,logger})
   const queueSend = createSummarySendQueue()
 
   const summaryGroups = () =>
@@ -494,7 +496,7 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
 
   /** 这个群是不是正在生成报告（用于"重复发指令"时给出反馈，而不是静默丢弃） */
   function isRunning(groupId) {
-    return running.has(groupId)
+    return running.has(Number(groupId))
   }
 
   /** 只算统计、不调模型（自检/排查用）：返回 { records, stats } */
@@ -514,12 +516,15 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
   }
 
   async function runSummary(groupId, { dryRun = false, days = 1, scheduled = false, scheduleDay = '', scheduleTime = '', statsOnly = false } = {}) {
+    groupId = Number(groupId)
     const dayCount = Math.max(1, Math.min(30, Math.floor(Number(days) || 1)))
     if (running.has(groupId)) {
       logger.info(`群 ${groupId} 的总结正在生成中，跳过本次`)
       return
     }
     running.add(groupId)
+    const job = progress.start(groupId,{days:dayCount,scheduled})
+    const report = (stage,message,status='generating') => progress.update(groupId,job.jobId,{stage,message,status})
     const deadline = createSummaryDeadline(config)
     let stage = 'model'
     try {
@@ -535,6 +540,7 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
         logger.warn(`群 ${groupId} 历史回填失败：${err.message}`)
       }
       if (!history.complete) {
+        report('history','历史记录未确认完整，本次没有发布报告。','failed')
         logger.warn(`群 ${groupId} 历史未确认完整，本次总结暂缓，避免发送偏少的统计`)
         if (!dryRun && (!scheduled || await summarySchedule.online())) {
           const detail = history.reason === 'start_not_reached' && history.earliestSec
@@ -550,6 +556,7 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
       const total = records.length
       const scopeText = dayCount === 1 ? '今日' : `近 ${dayCount} 天`
       if (total === 0) {
+        report('empty','这段时间没有可总结的消息，未发送报告。','failed')
         logger.info(`群 ${groupId} ${scopeText}没有可总结的消息，跳过`)
         return
       }
@@ -599,9 +606,11 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
         if (statsOnly) reply = statisticsOnlySummaryBody()
         else {
           const mainText = renderLines(records, dayCount)
+          report('references',`已读取 ${total} 条消息，正在整理相关聊天记录及图片`)
           const references = await deadline.wait(prepareSummaryReferences({ records: referenceRecords, onebot, visionLLM, imageCache, loadImage,
             logger, signal: deadline.signal, mainChars: mainText.length, maxImages: config.summaryReferenceMaxImages ?? 6,unrestricted:config.summaryUnrestricted }))
           const input = mainText + (references.text ? `\n\n${references.text}` : '')
+          report('model',`已读取 ${total} 条消息，正在生成和检查总结正文`)
           reply = await deadline.wait(generateCheckedSummary({llm, prompt, messages:[{ role: 'user', content: input }], records, stats, contentProfile, logger, signal: deadline.signal}))
         }
       } catch (error) {
@@ -613,15 +622,18 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
       } finally {
         if (pingTimer) clearTimeout(pingTimer)
       }
+      report('format','正在核对昵称和排版')
       if (!degraded) await deadline.wait(resolveSummaryNames({ text: reply, index: nameIndex, onebot, groupId, logger }))
       deadline.signal.throwIfAborted()
       deadline.close()
       const blocks = buildReportBlocks({ startKey, endKey, stats, modelText: reply, statsOnly: degraded, nameIndex })
       if (dryRun) {
+        report('preview','预览生成完成，未向群聊发送。','success')
         logger.info(`[dryRun] 群 ${groupId} ${scopeText}报告共 ${blocks.length} 块：\n\n${blocks.join('\n\n──── 分条 ────\n\n')}`)
         return
       }
       stage = 'send'
+      report('queued','正文已生成，等待发送到本群')
       const how = await queueSend(async () => {
         if (scheduled) {
           // 生成或发送排队期间可能掉线、跨日或已有报告；实际发送前核对。
@@ -631,12 +643,15 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
           }
           if (config.summaryFallbackEnabled && summarySchedule.hasDelivered(scheduleDay, groupId)) return
         }
+        report('sending','正在发送到本群')
         return sendReport(groupId, blocks)
       })
-      if (!how) return
+      if (!how) { report('skipped','发送前条件发生变化或已有报告，本次未发送。','failed'); return }
+      report('done',degraded?'统计版报告已发送；未生成热门话题正文。':'完整群总结已生成并发送到本群。','success')
       const cost = ((Date.now() - startedAt) / 1000).toFixed(0)
       logger.info(`群 ${groupId} ${scopeText}报告已发送（${degraded ? '统计版，' : ''}${blocks.length} 块，方式：${how}，耗时 ${cost}s）`)
     } catch (err) {
+      report(stage,`本次${stage==='send'?'发送':'生成'}失败：${String(err?.message||err).slice(0,300)}${ambiguousSummarySend(err)?'；发送结果不明，请先核对群内消息，勿直接重复生成。':''}`,'failed')
       logger.error(`群 ${groupId} 总结失败：${err?.stack || err}`)
       if (!dryRun && (!scheduled || (!ambiguousSummarySend(err) && await summarySchedule.online()))) {
         // 让群里知道总结失败，别让群友干等
@@ -707,6 +722,6 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
     }
   }
 
-  return { capture, runSummary, runAll, trigger, schedule, stop: summarySchedule.stop,
+  return { capture, runSummary, runAll, trigger, progress, schedule, stop: summarySchedule.stop,
     summaryGroups, previewStats, countCaptured, isRunning, checkScheduled: summarySchedule.runSlot }
 }
