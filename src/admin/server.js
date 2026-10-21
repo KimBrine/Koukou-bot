@@ -518,6 +518,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         hasKey: Boolean(config.deepseekApiKey),
       },
     }),
+    'GET /api/stickers/retag-status': async () => (retagJob || { running: false, done: 0, total: 0, errors: 0 }),
     'GET /api/metrics': async (query) => {
       const days = Math.max(1, Math.min(30, Number(query && query.days) || 7))
       return { days, items: metrics ? metrics.snapshot(days) : [] }
@@ -891,6 +892,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     return true
   }
 
+  let retagJob = null
   const actions = {
     async 'set-config-batch'(payload) {
       const patch = payload?.patch && typeof payload.patch === 'object' && !Array.isArray(payload.patch) ? payload.patch : {}
@@ -1320,6 +1322,32 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       }
       logger?.info?.('[控制台] 已导入记忆')
       return { ok: true, recentKeys: Object.keys(mem || {}).length, longKeys: Object.keys(long || {}).length }
+    },
+    async 'retag-stickers'(payload) {
+      if (!stickerTagLLM || typeof stickerTagLLM.describeImages !== 'function') throw new Error('打标模型未配置')
+      if (retagJob && retagJob.running) throw new Error('正在生成中，请稍候')
+      const only = Array.isArray(payload && payload.ids) ? payload.ids : null
+      const list = (stickers.list() || []).filter((x) => !only || only.includes(x.id))
+      retagJob = { running: true, done: 0, total: list.length, errors: 0, startedAt: Date.now() }
+      ;(async () => {
+        for (const item of list) {
+          try {
+            const dataUrl = typeof stickers.dataUrlOf === 'function' ? stickers.dataUrlOf(item) : null
+            if (!dataUrl) { retagJob.errors += 1; continue }
+            const raw = await stickerTagLLM.describeImages(
+              '你是表情包标注器。只输出 JSON：{"name":"简短名称","keywords":["关键词"],"scenes":["场景id"],"description":"一两句使用场景"}。画面不确定就返回空数组，不要编。',
+              '标注这张表情包', [{ type: 'image_url', image_url: { url: dataUrl } }], { maxTokens: 500 })
+            const m = String(raw || '').match(/\{[\s\S]*\}/)
+            const j = m ? JSON.parse(m[0]) : null
+            if (j && j.name) stickers.update(item.id, { name: j.name, keywords: (j.keywords || []).join(' '), scenes: Array.isArray(j.scenes) ? j.scenes : [], description: j.description || '' })
+          } catch { retagJob.errors += 1 }
+          retagJob.done += 1
+          await new Promise((r) => setTimeout(r, 900))
+        }
+        retagJob.running = false
+        logger?.info?.('[控制台] 表情包批量打标完成：' + retagJob.done + ' 张，失败 ' + retagJob.errors)
+      })().catch((err) => { retagJob.running = false; retagJob.error = err.message })
+      return { ok: true, total: list.length }
     },
     async 'backup'() {
       if (!backup) throw new Error('备份不可用')

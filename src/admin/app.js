@@ -8,6 +8,8 @@ const PAGES = [
   ['report','▤  群聊报告'],
   ['memory','▤  记忆浏览'],
   ['stickers','☺  表情包'],
+  ['metrics','▤  运行概览'],
+  ['selfcheck','✓  自检'],
   ['logs','≡  运行日志'],
 ]
 let page = location.hash.replace('#','') || 'overview'
@@ -228,7 +230,7 @@ function pageOverview(){
     '<div class="mut" style="margin-top:8px">当前管理员：' + (admins.length ? admins.map(esc).join('、') : '未配置（群总结等沿用公开范围；清除记忆须显式配置管理员）') + '</div>',
     '</section>'
   ].join('')
-    return quickCard + adminCard + versionCard() + metricsCard() + selfCheckCard() + `
+    return quickCard + adminCard + versionCard() + `
   <div class="hero"><span class="hero-status">${dot(b.online === true)} ${accountStatusText(b)}</span>
     <h1>机器人工作台</h1><div class="sub"><span id="updatedAt">${new Date().toLocaleTimeString('zh-CN',{hour12:false})}</span> 更新 · 集中管理运行状态与操作</div></div>
   <div class="grid g3">${cards.map(([k,v,s]) => `<div class="card"><h3>${k}</h3><div class="kpi">${v}</div><div class="note">${s||''}</div></div>`).join('')}</div>
@@ -785,6 +787,12 @@ function backupCard(){
     (rows ? '<table class="tbl"><thead><tr><th>备份</th><th>大小</th></tr></thead><tbody>' + rows + '</tbody></table>' : '<div class="mut">还没有备份</div>') +
     '<div class="flexbar"><button class="btn primary" id="doBackup">立即备份</button></div></section>'
 }
+function pageMetrics(){
+  return '<h1>运行概览</h1><div class="sub">最近 7 天的消息量与回复量，数据每 30 秒落盘一次。</div>' + metricsCard()
+}
+function pageSelfCheck(){
+  return '<h1>自检</h1><div class="sub">检查机器人能不能正常跑：Key、连接、目录、磁盘、备份与记忆文件。</div>' + selfCheckCard()
+}
 function pageStickers(){
   const items = stickerList || []
   const sceneList = stickerScenes || []
@@ -819,7 +827,7 @@ function pageStickers(){
       '</details></article>'
   }).join('')
   return [
-    '<h1>表情包</h1><p class="note">当前图库：' + esc(stickerPersona?.name || '默认人格') + ' · 图库、标签、使用记录和黑名单按人格分开；自动学习与配图跟随会话人格。切换后不会混用，原图库保留。</p><div class="sub">给每张图起名、打关键词和语境；机器人按语境挑图，模型也能用 [贴纸: 名称] 点名要。</div>',
+    '<h1>表情包</h1><div class="flexbar" style="margin:8px 0"><button class="btn" id="retagAll">一键生成标签</button><span class="mut" id="retagHint"></span></div><p class="note">当前图库：' + esc(stickerPersona?.name || '默认人格') + ' · 图库、标签、使用记录和黑名单按人格分开；自动学习与配图跟随会话人格。切换后不会混用，原图库保留。</p><div class="sub">给每张图起名、打关键词和语境；机器人按语境挑图，模型也能用 [贴纸: 名称] 点名要。</div>',
     '<section class="card"><h2>表情包设置</h2>',
     '<label style="display:flex;align-items:center;gap:8px;font-size:14px"><input type="checkbox" id="stkEnabled"' + (settings.enabled !== false ? ' checked' : '') + '> 启用表情包（关闭后模型不会发图）</label>',
     '<div class="note">表情包必须跟随已成功发送的普通聊天文字回复。用户明确要求发表情包时直接尝试发送，不抽概率；普通聊天的自动配图（含模型主动选图）遵守下方概率；语境模式未选中合适图片时不随机补图。仍遵守开关、范围、黑名单及冷却；群总结、指令回执和 /Q 解题不自动配图。</div>',
@@ -878,6 +886,8 @@ function render(){
   else if (page === 'report') html = pageReport()
   else if (page === 'memory') html = pageMemory()
   else if (page === 'stickers') html = pageStickers()
+  else if (page === 'metrics') html = pageMetrics()
+  else if (page === 'selfcheck') html = pageSelfCheck()
   else if (page === 'logs') html = pageLogs()
   else html = pageMemory()
   main.innerHTML = html
@@ -958,6 +968,22 @@ async function bind(){
       await load()
     } catch(e){ toast('导入失败：' + e.message, true) }
     finally { memoryImport.value = '' }
+  }
+  const retagAll = document.getElementById('retagAll')
+  if (retagAll) retagAll.onclick = async function(){
+    const hint = document.getElementById('retagHint')
+    retagAll.disabled = true
+    try {
+      const r = await api('/api/action/retag-stickers', {})
+      if (hint) hint.textContent = '开始处理 ' + r.total + ' 张…'
+      const timer = setInterval(async function(){
+        try {
+          const st = await api('/api/stickers/retag-status')
+          if (hint) hint.textContent = st.running ? ('处理中 ' + st.done + '/' + st.total + '，失败 ' + st.errors) : ('完成 ' + st.done + '/' + st.total + '，失败 ' + st.errors)
+          if (!st.running) { clearInterval(timer); retagAll.disabled = false; await load() }
+        } catch(e) { clearInterval(timer); retagAll.disabled = false }
+      }, 2000)
+    } catch(e){ toast('启动失败：' + e.message, true); retagAll.disabled = false }
   }
   const doBackup = document.getElementById('doBackup')
   if (doBackup) doBackup.onclick = async function(){
