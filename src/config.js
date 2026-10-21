@@ -163,6 +163,10 @@ export function loadConfig() {
     visionCustomModel: String(env.VISION_CUSTOM_MODEL ?? '').trim(),
     // provider=deepseek 时读图用哪个模型（deepseek-v4-pro **不能读图**，别填它）
     visionModel: String(env.VISION_MODEL ?? 'deepseek-flash').trim(),
+    // 识图思考强度：none 最稳（deepseek-flash 思考会吃光 token 预算）
+    visionReasoning: String(env.VISION_REASONING ?? 'none').trim().toLowerCase(),
+    // 单次识图的 token 预算
+    visionMaxTokens: Math.max(64, Math.min(4000, Math.floor(num('VISION_MAX_TOKENS', 300)))),
     dashscopeApiKey: String(env.DASHSCOPE_API_KEY ?? '').trim(),
     dashscopeBaseUrl: String(env.DASHSCOPE_BASE_URL ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1').replace(/\/+$/, ''),
     dashscopeModel: String(env.DASHSCOPE_MODEL ?? 'qwen-vl-plus'),
@@ -280,6 +284,8 @@ export function loadConfig() {
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean),
+    // 私聊白名单：只有这些 QQ（+管理员 +控制台里加过的私聊）才会收到回复
+    privateWhitelist: new Set(String(env.PRIVATE_WHITELIST ?? '').split(/[,，\s]+/).filter((x) => /^\d{1,15}$/.test(x)).map(Number)),
     idCheckOperators: String(env.ID_CHECK_OPERATORS ?? '')
       .split(',')
       .map((s) => s.trim())

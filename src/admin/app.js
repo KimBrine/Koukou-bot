@@ -9,7 +9,6 @@ const PAGES = [
   ['memory','▤  记忆浏览'],
   ['stickers','☺  表情包'],
   ['logs','≡  运行日志'],
-  ['data','▦  数据与记忆'],
 ]
 let page = location.hash.replace('#','') || 'overview'
 if (!PAGES.some(p => p[0] === page)) page = 'overview'
@@ -273,6 +272,7 @@ function chatRow(c){
       <span class="mut" style="font-size:12px">今日 ${c.msgToday} 条 · 记忆 ${c.memory} 条${c.replies?(' · 已回 '+c.replies):''}</span>
       ${c.type === 'group' ? `<button class="btn sm ${c.inWhitelist ? 'danger' : ''}" data-whitelist="${c.inWhitelist ? 'remove' : 'add'}" data-group="${c.id}">${c.inWhitelist ? '移出白名单' : '加入白名单'}</button>` : ''}
       ${c.type === 'group' ? summaryControls(c.id) : ''}
+      <button class="btn danger sm" data-delchat="${c.key}" title="删除会话（记忆、设置、白名单）">删除</button>
       <span class="mut">▾</span>
     </div>
     <div class="body">
@@ -340,7 +340,7 @@ function pageChats(){
       <span class="badge">${chats.length} 个会话</span>
     </div>
     <div class="toolgroup">
-      <select id="newchatType" aria-label="会话类型" style="max-width:120px"><option value="g">群聊</option><option value="p">私聊</option></select>
+      <select id="newchatType" aria-label="会话类型" style="max-width:120px"><option value="g">普通群聊</option><option value="w">白名单群</option><option value="p">私聊（加入白名单）</option></select>
       <select id="newchatPick" aria-label="选择联系人或群" style="max-width:260px"></select>
       <input id="newchat" type="text" inputmode="numeric" placeholder="或直接输入号码" style="max-width:160px">
       <button class="btn" id="addchat">添加普通会话</button><button class="btn" id="cleanGroups" title="把不在白名单里的群从会话列表里删掉（记忆和设置一起清）">清理非白名单群</button><span class="note">需要主动搭话的群，请使用上方「添加 / 导入白名单群」。</span>
@@ -532,12 +532,13 @@ function pageHumanize(){
   const greetings=state?.config?.quietGreetings
   return `<h1>回复行为</h1><div class="sub">这里修改“沿用全局”的默认值；会话单独设置优先，其次是按群独立概率，最后才是全局概率。</div>
   <div class="flexbar"><a class="btn" href="#chats">管理白名单群聊 →</a><span class="note">概率填写百分比，例如 20%，不需要输入配置格式。</span></div>
-  <div class="card">${configForm(['PROACTIVE_RATE','PROACTIVE_RATE_PER_GROUP','PROACTIVE_COOLDOWN_MS','EMOJI_KEEP_RATE','HUMAN_DELAY_MIN_MS','HUMAN_DELAY_MAX_MS','REPLY_LENGTH_MATCH','REPLY_MIN_BUDGET','REPLY_MAX_LINES','REPLY_LINE_MAX_CHARS','LINE_GAP_MIN_MS','LINE_GAP_MAX_MS','RATE_LIMIT_PER_HOUR','RATE_LIMIT_MIN_GAP_MS','QUIET_HOURS','QUIET_GREETINGS_ENABLED','HISTORY_LIMIT','CONTEXT_REMEMBER_ALL','POKE_REPLY_ENABLED','AUTO_PLUS_ONE_ENABLED'],'修改全局概率不会覆盖已经单独设置的群；限流相关参数需重启生效。')}</div><div class="note">固定语库早晚安：${greetings?.enabled?'已启用':'未启用'}；语库就绪 ${greetings?.groups?.filter(g=>g.ready).length||0}/${greetings?.groups?.length||0} 群。检查时段、选句和发送均不调用 AI。<a href="#persona">前往人格页面编辑或导出语库 →</a> <button class="btn sm" id="catchUpMorning">补发本轮未发的早安</button></div>`
+  <div class="card">${configForm(['PROACTIVE_RATE','PROACTIVE_RATE_PER_GROUP','PROACTIVE_COOLDOWN_MS','EMOJI_KEEP_RATE','HUMAN_DELAY_MIN_MS','HUMAN_DELAY_MAX_MS','REPLY_LENGTH_MATCH','REPLY_MIN_BUDGET','REPLY_MAX_LINES','REPLY_LINE_MAX_CHARS','LINE_GAP_MIN_MS','LINE_GAP_MAX_MS','RATE_LIMIT_PER_HOUR','RATE_LIMIT_MIN_GAP_MS','QUIET_HOURS','QUIET_GREETINGS_ENABLED','HISTORY_LIMIT','CONTEXT_REMEMBER_ALL','POKE_REPLY_ENABLED','AUTO_PLUS_ONE_ENABLED','PRIVATE_WHITELIST'],'修改全局概率不会覆盖已经单独设置的群；限流相关参数需重启生效。')}</div><div class="note">固定语库早晚安：${greetings?.enabled?'已启用':'未启用'}；语库就绪 ${greetings?.groups?.filter(g=>g.ready).length||0}/${greetings?.groups?.length||0} 群。检查时段、选句和发送均不调用 AI。<a href="#persona">前往人格页面编辑或导出语库 →</a> <button class="btn sm" id="catchUpMorning">补发本轮未发的早安</button></div>`
 }
 function webSearchCard(){
   const info = webSearchInfo || {}
   const presets = ['deepseek','qwen-plus','qwen-max','qwen-turbo','qwen3-max','qwen-flash','bing']
-  const cur = info.model || 'qwen-plus'
+  const providerName = { dashscope: '通义千问', deepseek: 'DeepSeek 搜索', bing: '必应网页', baidu: '百度千帆' }
+  const cur = info.provider === 'deepseek' ? 'deepseek' : (info.provider === 'bing' ? 'bing' : (info.model || 'qwen-plus'))
   if (presets.indexOf(cur) < 0) presets.unshift(cur)
   const label = { deepseek: 'DeepSeek 搜索（自带引擎）', bing: '必应网页（免密钥兜底）' }
   const opts = presets.map(function(m){ return '<option value="' + esc(m) + '"' + (m === cur ? ' selected' : '') + '>' + esc(label[m] || m) + '</option>' }).join('')
@@ -546,7 +547,7 @@ function webSearchCard(){
     + '<label>搜索渠道<select id="wsProvider">'+[['auto','自动'],['deepseek','DeepSeek'],['dashscope','通义千问'],['baidu','百度千帆'],['bing','必应网页'],['off','关闭']].map(x=>'<option value="'+x[0]+'"'+((info.configuredProvider||'auto')===x[0]?' selected':'')+'>'+x[1]+'</option>').join('')+'</select></label>'
     + '<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:10px 0"><input type="checkbox" id="wsEnabled"' + (info.enabled ? ' checked' : '') + '> 允许联网搜索</label>'
     + '<div class="frow"><label>搜索模型</label><div><select id="wsModel">' + opts + '</select>'
-    + '<div class="mut" style="font-size:12px;margin-top:3px">当前实际：' + esc(info.provider || '—') + ' · ' + esc(cur) + '</div></div></div>'
+    + '<div class="mut" style="font-size:12px;margin-top:3px">当前实际：' + esc(providerName[info.provider] || info.provider || '—') + ' · ' + esc(cur) + '</div></div></div>'
     + '<div class="flexbar"><button class="btn primary" id="wsSave">保存（即时生效）</button><span class="mut" id="wsHint"></span></div></section>'
 }
 function pageApi(){
@@ -577,23 +578,6 @@ function pageLogs(){
   </div>
   <div class="logbox mono" id="logBot" style="max-height:420px"></div>`
 }
-function pageData(){
-  return `<h1>数据与记忆</h1><div class="sub">查看会话记忆、长期记忆摘要和原始日报文件。旧消息归档后保留原文，回复时按当前话题检索相关片段；摘要优先保留约定、偏好、未完事项和更正。人格切换会开启独立记忆分区。</div>
-  <h2>会话记忆</h2>
-  <div class="card"><div class="row">
-    <select id="memKey">${chats.map(c=>`<option value="${c.key}">${esc(c.name)}（${c.key}）</option>`).join('')}</select>
-    <button class="btn" id="loadMem">查看</button>
-  </div><div class="mono" id="memBox" style="max-height:420px;overflow:auto;margin-top:10px">选择会话后点查看</div></div>
-  <h2>长期记忆摘要</h2>
-  <div class="card"><div class="row">
-    <select id="lmKey">${chats.map(c=>`<option value="${c.key}">${esc(c.name)}（${c.key}）</option>`).join('')}</select>
-    <input id="lmQuery" placeholder="可选：输入话题，找回相关旧原话" aria-label="长期记忆检索话题">
-    <button class="btn" id="loadLm">查看 / 检索</button>
-  </div><div class="mono" id="lmBox" style="max-height:240px;overflow:auto;margin-top:10px">—</div></div>
-  <h2>日报原始文件</h2>
-  <div class="card" id="dailyFiles"></div>`
-}
-
 function pageCommands(){ return CommandCenterUI.render({custom:customCommands,builtins:commandBuiltins,poke:pokeDiagnostics,groups:joinedGroups}) }
 // ── 渲染 ───────────────────────────────────────────────
 function pageMemory(){
@@ -621,6 +605,14 @@ function pageMemory(){
       '<button class="btn sm" data-pending-del="' + idx + '">删</button>' +
       '</div><div>' + esc(p.text) + '</div></div>'
   }).join('') : ''
+  const extraCards = [
+    '<section class="card"><h2>长期记忆检索</h2><div class="note">按话题找回旧原话；也可以直接看某个会话的长期摘要。</div>' +
+      '<div class="row"><select id="lmKey">' + chats.map(function(c){ return '<option value="' + esc(c.key) + '">' + esc(c.name) + '（' + esc(c.key) + '）</option>' }).join('') + '</select>' +
+      '<input id="lmQuery" placeholder="可选：输入话题，找回相关旧原话" aria-label="长期记忆检索话题">' +
+      '<button class="btn" id="loadLm">查看 / 检索</button></div>' +
+      '<div class="mono" id="lmBox" style="max-height:240px;overflow:auto;margin-top:10px">—</div></section>',
+    '<section class="card"><h2>日报原始文件</h2><div class="note">每天按群保存的原始消息，用于追溯。</div><div id="dailyFiles"></div></section>'
+  ].join('')
   return [
     '<h1>记忆浏览</h1><div class="sub">当前人格 <b>' + esc(state?.config?.activePersona || '默认') + '</b>。近期、长期、待整理分开显示，都可以单条修改或删除。</div>',
     '<section class="card"><h2>会话列表 <span class="pill">' + memoryOverview.length + ' 个</span></h2>',
@@ -642,7 +634,7 @@ function pageMemory(){
       '<div style="max-height:360px;overflow:auto;margin-top:8px">' + (pendingRows || '<div class="mut">没有待整理的原文。</div>') + '</div>',
       '</section>'
     ].join('') : '<section class="card"><div class="mut">点上面「查看」，会同时显示近期、长期和待整理三块内容。</div></section>'
-  ].join('')
+  ].join('') + extraCards
 }
 function configFlag(key){
   const s = state?.config
@@ -709,6 +701,8 @@ function visionCard(){
     row('识图模型', '<div class="row" style="display:flex;gap:8px"><select id="vcModel" style="flex:1">' +
       '<option value="' + esc(currentModel) + '"' + (currentModel ? ' selected' : '') + '>' + esc(currentModel || '（先点自动检测）') + '</option>' +
       '</select><button class="btn" type="button" id="vcDetect">自动检测模型</button></div><div class="mut" id="vcDetectHint" style="font-size:12px;margin-top:4px">' + (isCustom ? '自定义：点检测拿型号列表' : '点「自动检测模型」拿型号列表') + '</div>'),
+    row('识图思考强度', '<select id="vcReasoning">' + [['none','关闭（默认）'],['low','低'],['high','高'],['max','最高']].map(function(x){ return '<option value="' + x[0] + '"' + (x[0] === (s.visionReasoning || 'none') ? ' selected' : '') + '>' + x[1] + '</option>' }).join('') + '</select><div class="mut">DeepSeek Flash 固定使用 max，识图预算至少2048（仍受总预算限制）；其他模型使用独立设置。</div>'),
+    row('识图 token 预算', '<input id="vcTokens" type="number" min="64" max="4000" value="' + (s.visionMaxTokens || 300) + '" style="width:120px"><div class="mut" style="font-size:12px;margin-top:3px">越大越能读复杂图，也越慢；默认 300</div>'),
     row('表情包打标模型', '<select id="vcTag">' +
       '<option value="auto"' + sel('auto', tagProvider) + '>自动（有通义用通义，否则 DeepSeek）</option>' +
       '<option value="deepseek"' + sel('deepseek', tagProvider) + '>DeepSeek</option>' +
@@ -814,11 +808,11 @@ function render(){
   else if (page === 'memory') html = pageMemory()
   else if (page === 'stickers') html = pageStickers()
   else if (page === 'logs') html = pageLogs()
-  else html = pageData()
+  else html = pageMemory()
   main.innerHTML = html
   bind().catch(e => toast('界面初始化失败：' + e.message, true))
   if (page === 'logs') refreshLogs()
-  if (page === 'report' || page === 'data') loadDaily()
+  if (page === 'report' || page === 'memory') loadDaily()
 }
 
 async function bind(){
@@ -1005,7 +999,7 @@ async function bind(){
     const model = vcModel.value.trim()
     vcSave.disabled = true
     try {
-      const patch={VISION_PROVIDER:provider,STICKER_TAG_PROVIDER:document.getElementById('vcTag').value}
+      const patch={VISION_PROVIDER:provider,STICKER_TAG_PROVIDER:document.getElementById('vcTag').value,VISION_REASONING:(document.getElementById('vcReasoning')||{}).value||'none',VISION_MAX_TOKENS:String((document.getElementById('vcTokens')||{}).value||300)}
       if (String(provider).startsWith('custom:')) {
         const id = String(provider).slice(7)
         if (model) await api('/api/action/vision-provider-update', { id: id, model: model })
@@ -1314,9 +1308,26 @@ async function bind(){
   if (add) add.onclick = async () => {
     const v = document.getElementById('newchat').value.trim()
     if (!/^\d{5,12}$/.test(v)) { toast('请输入 5～12 位数字 ID', true); return }
-    const key = document.getElementById('newchatType').value + v
-    try { await api('/api/action/set-chat', { key, patch: {} }); openChats.add(key); await load(); toast('已添加会话，可展开设置') }
-    catch(e){ toast('添加失败：' + e.message, true) }
+    const type = document.getElementById('newchatType').value
+    const key = type + v
+    try {
+      if (type === 'w') {
+        await api('/api/action/update-whitelist', { operation: 'add', groupIds: [Number(v)] })
+        await api('/api/action/set-chat', { key: 'g' + v, patch: {} })
+        toast('已加入白名单群，可主动搭话')
+      } else if (type === 'p') {
+        await api('/api/action/set-chat', { key: 'p' + v, patch: {} })
+        const current = (state && state.config && state.config.privateWhitelist) || []
+        if (!current.map(String).includes(String(v))) {
+          await api('/api/action/set-config', { key: 'PRIVATE_WHITELIST', value: current.concat([v]).join(',') })
+        }
+        toast('已添加私聊并加入白名单')
+      } else {
+        await api('/api/action/set-chat', { key: 'g' + v, patch: {} })
+        toast('已添加群会话，可展开设置')
+      }
+      openChats.add(key); await load()
+    } catch(e){ toast('添加失败：' + e.message, true) }
   }
   const search = document.getElementById('chatSearch')
   if (search) search.oninput = () => {
@@ -1329,6 +1340,18 @@ async function bind(){
     openChats.add(b.dataset.openChat)
     const box = document.querySelector(`.chat[data-key="${b.dataset.openChat}"]`)
     if (box) { box.classList.add('open'); box.scrollIntoView({behavior:'smooth', block:'start'}) }
+  })
+  document.querySelectorAll('[data-delchat]').forEach(b => b.onclick = async (ev) => {
+    ev.stopPropagation()
+    const key = b.dataset.delchat
+    const isPrivate = String(key).startsWith('p')
+    if (!await ask('删除这个会话？', isPrivate ? '会删除它的记忆和会话设置，并移出私聊白名单（之后不再回复）。记忆有备份。' : '会删除它的记忆和会话设置，并移出白名单。记忆有备份。', '删除')) return
+    try {
+      await api('/api/action/delete-chat', { key })
+      openChats.delete(key)
+      await load()
+      toast('已删除会话')
+    } catch(e) { toast('删除失败：' + e.message, true) }
   })
   document.querySelectorAll('[data-whitelist]').forEach(b => b.onclick = async () => {
     const id = b.dataset.group, operation = b.dataset.whitelist

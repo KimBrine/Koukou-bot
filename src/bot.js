@@ -82,6 +82,12 @@ export function decideReply({ isPrivate, atBot, replyToBot = false, groupId, con
 
   if (isPrivate) {
     if (s && s.atReplyEnabled === false) return { reply: false, reason: '本会话已关闭回复' }
+    // 只有「私聊白名单 / 管理员 / 控制台里加过的私聊」才回；陌生人私聊一律不回。
+    const uid = Number(String(chatKey || '').replace(/^p/, ''))
+    const listed = config.privateWhitelist instanceof Set && config.privateWhitelist.has(uid)
+    const admin = hasAdmins(config.adminUsers) && isBotAdmin(uid, config.adminUsers)
+    const configured = Boolean(chatSettings && typeof chatSettings.raw === 'function' && chatSettings.raw(chatKey))
+    if (config.privateWhitelist instanceof Set && !listed && !admin && !configured) return { reply: false, reason: '私聊不在白名单' }
     return { reply: true, reason: '私聊消息' }
   }
 
@@ -316,6 +322,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
   const summaryCmdRe = SUMMARY_CMD_RE
   let repeatSession = onebot.messageTimeline?.session
   const lastReplayNote = new Map()
+  const privateSkipNotes = new Map()
   const quotedMessages = createQuotedMessageResolver({ onebot, logger })
   const groupMute = createGroupMute({onebot,commandCenter,llm,logger,config,canExecute:evt=>replyStillCurrent(onebot,evt)})
   const selfActions = createSelfActions({onebot,commandCenter,llm,logger,config,canExecute:evt=>replyStillCurrent(onebot,evt)})
@@ -1056,6 +1063,13 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         memory.push(key, 'user', content, userMeta)
       }
 
+      if (!decision.reply && isPrivate) {
+        const lastSkipNote = privateSkipNotes.get(key) || 0
+        if (Date.now() - lastSkipNote > 60000) {
+          privateSkipNotes.set(key, Date.now())
+          logger.info('[私聊跳过] ' + key + '：' + decision.reason)
+        }
+      }
       if (!decision.reply) {
         runtimeStats?.noteSkip?.()
         logger.debug(`忽略消息（${decision.reason}）id=${evt.message_id}`)

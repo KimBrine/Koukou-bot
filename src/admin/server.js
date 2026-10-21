@@ -115,6 +115,8 @@ const EDITABLE = [
   { key: 'STICKER_PICK_MODE', label: '表情包选图方式', hint: 'context / model / random', live: true, type: 'text' },
   { key: 'STICKER_COOLDOWN_SECONDS', label: '同一会话配图间隔（秒）', hint: '0不额外限制', live: true, type: 'number' },
   { key: 'DEEPSEEK_API_KEY', label: '模型 Key', live: true, type: 'secret' },
+  { key: 'VISION_REASONING', label: '识图思考强度', hint: 'none 最稳（默认）；low/high 更细但更慢，也更容易吃光 token 预算', live: true, type: 'text' },
+  { key: 'VISION_MAX_TOKENS', label: '识图 token 预算', hint: '64～4000，默认 300；复杂图片可调高', live: true, type: 'number' },
   { key: 'VISION_PROVIDER', label: '识图服务商', hint: '当前选用哪家服务识别图片', live: true, type: 'text' },
   { key: 'VISION_MODEL', label: 'DeepSeek 识图模型', hint: '识图服务商为 DeepSeek 时使用', live: true, type: 'text' },
   { key: 'STICKER_TAG_PROVIDER', label: '表情包打标模型', hint: 'auto = 有通义用通义，否则 DeepSeek，再否则自定义；也可指定 deepseek / dashscope / custom', live: true, type: 'text' },
@@ -127,6 +129,7 @@ const EDITABLE = [
   { key: 'WEB_SEARCH_PROVIDER', label: '联网搜索方式', hint: 'auto = 千帆 > DeepSeek > 通义 > 必应；独立配置改完需重启，建议使用上方联网搜索卡片即时保存', live: false, type: 'text' },
   { key: 'WEB_SEARCH_MODEL', label: '联网搜索模型', hint: '通义联网搜索用的模型，默认 qwen-plus；改完需重启', live: false, type: 'text' },
   { key: 'TEMPERATURE', label: '采样温度', hint: '越高越随性', live: false, type: 'number' },
+  { key: 'PRIVATE_WHITELIST', label: '私聊白名单', hint: '允许私聊的 QQ 号，逗号分隔；留空 = 只回管理员和控制台里添加过的私聊', live: true, type: 'text', wide: true },
   { key: 'MAX_TOKENS', label: '单次回复 token 上限', hint: '256～200000，即时生效；思考强度开启时建议 ≥2000，否则推理会吃掉输出预算导致回复被截断', live: true, type: 'number' },
   { key: 'LOG_LEVEL', label: '日志级别', hint: 'debug/info/warn/error', live: false, type: 'text' },
 ]
@@ -456,6 +459,9 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         replyTimingEnabled: Boolean(config.replyTimingEnabled),
         replyMinBudget: config.replyMinBudget,
         visionProvider: config.visionProvider,
+        visionReasoning: config.visionProvider==='deepseek'&&/^deepseek.*flash/i.test(config.visionModel||'deepseek-flash')?'max':config.visionReasoning || 'none',
+        visionMaxTokens: Math.min(config.maxTokens,config.visionProvider==='deepseek'&&/^deepseek.*flash/i.test(config.visionModel||'deepseek-flash')?Math.max(2048,config.visionMaxTokens||300):config.visionMaxTokens || 300),
+        privateWhitelist: [...(config.privateWhitelist || [])],
         visionCustomModel: config.visionCustomModel,
         visionModelDeepseek: config.visionModel || '',
         visionCustomReady: Boolean(config.visionCustomApiKey && config.visionCustomBaseUrl && config.visionCustomModel),
@@ -845,6 +851,17 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       case 'DAILY_PING_CHAIN_WINDOW_MS':
         config.dailyPingChainWindowMs = Math.max(10000, num(value, config.dailyPingChainWindowMs))
         break
+      case 'PRIVATE_WHITELIST':
+        config.privateWhitelist = new Set(String(value || '').split(/[,，\s]+/).filter((x) => /^\d{1,15}$/.test(x)).map(Number))
+        break
+      case 'VISION_REASONING':
+        config.visionReasoning = ['none', 'low', 'high','max'].includes(String(value || '').toLowerCase()) ? String(value).toLowerCase() : 'none'
+        try { switchVision?.() } catch {}
+        break
+      case 'VISION_MAX_TOKENS':
+        config.visionMaxTokens = Math.max(64, Math.min(4000, Math.floor(num(value, config.visionMaxTokens))))
+        try { switchVision?.() } catch {}
+        break
       case 'MAX_TOKENS':
         config.maxTokens = Math.max(256, Math.min(200000, Math.floor(num(value, config.maxTokens))))
         break
@@ -1220,6 +1237,40 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       logger?.info?.(`[控制台] 丢弃 ${key} 第 ${index + 1} 条待整理原文`)
       return { ok: true }
     },
+    async 'delete-chat'(payload) {
+      const key = String(payload?.key || '').trim()
+      if (!/^[gp]\d{1,15}$/.test(key)||!Number.isSafeInteger(Number(key.slice(1)))||Number(key.slice(1))<=0) throw new Error('会话标识无效')
+      let dailyBackup=null
+      if(key.startsWith('g')){
+        const source=path.resolve(dailyDir,key.slice(1))
+        if(!source.startsWith(path.resolve(dailyDir)+path.sep))throw new Error('会话目录无效')
+        if(existsSync(source)){
+          dailyBackup=path.join(config.dataDir,'config-backups',`deleted-chat-${key}-${Date.now()}-${randomUUID()}`,'daily')
+          cpSync(source,dailyBackup,{recursive:true,errorOnExist:true,force:false})
+        }
+      }
+      const result = resetConversationMemory({ config, memory, longMemory, targetWatch, key, reason: '删除会话' })
+      try { chatSettings.remove(key) } catch {}
+      let whitelistRemoved = false
+      if (key.startsWith('p')) {
+        const uid = Number(key.slice(1))
+        if (config.privateWhitelist && config.privateWhitelist.has(uid)) {
+          config.privateWhitelist.delete(uid)
+          writeEnvFile(envFile, { PRIVATE_WHITELIST: [...config.privateWhitelist].join(',') }, { atomic: true })
+          whitelistRemoved = true
+        }
+      } else {
+        const gid = Number(key.slice(1))
+        if (config.whitelistGroups && config.whitelistGroups.has(gid)) {
+          config.whitelistGroups.delete(gid)
+          writeEnvFile(envFile, { WHITELIST_GROUPS: [...config.whitelistGroups].join(',') }, { atomic: true })
+          whitelistRemoved = true
+        }
+        try { rmSync(path.join(dailyDir, String(gid)), { recursive: true, force: true }) } catch {}
+      }
+      logger?.info?.(`[控制台] 已删除会话 ${key}${whitelistRemoved ? '（并从白名单移除）' : ''}`)
+      return { ok: true, key, whitelistRemoved, dailyBackup, ...result }
+    },
     async 'cleanup-groups'() {
       const mem = readJsonSafe(config.memoryFile, {})
       const keys = new Set([...Object.keys(mem),...Object.keys(memory?.snapshot?.()?.chats||{}),...Object.keys(longMemory?.snapshot?.()?.chats||{}), ...chatSettings.keys(),...(existsSync(dailyDir)?readdirSync(dailyDir).filter(x=>/^\d+$/.test(x)).map(x=>'g'+x):[])])
@@ -1247,7 +1298,8 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     async 'set-websearch'(payload) {
       const enabled = payload?.enabled !== false
       let model = String(payload?.model || config.webSearchModel || 'qwen-plus').trim()
-      const provider=String(payload?.provider || (model==='deepseek'||model==='bing'?model:config.webSearchProvider||'auto')).toLowerCase()
+      const requestedProvider = String(payload?.provider || '').toLowerCase()
+      const provider = requestedProvider || (model === 'deepseek' || model === 'bing' ? model : 'dashscope')
       if(model==='deepseek'||model==='bing')model='qwen-plus'
       if(!['auto','deepseek','dashscope','baidu','bing','off'].includes(provider))throw Error('联网搜索服务商无效')
       if (model && !/^[A-Za-z0-9._:-]{1,64}$/.test(model)) throw new Error('模型名不合法')
