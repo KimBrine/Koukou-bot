@@ -10,6 +10,7 @@ const PAGES = [
   ['stickers','☺  表情包'],
   ['metrics','▤  运行概览'],
   ['selfcheck','✓  自检'],
+  ['errors','⚠  错误'],
   ['logs','≡  运行日志'],
 ]
 let page = location.hash.replace('#','') || 'overview'
@@ -67,6 +68,8 @@ let stickerCardOpen = new Set()
 let apiCardsOpen = { model: false, vision: false, search: false }
 let backupInfo = { items: [], root: '' }
 let selfCheckInfo = null
+let errorInfo = []
+let tasksInfo = null
 let metricsInfo = []
 let metricsRange = 7
 let stickerFold = { rules: false, learn: false, manual: false, blacklist: false, similar: false, library: true }
@@ -469,6 +472,7 @@ function pagePersona(){
     <button class="btn" id="createPersona">新建</button>
     <button class="btn danger" id="delPersona">删除当前选中</button>
   </div>
+  <div class="flexbar"><button class="btn" id="personaCheck">一致性检查</button><span id="personaCheckResult" class="mut"></span></div>
   <div class="card">
     <h3>人格 prompt（保存到人格库，点击“切换使用”后生效）</h3>
     <textarea id="personaText" style="min-height:340px;font-size:13.5px">${esc(cur ? (personaCache[cur.name] ?? '') : '')}</textarea>
@@ -612,7 +616,7 @@ function pageLogs(){
   </div>
   <div class="logbox mono" id="logBot" style="max-height:420px"></div>`
 }
-function pageCommands(){ return CommandCenterUI.render({custom:customCommands,builtins:commandBuiltins,poke:pokeDiagnostics,groups:joinedGroups}) }
+function pageCommands(){ return CommandCenterUI.render({custom:customCommands,builtins:commandBuiltins,poke:pokeDiagnostics,groups:joinedGroups}) + commandTestCard() }
 // ── 渲染 ───────────────────────────────────────────────
 function pageMemory(){
   const nameOf = function(key){
@@ -644,7 +648,7 @@ function pageMemory(){
   const recentRows = d ? (d.recent||[]).map(function(m, idx){
     const day = m.time ? new Date(m.time).toLocaleDateString('zh-CN') : '时间未知'
     const dayHeader = day !== lastDay ? (lastDay = day, '<div class="day-sep">' + esc(day) + '</div>') : ''
-    return dayHeader + '<div style="margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--line,#eee)">' +
+    return dayHeader + '<div data-mem-row style="margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--line,#eee)">' +
       '<div style="display:flex;gap:8px;align-items:center;margin-bottom:4px">' +
       '<span class="badge">' + (m.role === 'assistant' ? '机器人' : '对方') + '</span>' +
       '<span class="mut" style="font-size:12px">' + esc(fmtTime(m.time)) + '</span>' +
@@ -653,7 +657,7 @@ function pageMemory(){
       '</div><div>' + esc(m.content) + '</div></div>'
   }).join('') : ''
   const pendingRows = d ? (d.pending||[]).map(function(p, idx){
-    return dayHeader + '<div style="margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--line,#eee)">' +
+    return dayHeader + '<div data-mem-row style="margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--line,#eee)">' +
       '<div style="display:flex;gap:8px;align-items:center;margin-bottom:4px">' +
       '<span class="badge">' + esc(p.name || p.userId || '群友') + '</span>' +
       '<span class="mut" style="font-size:12px">' + esc(fmtTime(p.time)) + '</span>' +
@@ -678,7 +682,8 @@ function pageMemory(){
     d ? [
       '<section class="card"><h2>近期记忆 <span class="pill">' + (d.recent||[]).length + ' 条</span> <span class="mut" style="font-size:12px">' + esc(nameOf(key)) + '（' + esc(key) + '）</span></h2>',
       '<div class="note">每条都能改正文或单条删除；删除只影响这一条。</div>',
-      '<div style="max-height:360px;overflow:auto;margin-top:8px">' + (recentRows || '<div class="mut">这个会话没有近期记忆。</div>') + '</div>',
+      '<input id="memSearch" placeholder="搜索这段记忆的内容" style="width:100%;margin-top:8px">' +
+      '<div id="memList" style="max-height:360px;overflow:auto;margin-top:8px">' + (recentRows || '<div class="mut">这个会话没有近期记忆。</div>') + '</div>',
       '</section>',
       '<section class="card"><h2>长期记忆 <span class="pill">' + (d.longTerm||'').length + ' 字</span>' + (d.updatedAt ? ' <span class="mut" style="font-size:12px">更新于 ' + esc(fmtTime(d.updatedAt)) + '</span>' : '') + '</h2>',
       '<div class="note">' + (d.paused ? '自动整理已暂停，可编辑。保存后保持暂停，新原文继续存档；恢复后才基于新摘要整理。' : (d.running ? '后台正在整理。请先暂停再编辑，旧任务会取消，迟到结果不会回写。' : '请先暂停自动整理再编辑。')) + '</div>',
@@ -914,8 +919,33 @@ function pageMetrics(){
       { name: '平均耗时', color: '#4aa3a3', get: function(d){ return d.llmCount ? d.llmMs / d.llmCount / 1000 : 0 }, fill: true }
     ], { mode: 'line' }))
 }
+function pageErrors(){
+  const items = errorInfo || []
+  const rows = items.map(function(e){
+    return '<div style="padding:10px 0;border-bottom:1px dashed rgba(148,163,184,.2)"><div class="mut" style="font-size:12px">' + esc(new Date(e.time).toLocaleString()) + ' · ' + esc(e.scope || 'bot') + '</div><pre class="mono" style="white-space:pre-wrap;word-break:break-all;margin:6px 0;font-size:12px">' + esc(e.message || '') + '</pre></div>'
+  }).join('')
+  return '<h1>错误中心</h1><div class="sub">最近 ' + items.length + ' 条错误；只记录，不影响运行。</div>' +
+    '<div class="flexbar"><button class="btn" id="errorsRefresh">刷新</button><button class="btn" id="errorsClear">清空</button></div>' +
+    (rows || '<div class="card mut">还没有错误记录</div>')
+}
+function tasksCard(){
+  const t = tasksInfo
+  if (!t) return ''
+  const fmt = function(ts){ return ts ? new Date(ts).toLocaleString() : '还没有' }
+  return '<details class="card"><summary><b class="api-card-title">定时任务</b> <span class="api-card-meta">不占地方</span></summary><div class="api-card-body">' +
+    '<div class="frow"><label>自动备份</label><div class="mut">每 6 小时检查，最近：' + esc(fmt(t.backup && t.backup.last)) + '</div></div>' +
+    '<div class="frow"><label>群总结</label><div class="mut">' + (t.summary && t.summary.enabled ? '已启用 · 每天 ' + esc(t.summary.times) : '未启用') + '</div></div>' +
+    '<div class="frow"><label>长期记忆整理</label><div class="mut">' + (t.longMemory && t.longMemory.enabled ? '每 ' + t.longMemory.everyMinutes + ' 分钟' : '未启用') + '</div></div>' +
+    '<div class="frow"><label>表情包学习</label><div class="mut">' + (t.stickersLearn && t.stickersLearn.enabled ? '每小时最多 ' + t.stickersLearn.perHour + ' 张' : '未启用') + '</div></div>' +
+    '</div></details>'
+}
+function commandTestCard(){
+  return '<section class="card"><h2>指令测试台</h2><div class="note">输入一句话，看会命中哪条指令、会回什么；<b>不会真的发送</b>，也不调用 AI。</div>' +
+    '<div class="flexbar"><input id="ctText" placeholder="例如：/help 或 早安" style="flex:1;min-width:200px"><select id="ctWhere"><option value="group">群里</option><option value="private">私聊</option></select><button class="btn" id="ctRun">测试</button></div>' +
+    '<div id="ctResult" style="margin-top:10px"></div></section>'
+}
 function pageSelfCheck(){
-  return '<h1>自检</h1><div class="sub">检查机器人能不能正常跑：Key、连接、目录、磁盘、备份与记忆文件。</div>' + selfCheckCard()
+  return '<h1>自检</h1><div class="sub">检查机器人能不能正常跑：Key、连接、目录、磁盘、备份与记忆文件。</div>' + selfCheckCard() + tasksCard()
 }
 function pageStickers(){
   const items = stickerList || []
@@ -1014,6 +1044,7 @@ function render(){
   else if (page === 'stickers') html = pageStickers()
   else if (page === 'metrics') html = pageMetrics()
   else if (page === 'selfcheck') html = pageSelfCheck()
+  else if (page === 'errors') html = pageErrors()
   else if (page === 'logs') html = pageLogs()
   else html = pageMemory()
   main.innerHTML = html
@@ -1084,6 +1115,50 @@ async function bind(){
       setTimeout(function(){ URL.revokeObjectURL(url) }, 1000)
       toast('已导出记忆文件')
     } catch(e){ toast('导出失败：' + e.message, true) }
+  }
+  const memSearch = document.getElementById('memSearch')
+  if (memSearch) memSearch.oninput = function(){
+    const q = memSearch.value.trim().toLowerCase()
+    document.querySelectorAll('#memList [data-mem-row]').forEach(function(row){ row.style.display = !q || row.textContent.toLowerCase().includes(q) ? '' : 'none' })
+  }
+  const personaCheck = document.getElementById('personaCheck')
+  if (personaCheck) personaCheck.onclick = async function(){
+    const box = document.getElementById('personaCheckResult')
+    personaCheck.disabled = true
+    try {
+      const r = await api('/api/action/persona-check')
+      if (box) box.textContent = r.warnings.length ? ('发现 ' + r.warnings.length + ' 条：' + r.warnings.join('；')) : ('未发现明显矛盾（' + r.length + ' 字，' + r.lines + ' 段）')
+      toast(r.warnings.length ? '发现 ' + r.warnings.length + ' 条可疑表述' : '未发现明显矛盾')
+    } catch(e){ toast('检查失败：' + e.message, true) }
+    finally { personaCheck.disabled = false }
+  }
+  const errorsRefresh = document.getElementById('errorsRefresh')
+  if (errorsRefresh) errorsRefresh.onclick = async function(){
+    errorInfo = (await api('/api/errors').catch(function(){ return { items: [] } })).items || []
+    render()
+  }
+  const errorsClear = document.getElementById('errorsClear')
+  if (errorsClear) errorsClear.onclick = async function(){
+    if (!await ask('清空错误记录？', '只清空显示历史，不影响机器人运行。', '清空')) return
+    await api('/api/action/clear-errors', {})
+    errorInfo = []
+    render()
+  }
+  const ctRun = document.getElementById('ctRun')
+  if (ctRun) ctRun.onclick = async function(){
+    const text = document.getElementById('ctText').value.trim()
+    const box = document.getElementById('ctResult')
+    if (!text) { box.innerHTML = '<div class="mut">先输入一句话</div>'; return }
+    ctRun.disabled = true
+    try {
+      const r = await api('/api/action/test-command', { text, isPrivate: document.getElementById('ctWhere').value === 'private' })
+      const parts = []
+      if (r.builtin) parts.push('<div><b>内置：' + esc(r.builtin.name) + '</b> <span class="pill">' + (r.builtin.enabled ? (r.builtin.allowed ? '可执行' : '被权限/范围挡住') : '已关闭') + '</span></div>')
+      if (r.custom.length) for (const c of r.custom) parts.push('<div style="margin-top:6px"><b>自定义：' + esc(c.name) + '</b> <span class="mut">触发词 ' + esc(c.trigger) + '</span><pre class="mono" style="white-space:pre-wrap;margin:4px 0">' + esc(c.reply) + '</pre></div>')
+      if (!parts.length) parts.push('<div class="mut">没有命中任何指令，会走普通聊天。</div>')
+      box.innerHTML = parts.join('')
+    } catch(e){ box.innerHTML = '<div class="mut">测试失败：' + esc(e.message) + '</div>' }
+    finally { ctRun.disabled = false }
   }
   const exportMemoryMd = document.getElementById('exportMemoryMd')
   if (exportMemoryMd) exportMemoryMd.onclick = async function(){
@@ -1988,6 +2063,8 @@ async function load(){
     webSearchInfo = await api('/api/websearch').catch(function(){ return {} })
     backupInfo = await api('/api/backups').catch(function(){ return { items: [], root: '' } })
     selfCheckInfo = await api('/api/selfcheck').catch(function(){ return null })
+    errorInfo = (await api('/api/errors').catch(function(){ return { items: [] } })).items || []
+    tasksInfo = await api('/api/tasks').catch(function(){ return null })
     metricsInfo = (await api('/api/metrics?days=' + metricsRange).catch(function(){ return { items: [] } })).items || []
     updateSideStatus(s.bot)
     // 预取人格内容与附加说明

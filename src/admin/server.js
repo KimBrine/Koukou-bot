@@ -12,6 +12,7 @@ import { activatePersona } from '../personaSwitch.js'
 import { applyConversationSettings, resetConversationMemory } from '../conversationSessions.js'
 import { writeTextAtomic } from '../stateFile.js'
 import { createWebSearch } from '../search.js'
+import { renderReply } from '../customCommands.js'
 import { createImageHasher } from '../imagehash.js'
 import { createUpdateChecker } from '../updateCheck.js'
 import { suggestStickerMetadata } from '../stickerMetadata.js'
@@ -218,7 +219,7 @@ function validateGroupConfig(key, value) {
   }
 }
 
-export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, quietGreetings, personaGreetings, bot, customCommands, commandCenter, llm, stickers, stickerTagLLM, updateChecker=createUpdateChecker({currentVersion:APP_VERSION}), switchVision, visionProviders, restartBot, webSearch, switchWebSearch, backup, selfcheck, metrics }) {
+export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, quietGreetings, personaGreetings, bot, customCommands, commandCenter, llm, stickers, stickerTagLLM, updateChecker=createUpdateChecker({currentVersion:APP_VERSION}), switchVision, visionProviders, restartBot, webSearch, switchWebSearch, backup, selfcheck, metrics, errors }) {
   // 本实例自己的 .env（并行跑两个实例时，写死 rootDir\.env 会改到另一个实例的配置上）
   const envFile = config.envFile || path.join(config.rootDir, '.env')
   const logFile = path.join(config.logDir || path.join(config.rootDir, 'logs'), 'bot.log')
@@ -534,6 +535,13 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         longMemory: readJson(path.join(config.dataDir, 'long-memory.json')),
       }
     },
+    'GET /api/errors': async () => ({ items: errors ? errors.list() : [] }),
+    'GET /api/tasks': async () => ({
+      backup: { last: backup ? backup.lastBackupAt() : 0, everyHours: 6 },
+      summary: { enabled: Boolean(config.summaryEnabled), times: config.summaryTimes || '' },
+      longMemory: { enabled: Boolean(config.longMemoryEnabled), everyMinutes: Math.max(1, Math.round((config.longMemoryIntervalMs || 600000) / 60000)) },
+      stickersLearn: { enabled: Boolean(config.stickerLearnEnabled), perHour: config.stickerLearnPerHour || 0 },
+    }),
     'GET /api/selfcheck': async () => {
       if (!selfcheck) return { items: [] }
       const st = onebot && typeof onebot.status === 'function' ? onebot.status() : null
@@ -1316,6 +1324,49 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       logger?.info?.(`[控制台] 已删除会话 ${key}${whitelistRemoved ? '（并从白名单移除）' : ''}`)
       return { ok: true, key, whitelistRemoved, dailyBackup, ...result }
     },
+    async 'clear-errors'() {
+      if (errors) errors.clear()
+      logger?.info?.('[控制台] 已清空错误记录')
+      return { ok: true }
+    },
+    async 'test-command'(payload) {
+      const text = String((payload && payload.text) || '').trim()
+      if (!text) throw new Error('请输入要测试的内容')
+      const firstAdmin = Array.isArray(config.adminUsers) ? config.adminUsers[0] : String(config.adminUsers || '').split(',')[0]
+      const ctx = { isPrivate: !(payload && payload.isPrivate === false), groupId: Number(payload && payload.groupId) || 0, userId: Number(payload && payload.userId) || Number(firstAdmin) || 0 }
+      const builtinId = commandCenter.detect(text)
+      let builtin = null
+      if (builtinId) {
+        const c = commandCenter.get(builtinId)
+        builtin = { id: builtinId, name: c.name, enabled: c.enabled, allowed: commandCenter.allows(builtinId, ctx), trigger: c.trigger }
+      }
+      const custom = []
+      for (const c of customCommands.all()) {
+        if (c.enabled === false) continue
+        const triggers = [c.trigger, ...(c.aliases || [])].filter(Boolean)
+        const hit = triggers.find((t) => (c.match === 'exact' ? text === t : text.startsWith(t)))
+        if (!hit) continue
+        let reply = ''
+        try { reply = renderReply(c.reply, { name: '测试用户', args: text.slice(hit.length).trim() }) } catch { reply = c.reply || '' }
+        custom.push({ id: c.id, name: c.name, trigger: hit, reply: String(reply || '').slice(0, 500) })
+      }
+      return { builtin, custom }
+    },
+    async 'persona-check'() {
+      const text = String(config.persona || '').trim()
+      const warnings = []
+      if (!text) warnings.push('当前人格正文为空')
+      const pairs = [['只认', '好朋友'], ['唯一的', '朋友'], ['主人', '朋友'], ['只能', '也可以'], ['禁止', '可以']]
+      for (const [a, b] of pairs) if (text.includes(a) && text.includes(b)) warnings.push('同时出现「' + a + '」和「' + b + '」，可能自相矛盾')
+      const lines = text.split(/[。\n；]/).map((x) => x.trim()).filter(Boolean)
+      const seen = new Map()
+      for (const line of lines) {
+        const key = line.slice(0, 20)
+        if (seen.has(key) && seen.get(key) !== line) warnings.push('疑似重复表述：' + line.slice(0, 40))
+        seen.set(key, line)
+      }
+      return { length: text.length, lines: lines.length, warnings }
+    },
     async 'memory-import'(payload) {
       const data = payload && payload.data
       if (!data || typeof data !== 'object') throw new Error('导入内容无效')
@@ -1384,6 +1435,13 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       const dir = path.join(config.dataDir, 'backups', name)
       if (!existsSync(dir)) throw new Error('找不到这份备份')
       if (!backup) throw new Error('备份服务未启用')
+      const snapshotStats = () => ({
+        memory: typeof memory.keys === 'function' ? memory.keys().reduce((n, k) => n + memory.count(k), 0) : 0,
+        longMemory: (() => { try { return JSON.stringify(longMemory.snapshot().chats || {}).length } catch { return 0 } })(),
+        stickers: stickers.list().length,
+        commands: customCommands.all().length,
+      })
+      const statsBefore = snapshotStats()
       const before = backup.run({ reason: '还原前自动备份' })
       const items = ['memory.json', 'memory.json.reset.json', 'long-memory.json', 'long-memory.json.state.json', 'chat-settings.json', 'custom-commands.json', 'vision-providers.json', 'personas', 'stickers']
       for (const item of items) {
@@ -1394,7 +1452,8 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         catch (err) { throw new Error('还原 ' + item + ' 失败：' + err.message) }
       }
       logger?.info?.('[控制台] 已从备份还原：' + name + '（还原前已备份为 ' + before.name + '）')
-      return { ok: true, restored: name, before: before.name }
+      const statsAfter = snapshotStats()
+      return { ok: true, restored: name, before: before.name, stats: { before: statsBefore, after: statsAfter } }
     },
     async 'backup'() {
       if (!backup) throw new Error('备份不可用')

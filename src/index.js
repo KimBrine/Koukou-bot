@@ -20,6 +20,7 @@ import { createSelfCheck } from './selfcheck.js'
 import { createNotifier } from './notify.js'
 import { createMetrics } from './metrics.js'
 import { createImageHasher } from './imagehash.js'
+import { createErrorStore } from './errorStore.js'
 import { loadPokeReplies, createPokeReplier } from './pokeReplies.js'
 import { createLongMemory } from './longMemory.js'
 import { createCustomCommands } from './customCommands.js'
@@ -259,10 +260,21 @@ const notifier = createNotifier({ config, onebot, logger, file: path.join(config
 const selfCheck = createSelfCheck({ config, onebot, backup: backupService, logger })
 const metricsService = createMetrics({ file: path.join(config.dataDir, 'metrics.json'), logger })
 const stickerHasher = createImageHasher({ config, logger })
+const errorStore = createErrorStore({ file: path.join(config.dataDir, 'errors.json') })
 // 所有 logger.error 都计入当天错误数（用于失败率曲线）
 {
   const rawError = logger.error.bind(logger)
-  logger.error = (...args) => { try { metricsService.error() } catch {} rawError(...args) }
+  logger.error = (...args) => {
+    try { metricsService.error() } catch {}
+    const text = args.map((x) => (x && x.stack) || String(x)).join(' ')
+    try { errorStore.add(text) } catch {}
+    try {
+      if (/余额|额度|quota|429|401|403|请求参数错误|超时|timeout|ECONN|socket hang up/i.test(text)) {
+        notifier.notify('model-health', '模型调用可能异常：' + text.replace(/\s+/g, ' ').slice(0, 180)).catch(() => {})
+      }
+    } catch {}
+    rawError(...args)
+  }
 }
 const sharedImageCache = config.dataDir && config.visionCacheEnabled !== false ? createImageCache({
   dir: path.join(config.dataDir, 'image-cache'), maxBytes: config.visionCacheMaxBytes,
@@ -479,6 +491,7 @@ if (config.adminEnabled) {
     backup: backupService,
     metrics: metricsService,
     selfcheck: selfCheck,
+    errors: errorStore,
     visionProviders,
     restartBot: () => {
       // 让一个独立进程在 1.2 秒后杀掉当前实例并用计划任务重新拉起（避免自己杀自己杀不干净）
