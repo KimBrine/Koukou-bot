@@ -656,7 +656,10 @@ function pageMemory(){
       '<button class="btn sm" data-mem-del="' + idx + '">删</button>' +
       '</div><div>' + esc(m.content) + '</div></div>'
   }).join('') : ''
+  let lastPendingDay = ''
   const pendingRows = d ? (d.pending||[]).map(function(p, idx){
+    const pday = p.time ? new Date(p.time).toLocaleDateString('zh-CN') : '时间未知'
+    const dayHeader = pday !== lastPendingDay ? (lastPendingDay = pday, '<div class="day-sep">' + esc(pday) + '</div>') : ''
     return dayHeader + '<div data-mem-row style="margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--line,#eee)">' +
       '<div style="display:flex;gap:8px;align-items:center;margin-bottom:4px">' +
       '<span class="badge">' + esc(p.name || p.userId || '群友') + '</span>' +
@@ -1637,10 +1640,11 @@ async function bind(){
   const reloadMemoryDetail = async (key) => {
     let lastErr = null
     for (let attempt = 0; attempt < 2; attempt += 1) {
-      try { memoryDetail = await api('/api/memory-detail?key=' + encodeURIComponent(key)); render(); return }
+      try { memoryDetail = await api('/api/memory-detail?key=' + encodeURIComponent(key)); lastErr = null; break }
       catch (err) { lastErr = err; await new Promise(function(resolve){ setTimeout(resolve, 300) }) }
     }
-    throw lastErr
+    if (lastErr) throw lastErr
+    render()
   }
   document.querySelectorAll('[data-memfold]').forEach(el => el.onclick = () => {
     const type = el.dataset.memfold
