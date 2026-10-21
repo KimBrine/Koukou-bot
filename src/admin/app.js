@@ -729,15 +729,15 @@ function visionCard(){
       '<option value="custom"' + sel('custom', tagProvider) + '>第一个自定义接口</option>' +
       '</select>'),
     '<div class="flexbar"><button class="btn primary" id="vcSave">保存识图设置</button><span class="mut" id="vcHint" style="font-size:12px"></span></div>',
-    '<div style="height:1px;background:var(--line,#e5e5e5);margin:12px 0"></div>',
-    '<h3 style="margin:0 0 6px">自定义接口</h3>',
-    '<div class="mut" style="font-size:12px;margin-bottom:6px">填 OpenAI 兼容地址（例如 https://api.openai.com/v1），Key 只保存在本机 data 目录。</div>',
+    '<details class="advanced-box" style="margin-top:12px"><summary><b>自定义识图接口</b> <span class="pill">' + customs.length + ' 个</span><span class="mut" style="font-size:12px;margin-left:8px">点开添加 / 管理</span></summary>',
+    '<div class="mut" style="font-size:12px;margin:8px 0 6px">填 OpenAI 兼容地址（例如 https://api.openai.com/v1），Key 只保存在本机 data 目录。</div>',
     customRows,
     row('名称', '<input id="vpName" placeholder="例如 OpenAI / 本地 Ollama">'),
     row('接口地址', '<input id="vpBase" placeholder="https://你的服务/v1">'),
     row('API Key', '<input id="vpKey" type="password" placeholder="sk-...">'),
     row('模型名', '<input id="vpModel" placeholder="例如 gpt-4o-mini（可稍后检测再选）">'),
     '<div class="flexbar"><button class="btn" id="vpAdd">添加自定义接口</button><span class="mut" id="vpHint" style="font-size:12px"></span></div>',
+    '</details>',
     '</section>'
   ].join('')
 }
