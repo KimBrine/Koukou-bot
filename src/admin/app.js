@@ -60,7 +60,7 @@ let joinedGroups = []
 let friendList = []
 let memoryOverview = []
 let memoryDetail = null
-let memoryFold = { group: true, private: true }
+let memoryFold = { group: false, private: true }
 let customCommands = []
 let commandBuiltins = []
 let pokeDiagnostics = {}
@@ -730,15 +730,15 @@ function visionCard(){
       '<option value="custom"' + sel('custom', tagProvider) + '>第一个自定义接口</option>' +
       '</select>'),
     '<div class="flexbar"><button class="btn primary" id="vcSave">保存识图设置</button><span class="mut" id="vcHint" style="font-size:12px"></span></div>',
-    '<div style="height:1px;background:var(--line,#e5e5e5);margin:12px 0"></div>',
-    '<h3 style="margin:0 0 6px">自定义接口</h3>',
-    '<div class="mut" style="font-size:12px;margin-bottom:6px">填 OpenAI 兼容地址（例如 https://api.openai.com/v1），Key 只保存在本机 data 目录。</div>',
+    '<details class="advanced-box" style="margin-top:12px"><summary><b>自定义识图接口</b> <span class="pill">' + customs.length + ' 个</span><span class="mut" style="font-size:12px;margin-left:8px">点开添加 / 管理</span></summary>',
+    '<div class="mut" style="font-size:12px;margin:8px 0 6px">填 OpenAI 兼容地址（例如 https://api.openai.com/v1），Key 只保存在本机 data 目录。</div>',
     customRows,
     row('名称', '<input id="vpName" placeholder="例如 OpenAI / 本地 Ollama">'),
     row('接口地址', '<input id="vpBase" placeholder="https://你的服务/v1">'),
     row('API Key', '<input id="vpKey" type="password" placeholder="sk-...">'),
     row('模型名', '<input id="vpModel" placeholder="例如 gpt-4o-mini（可稍后检测再选）">'),
     '<div class="flexbar"><button class="btn" id="vpAdd">添加自定义接口</button><span class="mut" id="vpHint" style="font-size:12px"></span></div>',
+    '</details>',
     '</section>'
   ].join('')
 }
@@ -1230,7 +1230,19 @@ async function bind(){
   }
   document.querySelectorAll('[data-memfold]').forEach(el => el.onclick = () => {
     const type = el.dataset.memfold
-    memoryFold[type] = memoryFold[type] === false
+    const opening = memoryFold[type] === false
+    if (opening) {
+      // 手风琴：同一时间只展开一个目录
+      memoryFold = { group: false, private: false }
+      memoryFold[type] = true
+    } else {
+      memoryFold[type] = false
+    }
+    // 详情只能存在于展开着的目录里；目录一收或换组，就自动收回
+    if (memoryDetail) {
+      const isGroup = String(memoryDetail.key).startsWith('g')
+      if (!memoryFold[isGroup ? 'group' : 'private']) memoryDetail = null
+    }
     render()
   })
   document.querySelectorAll('[data-memview]').forEach(el => el.onclick = async () => {
@@ -1240,6 +1252,7 @@ async function bind(){
       render()
       return
     }
+    memoryFold = { group: false, private: false }
     memoryFold[String(key).startsWith('g') ? 'group' : 'private'] = true
     try { await reloadMemoryDetail(key) }
     catch (e) { toast('读取失败：' + e.message, true) }
