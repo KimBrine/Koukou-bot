@@ -273,6 +273,7 @@ function chatRow(c){
       <span class="mut" style="font-size:12px">今日 ${c.msgToday} 条 · 记忆 ${c.memory} 条${c.replies?(' · 已回 '+c.replies):''}</span>
       ${c.type === 'group' ? `<button class="btn sm ${c.inWhitelist ? 'danger' : ''}" data-whitelist="${c.inWhitelist ? 'remove' : 'add'}" data-group="${c.id}">${c.inWhitelist ? '移出白名单' : '加入白名单'}</button>` : ''}
       ${c.type === 'group' ? summaryControls(c.id) : ''}
+      <button class="btn danger sm" data-delchat="${c.key}" title="删除会话（记忆、设置、白名单）">删除</button>
       <span class="mut">▾</span>
     </div>
     <div class="body">
@@ -1348,6 +1349,18 @@ async function bind(){
     openChats.add(b.dataset.openChat)
     const box = document.querySelector(`.chat[data-key="${b.dataset.openChat}"]`)
     if (box) { box.classList.add('open'); box.scrollIntoView({behavior:'smooth', block:'start'}) }
+  })
+  document.querySelectorAll('[data-delchat]').forEach(b => b.onclick = async (ev) => {
+    ev.stopPropagation()
+    const key = b.dataset.delchat
+    const isPrivate = String(key).startsWith('p')
+    if (!await ask('删除这个会话？', isPrivate ? '会删除它的记忆和会话设置，并移出私聊白名单（之后不再回复）。记忆有备份。' : '会删除它的记忆和会话设置，并移出白名单。记忆有备份。', '删除')) return
+    try {
+      await api('/api/action/delete-chat', { key })
+      openChats.delete(key)
+      await load()
+      toast('已删除会话')
+    } catch(e) { toast('删除失败：' + e.message, true) }
   })
   document.querySelectorAll('[data-whitelist]').forEach(b => b.onclick = async () => {
     const id = b.dataset.group, operation = b.dataset.whitelist

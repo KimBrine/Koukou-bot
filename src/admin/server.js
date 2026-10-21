@@ -1237,6 +1237,31 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       logger?.info?.(`[控制台] 丢弃 ${key} 第 ${index + 1} 条待整理原文`)
       return { ok: true }
     },
+    async 'delete-chat'(payload) {
+      const key = String(payload?.key || '').trim()
+      if (!/^[gp]\d{1,24}$/.test(key)) throw new Error('会话标识无效')
+      const result = resetConversationMemory({ config, memory, longMemory, targetWatch, key, reason: '删除会话' })
+      try { chatSettings.remove(key) } catch {}
+      let whitelistRemoved = false
+      if (key.startsWith('p')) {
+        const uid = Number(key.slice(1))
+        if (config.privateWhitelist && config.privateWhitelist.has(uid)) {
+          config.privateWhitelist.delete(uid)
+          writeEnvFile(envFile, { PRIVATE_WHITELIST: [...config.privateWhitelist].join(',') }, { atomic: true })
+          whitelistRemoved = true
+        }
+      } else {
+        const gid = Number(key.slice(1))
+        if (config.whitelistGroups && config.whitelistGroups.has(gid)) {
+          config.whitelistGroups.delete(gid)
+          writeEnvFile(envFile, { WHITELIST_GROUPS: [...config.whitelistGroups].join(',') }, { atomic: true })
+          whitelistRemoved = true
+        }
+        try { rmSync(path.join(dailyDir, String(gid)), { recursive: true, force: true }) } catch {}
+      }
+      logger?.info?.(`[控制台] 已删除会话 ${key}${whitelistRemoved ? '（并从白名单移除）' : ''}`)
+      return { ok: true, key, whitelistRemoved, ...result }
+    },
     async 'cleanup-groups'() {
       const mem = readJsonSafe(config.memoryFile, {})
       const keys = new Set([...Object.keys(mem),...Object.keys(memory?.snapshot?.()?.chats||{}),...Object.keys(longMemory?.snapshot?.()?.chats||{}), ...chatSettings.keys(),...(existsSync(dailyDir)?readdirSync(dailyDir).filter(x=>/^\d+$/.test(x)).map(x=>'g'+x):[])])
