@@ -644,29 +644,43 @@ function pageMemory(){
   const d = memoryDetail
   const fmtTime = function(ts){ if(!ts) return ''; try { return new Date(ts).toLocaleString('zh-CN',{hour12:false}) } catch(e){ return '' } }
   const key = d ? d.key : ''
-  let lastDay = ''
-  const recentRows = d ? (d.recent||[]).map(function(m, idx){
-    const day = m.time ? new Date(m.time).toLocaleDateString('zh-CN') : '时间未知'
-    const dayHeader = day !== lastDay ? (lastDay = day, '<div class="day-sep">' + esc(day) + '</div>') : ''
-    return dayHeader + '<div data-mem-row style="margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--line,#eee)">' +
+  const dayKeyOf = function(m){ return m.time ? new Date(m.time).toLocaleDateString('zh-CN') : '时间未知' }
+  const memRow = function(m, idx){
+    return '<div data-mem-row style="margin-bottom:10px;padding:8px 0 8px 12px;border-left:2px solid rgba(148,163,184,.25)">' +
       '<div style="display:flex;gap:8px;align-items:center;margin-bottom:4px">' +
       '<span class="badge">' + (m.role === 'assistant' ? '机器人' : '对方') + '</span>' +
       '<span class="mut" style="font-size:12px">' + esc(fmtTime(m.time)) + '</span>' +
       '<button class="btn sm" data-mem-edit="' + idx + '">改</button>' +
       '<button class="btn sm" data-mem-del="' + idx + '">删</button>' +
       '</div><div>' + esc(m.content) + '</div></div>'
-  }).join('') : ''
-  let lastPendingDay = ''
-  const pendingRows = d ? (d.pending||[]).map(function(p, idx){
-    const pday = p.time ? new Date(p.time).toLocaleDateString('zh-CN') : '时间未知'
-    const dayHeader = pday !== lastPendingDay ? (lastPendingDay = pday, '<div class="day-sep">' + esc(pday) + '</div>') : ''
-    return dayHeader + '<div data-mem-row style="margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--line,#eee)">' +
-      '<div style="display:flex;gap:8px;align-items:center;margin-bottom:4px">' +
-      '<span class="badge">' + esc(p.name || p.userId || '群友') + '</span>' +
-      '<span class="mut" style="font-size:12px">' + esc(fmtTime(p.time)) + '</span>' +
-      '<button class="btn sm" data-pending-del="' + idx + '">删</button>' +
-      '</div><div>' + esc(p.text) + '</div></div>'
-  }).join('') : ''
+  }
+  const groupByDay = function(list){
+    const out = []
+    for (let i = 0; i < list.length; i += 1) {
+      const day = dayKeyOf(list[i])
+      const last = out[out.length - 1]
+      if (last && last.day === day) last.items.push({ item: list[i], idx: i })
+      else out.push({ day, items: [{ item: list[i], idx: i }] })
+    }
+    return out
+  }
+  const todayKey = new Date().toLocaleDateString('zh-CN')
+  const recentGroups = d ? groupByDay(d.recent || []) : []
+  const recentRows = recentGroups.map(function(g){
+    return '<details class="mem-day"' + (g.day === todayKey ? ' open' : '') + '><summary><b>' + esc(g.day) + '</b> <span class="pill">' + g.items.length + ' 条</span></summary>' +
+      '<div class="mem-day-body">' + g.items.map(function(x){ return memRow(x.item, x.idx) }).join('') + '</div></details>'
+  }).join('')
+  const pendingGroups = d ? groupByDay(d.pending || []) : []
+  const pendingRows = pendingGroups.map(function(g){
+    return '<details class="mem-day"' + (g.day === todayKey ? ' open' : '') + '><summary><b>' + esc(g.day) + '</b> <span class="pill">' + g.items.length + ' 条</span></summary>' +
+      '<div class="mem-day-body">' + g.items.map(function(x){
+        const p = x.item
+        return '<div data-mem-row style="margin-bottom:10px;padding:8px 0 8px 12px;border-left:2px solid rgba(148,163,184,.25)"><div style="display:flex;gap:8px;align-items:center;margin-bottom:4px">' +
+          '<span class="badge">' + esc(p.name || p.userId || '群友') + '</span>' +
+          '<span class="mut" style="font-size:12px">' + esc(fmtTime(p.time)) + '</span>' +
+          '<button class="btn sm" data-pending-del="' + x.idx + '">删</button></div><div>' + esc(p.text) + '</div></div>'
+      }).join('') + '</div></details>'
+  }).join('')
   const extraCards = [
     '<section class="card"><h2>长期记忆检索</h2><div class="note">按话题找回旧原话；也可以直接看某个会话的长期摘要。</div>' +
       '<div class="row"><select id="lmKey">' + chats.map(function(c){ return '<option value="' + esc(c.key) + '">' + esc(c.name) + '（' + esc(c.key) + '）</option>' }).join('') + '</select>' +
@@ -1122,7 +1136,16 @@ async function bind(){
   const memSearch = document.getElementById('memSearch')
   if (memSearch) memSearch.oninput = function(){
     const q = memSearch.value.trim().toLowerCase()
-    document.querySelectorAll('#memList [data-mem-row]').forEach(function(row){ row.style.display = !q || row.textContent.toLowerCase().includes(q) ? '' : 'none' })
+    document.querySelectorAll('#memList .mem-day').forEach(function(day){
+      if (q) day.open = true
+      let visible = 0
+      day.querySelectorAll('[data-mem-row]').forEach(function(row){
+        const hit = !q || row.textContent.toLowerCase().includes(q)
+        row.style.display = hit ? '' : 'none'
+        if (hit) visible += 1
+      })
+      day.style.display = visible ? '' : 'none'
+    })
   }
   const personaCheck = document.getElementById('personaCheck')
   if (personaCheck) personaCheck.onclick = async function(){
