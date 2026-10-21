@@ -90,7 +90,9 @@ let stickerSettings = {}
 const $ = (h) => { const d = document.createElement('div'); d.innerHTML = h.trim(); return d.firstElementChild }
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
 const api = async (path, body) => {
-  const opt = body ? { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) } : {}
+  // 动作接口只接受 POST；没带 body 也自动按 POST + {} 发送，避免误发成 GET 变 404
+  const action = typeof path === 'string' && path.startsWith('/api/action/')
+  const opt = body !== undefined || action ? { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body ?? {}) } : {}
   const r = await fetch(path, opt)
   const j = await r.json().catch(() => ({}))
   if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status))
