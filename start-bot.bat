@@ -75,6 +75,7 @@ echo.
 echo [3/3] 启动机器人 ...
 cd /d "%BOTDIR%"
 start "" http://127.0.0.1:%CONSOLE_PORT%/
+start "QQ Bot 日志" powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-Content -Path '%BOT_LOG_DIR%\bot.log' -Wait -Tail 80 -Encoding UTF8"
 node "%BOTDIR%\src\index.js" --profile=%BOT_PROFILE% 1>nul 2>>"%BOT_LOG_DIR%\console-err.log"
 
 echo.
