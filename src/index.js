@@ -267,13 +267,18 @@ const errorStore = createErrorStore({ file: path.join(config.dataDir, 'errors.js
   logger.error = (...args) => {
     try { metricsService.error() } catch {}
     const text = args.map((x) => (x && x.stack) || String(x)).join(' ')
-    try { errorStore.add(text) } catch {}
+    try { errorStore.add(text, 'bot', 'error') } catch {}
     try {
       if (/余额|额度|quota|429|401|403|请求参数错误|超时|timeout|ECONN|socket hang up/i.test(text)) {
         notifier.notify('model-health', '模型调用可能异常：' + text.replace(/\s+/g, ' ').slice(0, 180)).catch(() => {})
       }
     } catch {}
     rawError(...args)
+  }
+  const rawWarn = logger.warn.bind(logger)
+  logger.warn = (...args) => {
+    try { errorStore.add(args.map((x) => (x && x.stack) || String(x)).join(' '), 'bot', 'warn') } catch {}
+    rawWarn(...args)
   }
 }
 const sharedImageCache = config.dataDir && config.visionCacheEnabled !== false ? createImageCache({

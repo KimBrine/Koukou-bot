@@ -6,8 +6,8 @@ export function createErrorStore({ file, limit = 200, now = () => Date.now() }) 
   try { if (existsSync(file)) items = JSON.parse(readFileSync(file, 'utf8')) || [] } catch { items = [] }
   if (!Array.isArray(items)) items = []
   const save = () => { try { writeFileSync(file, JSON.stringify(items)) } catch {} }
-  function add(message, scope = 'bot') {
-    items.push({ time: now(), scope, message: String(message || '').slice(0, 4000) })
+  function add(message, scope = 'bot', level = 'error') {
+    items.push({ time: now(), scope, level, message: String(message || '').slice(0, 4000) })
     if (items.length > limit) items = items.slice(-limit)
     save()
   }
