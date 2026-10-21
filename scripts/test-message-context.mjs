@@ -285,6 +285,20 @@ try {
     assert.match(prompt,/现实用药问题不擅自决定具体药物、剂量、次数或停换方案/)
     assert.match(prompt,/区分普通食物、现实事件和玩笑/)
   })
+  await test('认真语境规则随实际群聊/私聊请求发送，私有规则也不能跳过，不增加审核调用',async()=>{
+    for(const message_type of ['group','private']){
+      const t=setup({config:{localProfile:{conversationRules:'实例自己的风格规则。'}}})
+      await t.bot.handleMessage(t.event([at(),text('朋友找我倾诉，我不知道怎么安慰，是不是很没用？')],{message_type}))
+      assert.equal(t.requests.length,1,'不增加独立情绪分类或审核请求')
+      const prompt=t.requests[0][0]
+      assert.ok(prompt.indexOf('【认真语境与人格分寸')>prompt.indexOf('实例自己的风格规则'))
+      assert.match(prompt,/认真语境优先于自夸、撒娇和接梗/)
+      assert.match(prompt,/承认个体差异/)
+      assert.match(prompt,/不替在场的人编造童年、家庭或心理经历/)
+      assert.match(prompt,/普通日常玩笑和双方自愿的互损仍可轻松接话/)
+      assert.match(prompt,/【本次回复的形态要求/)
+    }
+  })
   await test('主动概率为零、没有@、不在白名单，引用机器人消息仍直接回复',async()=>{
     const t=setup({config:{whitelistGroups:new Set()}})
     await t.bot.handleMessage(t.event([quote(42),text('接着说呢')]))
