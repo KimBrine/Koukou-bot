@@ -700,7 +700,7 @@ function pageMemory(){
       '<section class="card"><h2>近期记忆 <span class="pill">' + (d.recent||[]).length + ' 条</span> <span class="mut" style="font-size:12px">' + esc(nameOf(key)) + '（' + esc(key) + '）</span></h2>',
       '<div class="note">每条都能改正文或单条删除；删除只影响这一条。</div>',
       '<input id="memSearch" placeholder="搜索这段记忆的内容" style="width:100%;margin-top:8px">' +
-      '<div id="memList" style="max-height:360px;overflow:auto;margin-top:8px">' + (recentRows || '<div class="mut">这个会话没有近期记忆。</div>') + '</div>',
+      '<div id="memList" style="margin-top:8px">' + (recentRows || '<div class="mut">这个会话没有近期记忆。</div>') + '</div>',
       '</section>',
       '<section class="card"><h2>长期记忆 <span class="pill">' + (d.longTerm||'').length + ' 字</span>' + (d.updatedAt ? ' <span class="mut" style="font-size:12px">更新于 ' + esc(fmtTime(d.updatedAt)) + '</span>' : '') + '</h2>',
       '<div class="note">' + (d.paused ? '自动整理已暂停，可编辑。保存后保持暂停，新原文继续存档；恢复后才基于新摘要整理。' : (d.running ? '后台正在整理。请先暂停再编辑，旧任务会取消，迟到结果不会回写。' : '请先暂停自动整理再编辑。')) + '</div>',
@@ -710,7 +710,7 @@ function pageMemory(){
       '</section>',
       '<section class="card"><h2>待整理 <span class="pill">' + (d.pending||[]).length + ' 条</span></h2>',
       '<div class="note">从近期窗口挤出来的原文，攒够会自动压缩进长期记忆；不想留的可以单条删掉。</div>',
-      '<div style="max-height:360px;overflow:auto;margin-top:8px">' + (pendingRows || '<div class="mut">没有待整理的原文。</div>') + '</div>',
+      '<div style="margin-top:8px">' + (pendingRows || '<div class="mut">没有待整理的原文。</div>') + '</div>',
       '</section>'
     ].join('') : '<section class="card"><div class="mut">点上面「查看」，会同时显示近期、长期和待整理三块内容。</div></section>'
   ].join('') + extraCards

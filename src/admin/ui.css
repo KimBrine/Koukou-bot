@@ -246,4 +246,4 @@ details.card[open] > summary { padding-bottom: 16px; border-bottom: 1px solid va
 .mem-day > summary::-webkit-details-marker { display: none; }
 .mem-day > summary::before { content: '▸'; color: var(--muted, #9aabc0); transition: transform .15s ease; }
 .mem-day[open] > summary::before { transform: rotate(90deg); }
-.mem-day-body { padding-top: 4px; }
+.mem-day-body { padding-top: 4px; padding-right: 6px; max-height: 260px; overflow-y: auto; overscroll-behavior: contain; }
