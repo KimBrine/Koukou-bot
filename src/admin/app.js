@@ -543,18 +543,18 @@ function webSearchCard(){
   if (presets.indexOf(cur) < 0) presets.unshift(cur)
   const label = { deepseek: 'DeepSeek 搜索（自带引擎）', bing: '必应网页（免密钥兜底）' }
   const opts = presets.map(function(m){ return '<option value="' + esc(m) + '"' + (m === cur ? ' selected' : '') + '>' + esc(label[m] || m) + '</option>' }).join('')
-  return '<section class="card"><h2>联网搜索</h2>'
-    + '<div class="note">在允许工具调用的问答中由模型判断是否搜索。自动模式按已配置 Key 选择：千帆 → DeepSeek → 通义 → 必应；明确指定渠道时缺少 Key 会报错。</div>'
-    + '<label>搜索渠道<select id="wsProvider">'+[['auto','自动'],['deepseek','DeepSeek'],['dashscope','通义千问'],['baidu','百度千帆'],['bing','必应网页'],['off','关闭']].map(x=>'<option value="'+x[0]+'"'+((info.configuredProvider||'auto')===x[0]?' selected':'')+'>'+x[1]+'</option>').join('')+'</select></label>'
+  return '<details class="card"><summary style="cursor:pointer"><b>联网搜索</b> <span class="mut" style="font-size:12px">'
+    + (info.enabled ? '已开启' : '已关闭') + ' · ' + esc(providerName[info.provider] || '—') + '</span></summary>'
+    + '<div class="note" style="margin-top:8px">由模型判断要不要搜。模型下拉里选 DeepSeek / 通义模型 / 必应，保存即时生效。</div>'
     + '<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:10px 0"><input type="checkbox" id="wsEnabled"' + (info.enabled ? ' checked' : '') + '> 允许联网搜索</label>'
     + '<div class="frow"><label>搜索模型</label><div><select id="wsModel">' + opts + '</select>'
-    + '<div class="mut" style="font-size:12px;margin-top:3px">当前实际：' + esc(providerName[info.provider] || info.provider || '—') + ' · ' + esc(cur) + '</div></div></div>'
-    + '<div class="flexbar"><button class="btn primary" id="wsSave">保存（即时生效）</button><span class="mut" id="wsHint"></span></div></section>'
+    + '<div class="mut" style="font-size:12px;margin-top:3px">当前实际：' + esc(providerName[info.provider] || info.provider || '—') + '</div></div></div>'
+    + '<div class="flexbar"><button class="btn primary" id="wsSave">保存（即时生效）</button><span class="mut" id="wsHint"></span></div></details>'
 }
 function pageApi(){
   return modelPickerCard() + visionCard() + webSearchCard() + `<h1>模型与接口</h1><div class="sub">对话模型、思考强度改完立刻生效；下方视觉模型与其它项按标注生效。</div>
   <div class="card"><strong>当前生效的识图模型：</strong>${esc(state?.bot?.visionModel || '未启用')}<div class="mut" style="margin-top:5px">图片识别与群聊报告分别配置；下方的 DashScope 模型只有切换识图服务商后才会用于读图。</div></div>
-  <div class="card">${configForm(['TEMPERATURE','MAX_TOKENS','DASHSCOPE_API_KEY','BAIDU_QIANFAN_API_KEY','WEB_SEARCH_PROVIDER','WEB_SEARCH_MODEL','LOG_LEVEL'],'已设置的密钥不会显示；留空保持原值。')}</div>`
+  <div class="card">${configForm(['TEMPERATURE','MAX_TOKENS','DASHSCOPE_API_KEY','BAIDU_QIANFAN_API_KEY','LOG_LEVEL'],'已设置的密钥不会显示；留空保持原值。')}</div>`
 }
 function pageReport(){
   return `<h1>群聊报告</h1><div class="sub">每日自动生成「群聊日常分析报告」，也可以在这里随时手动生成</div>
@@ -681,7 +681,7 @@ function modelPickerCard(){
     ? known.map(function(id){ return '<option value="' + esc(id) + '"' + (id === cur.model ? ' selected' : '') + '>' + esc(id) + '</option>' }).join('')
     : '<option value="' + esc(cur.model || '') + '">' + esc(cur.model || '（先点自动检测）') + '</option>'
   return [
-    '<section class="card"><h2>对话模型</h2>',
+    '<details class="card"><summary style="cursor:pointer"><b>对话模型</b> <span class="mut" style="font-size:12px">' + esc(cur.provider || '') + ' · ' + esc(cur.model || '') + '</span></summary><div style="margin-top:10px">',
     '<div class="note">选供应商 → 点「自动检测模型」→ 从下拉里选型号。选完立刻生效，不用再点保存。</div>',
     '<div class="frow"><label>供应商</label><div><select id="mpProvider">' + opts + '</select></div></div>',
     '<div class="frow"><label>接口地址</label><div><input id="mpBaseUrl" value="' + esc(cur.baseUrl || '') + '" placeholder="https://api.deepseek.com"><div class="mut" style="font-size:12px;margin-top:4px">需要兼容 OpenAI 的 /chat/completions 与 /models</div></div></div>',
@@ -690,7 +690,7 @@ function modelPickerCard(){
     '<div class="frow"><label>思考强度</label><div><select id="mpReason">' + lvls + '</select><div class="mut" style="font-size:12px;margin-top:4px">不是所有服务商都支持；报错就改回「关闭」</div></div></div>',
     '<div class="flexbar"><button class="btn" id="mpDetect">自动检测模型</button><button class="btn" id="mpSaveBase">保存地址/密钥</button></div>',
     '<div class="mut" id="mpStatus" style="margin-top:8px">当前：' + esc(cur.provider || '-') + ' · ' + esc(cur.model || '-') + ' · 思考 ' + esc(cur.reasoning || '关闭') + '</div>',
-    '</section>'
+    '</div></details>'
   ].join('')
 }
 function visionCard(){
@@ -714,7 +714,7 @@ function visionCard(){
     return '<div style="display:flex;align-items:center;gap:8px;margin:4px 0"><span class="pill">' + esc(x.name) + '</span><span class="mut" style="font-size:12px">' + esc(x.baseUrl) + '</span><span class="mut" style="font-size:12px">' + esc(x.model || '未选模型') + '</span><button class="btn sm" data-vp-del="' + esc(x.id) + '">删除</button></div>'
   }).join('') : '<div class="mut">还没有自定义接口</div>'
   return [
-    '<section class="card"><h2>识图设置</h2>',
+    '<details class="card"><summary style="cursor:pointer"><b>识图设置</b> <span class="mut" style="font-size:12px">' + esc(provider) + ' · ' + esc(currentModel || '未选模型') + '</span></summary><div style="margin-top:10px">',
     '<div class="note">聊天读图与表情包打标都用这里的模型。可以添加多个自定义接口（OpenAI 兼容），在服务商里直接切换。</div>',
     row('服务商', '<select id="vcProvider">' + providerOptions + '</select>'),
     row('识图模型', '<div class="row" style="display:flex;gap:8px"><select id="vcModel" style="flex:1">' +
@@ -738,7 +738,7 @@ function visionCard(){
     row('模型名', '<input id="vpModel" placeholder="例如 gpt-4o-mini（可稍后检测再选）">'),
     '<div class="flexbar"><button class="btn" id="vpAdd">添加自定义接口</button><span class="mut" id="vpHint" style="font-size:12px"></span></div>',
     '</details>',
-    '</section>'
+    '</div></details>'
   ].join('')
 }
 function pageStickers(){
@@ -858,7 +858,7 @@ async function bind(){
     wsSave.disabled = true
     try {
       const chosen=document.getElementById('wsModel').value
-      const r = await api('/api/action/set-websearch', { enabled: document.getElementById('wsEnabled').checked, model: chosen, provider: ['deepseek','bing'].includes(chosen)?chosen:document.getElementById('wsProvider').value })
+      const r = await api('/api/action/set-websearch', { enabled: document.getElementById('wsEnabled').checked, model: chosen })
       webSearchInfo = { enabled: r.enabled, model: r.model, provider: r.provider }
       toast('已保存：' + (r.enabled ? '允许联网' : '关闭联网') + '，模型 ' + r.model)
       await load()
