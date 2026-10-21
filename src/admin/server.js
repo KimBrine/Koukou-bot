@@ -219,7 +219,7 @@ function validateGroupConfig(key, value) {
   }
 }
 
-export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, quietGreetings, personaGreetings, bot, customCommands, commandCenter, llm, stickers, stickerTagLLM, updateChecker=createUpdateChecker({currentVersion:APP_VERSION}), switchVision, visionProviders, restartBot, webSearch, switchWebSearch, backup, selfcheck, metrics, errors }) {
+export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, quietGreetings, personaGreetings, bot, customCommands, commandCenter, llm, stickers, stickerTagLLM, updateChecker=createUpdateChecker({currentVersion:APP_VERSION}), switchVision, visionProviders, restartBot, webSearch, switchWebSearch, backup, selfcheck, metrics, errors, pokeReplies }) {
   // 本实例自己的 .env（并行跑两个实例时，写死 rootDir\.env 会改到另一个实例的配置上）
   const envFile = config.envFile || path.join(config.rootDir, '.env')
   const logFile = path.join(config.logDir || path.join(config.rootDir, 'logs'), 'bot.log')
@@ -536,6 +536,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       }
     },
     'GET /api/errors': async () => ({ items: errors ? errors.list() : [] }),
+    'GET /api/poke-replies': async () => ({ lines: pokeReplies && Array.isArray(pokeReplies.lines) ? [...pokeReplies.lines] : [] }),
     'GET /api/tasks': async () => ({
       backup: { last: backup ? backup.lastBackupAt() : 0, everyHours: 6 },
       summary: { enabled: Boolean(config.summaryEnabled), times: config.summaryTimes || '' },
@@ -1428,6 +1429,19 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         logger?.info?.('[控制台] 表情包批量打标完成：' + retagJob.done + ' 张，失败 ' + retagJob.errors)
       })().catch((err) => { retagJob.running = false; retagJob.error = err.message })
       return { ok: true, total: list.length }
+    },
+    async 'save-poke-replies'(payload) {
+      const raw = String((payload && payload.text) || '')
+      const lines = raw.split(/\r?\n/).map((x) => x.trim()).filter((x) => x && !x.startsWith('#'))
+      if (!lines.length) throw new Error('至少保留一条回复')
+      if (lines.length > 300) throw new Error('最多 300 条')
+      for (const line of lines) if (line.length > 120) throw new Error('单条不超过 120 字')
+      const file = config.pokeRepliesFile || path.join(config.dataDir, 'poke-replies.txt')
+      mkdirSync(path.dirname(file), { recursive: true })
+      writeFileSync(file, lines.join('\n') + '\n', 'utf8')
+      if (pokeReplies && Array.isArray(pokeReplies.lines)) pokeReplies.lines.splice(0, pokeReplies.lines.length, ...lines)
+      logger?.info?.('[控制台] 已更新拍一拍语库：' + lines.length + ' 条')
+      return { ok: true, count: lines.length }
     },
     async 'delete-backup'(payload) {
       const name = String((payload && payload.name) || '')

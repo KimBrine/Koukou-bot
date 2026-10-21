@@ -69,6 +69,7 @@ let apiCardsOpen = { model: false, vision: false, search: false }
 let backupInfo = { items: [], root: '' }
 let selfCheckInfo = null
 let errorInfo = []
+let pokeReplies = []
 let tasksInfo = null
 let metricsInfo = []
 let metricsRange = 7
@@ -618,7 +619,13 @@ function pageLogs(){
   </div>
   <div class="logbox mono" id="logBot" style="max-height:420px"></div>`
 }
-function pageCommands(){ return CommandCenterUI.render({custom:customCommands,builtins:commandBuiltins,poke:pokeDiagnostics,groups:joinedGroups}) + commandTestCard() }
+function pokeCorpusCard(){
+  return '<section class="card"><h2>拍一拍语库 <span class="pill">' + pokeReplies.length + ' 条</span></h2>' +
+    '<div class="note">一行一条；<code>#</code> 开头的行不生效；<code>{name}</code> 会替换成拍你的人。保存后立即生效，随机抽取且不会连续重复。</div>' +
+    '<textarea id="pokeText" rows="10" style="width:100%;margin-top:8px">' + esc(pokeReplies.join('\n')) + '</textarea>' +
+    '<div class="flexbar"><button class="btn primary" id="pokeSave">保存语库</button><span class="mut" id="pokeHint"></span></div></section>'
+}
+function pageCommands(){ return CommandCenterUI.render({custom:customCommands,builtins:commandBuiltins,poke:pokeDiagnostics,groups:joinedGroups}) + commandTestCard() + pokeCorpusCard() }
 // ── 渲染 ───────────────────────────────────────────────
 function pageMemory(){
   const nameOf = function(key){
@@ -1169,6 +1176,7 @@ async function bind(){
   const errorsRefresh = document.getElementById('errorsRefresh')
   if (errorsRefresh) errorsRefresh.onclick = async function(){
     errorInfo = (await api('/api/errors').catch(function(){ return { items: [] } })).items || []
+    pokeReplies = (await api('/api/poke-replies').catch(function(){ return { lines: [] } })).lines || []
     render()
   }
   const errorsClear = document.getElementById('errorsClear')
@@ -1261,6 +1269,19 @@ async function bind(){
       })
     } catch(e){ if (box) box.innerHTML = '<div class="mut">检测失败：' + esc(e.message) + '</div>' }
     finally { simRun.disabled = false }
+  }
+  const pokeSave = document.getElementById('pokeSave')
+  if (pokeSave) pokeSave.onclick = async function(){
+    const box = document.getElementById('pokeText')
+    const hint = document.getElementById('pokeHint')
+    pokeSave.disabled = true
+    try {
+      const r = await api('/api/action/save-poke-replies', { text: box.value })
+      pokeReplies = box.value.split(/\r?\n/).map(function(s){ return s.trim() }).filter(function(s){ return s && s[0] !== '#' })
+      if (hint) hint.textContent = '已保存 ' + r.count + ' 条，立即生效'
+      toast('拍一拍语库已更新：' + r.count + ' 条')
+    } catch(e){ toast('保存失败：' + e.message, true) }
+    finally { pokeSave.disabled = false }
   }
   const retagAll = document.getElementById('retagAll')
   if (retagAll) retagAll.onclick = async function(){
@@ -2115,6 +2136,7 @@ async function load(){
     backupInfo = await api('/api/backups').catch(function(){ return { items: [], root: '' } })
     selfCheckInfo = await api('/api/selfcheck').catch(function(){ return null })
     errorInfo = (await api('/api/errors').catch(function(){ return { items: [] } })).items || []
+    pokeReplies = (await api('/api/poke-replies').catch(function(){ return { lines: [] } })).lines || []
     tasksInfo = await api('/api/tasks').catch(function(){ return null })
     metricsInfo = (await api('/api/metrics?days=' + metricsRange).catch(function(){ return { items: [] } })).items || []
     updateSideStatus(s.bot)

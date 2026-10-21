@@ -418,7 +418,8 @@ const dailySummary = createDailySummary({ config, logger, onebot, llm: { chat: s
 const systemPrompt = createChatPromptBuilder({ config, longMemory, todayNote: key => dailyPing?.todayNote?.(key) ?? '' })
 
 // 拍一拍回复语（poke-replies.txt，可自行增删）
-const pokeReplier = createPokeReplier(loadPokeReplies(config.rootDir, logger, config.pokeRepliesFile))
+const pokeLines = loadPokeReplies(config.rootDir, logger, config.pokeRepliesFile)
+const pokeReplier = createPokeReplier(pokeLines)
 
 // 盯人回复：定期检查目标群里指定用户是否发过言，有则 @ 他回一两句
 const replyLog = new Map() // `${groupId}:${userId}` -> 上次回复时间戳
@@ -496,6 +497,7 @@ if (config.adminEnabled) {
     backup: backupService,
     metrics: metricsService,
     selfcheck: selfCheck,
+    pokeReplies: { lines: pokeLines },
     errors: errorStore,
     visionProviders,
     restartBot: () => {
