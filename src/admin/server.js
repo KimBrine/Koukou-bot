@@ -1429,6 +1429,15 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       })().catch((err) => { retagJob.running = false; retagJob.error = err.message })
       return { ok: true, total: list.length }
     },
+    async 'delete-backup'(payload) {
+      const name = String((payload && payload.name) || '')
+      if (!/^\d{8}-\d{6}$/.test(name)) throw new Error('备份名称无效')
+      const dir = path.join(config.dataDir, 'backups', name)
+      if (!existsSync(dir)) throw new Error('找不到这份备份')
+      rmSync(dir, { recursive: true, force: true })
+      logger?.info?.('[控制台] 已删除备份：' + name)
+      return { ok: true, name }
+    },
     async 'restore-backup'(payload) {
       const name = String((payload && payload.name) || '')
       if (!/^\d{8}-\d{6}$/.test(name)) throw new Error('备份名称无效')

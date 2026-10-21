@@ -812,7 +812,7 @@ function selfCheckCard(){
 }
 function backupCard(){
   const items = (backupInfo.items || []).slice(0, 7)
-  const rows = items.map(function(x){ return '<tr><td class="mono">' + esc(x.name) + '</td><td>' + (x.size / 1024 / 1024).toFixed(1) + ' MB</td><td style="text-align:right"><button class="btn sm" data-restore="' + esc(x.name) + '">还原</button></td></tr>' }).join('')
+  const rows = items.map(function(x){ return '<tr><td class="mono">' + esc(x.name) + '</td><td>' + (x.size / 1024 / 1024).toFixed(1) + ' MB</td><td style="text-align:right"><button class="btn sm" data-restore="' + esc(x.name) + '">还原</button> <button class="btn sm" data-delbackup="' + esc(x.name) + '">删除</button></td></tr>' }).join('')
   return '<section class="card"><h2>备份</h2><div class="note">每天自动备份一次，保留最近 7 份。位置：' + esc(backupInfo.root || 'data/backups') + '</div>' +
     (rows ? '<table class="tbl"><thead><tr><th>备份</th><th>大小</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' : '<div class="mut">还没有备份</div>') +
     '<div class="flexbar"><button class="btn primary" id="doBackup">立即备份</button></div></section>'
@@ -1279,6 +1279,18 @@ async function bind(){
         toast('已还原 ' + r.restored + '，正在重启…')
         await api('/api/action/restart-bot', {})
       } catch(e){ toast('还原失败：' + e.message, true); b.disabled = false }
+    }
+  })
+  document.querySelectorAll('[data-delbackup]').forEach(function(b){
+    b.onclick = async function(){
+      if (!await ask('删除备份 ' + b.dataset.delbackup + '？', '只删这一份备份文件，当前记忆和配置不受影响。', '删除')) return
+      b.disabled = true
+      try {
+        await api('/api/action/delete-backup', { name: b.dataset.delbackup })
+        backupInfo = await api('/api/backups')
+        toast('已删除备份')
+        render()
+      } catch(e){ toast('删除失败：' + e.message, true); b.disabled = false }
     }
   })
   const doBackup = document.getElementById('doBackup')
