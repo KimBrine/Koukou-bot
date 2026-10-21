@@ -127,6 +127,7 @@ const EDITABLE = [
   { key: 'WEB_SEARCH_PROVIDER', label: '联网搜索方式', hint: 'auto = 千帆 > DeepSeek > 通义 > 必应；独立配置改完需重启，建议使用上方联网搜索卡片即时保存', live: false, type: 'text' },
   { key: 'WEB_SEARCH_MODEL', label: '联网搜索模型', hint: '通义联网搜索用的模型，默认 qwen-plus；改完需重启', live: false, type: 'text' },
   { key: 'TEMPERATURE', label: '采样温度', hint: '越高越随性', live: false, type: 'number' },
+  { key: 'PRIVATE_WHITELIST', label: '私聊白名单', hint: '允许私聊的 QQ 号，逗号分隔；留空 = 只回管理员和控制台里添加过的私聊', live: true, type: 'text', wide: true },
   { key: 'MAX_TOKENS', label: '单次回复 token 上限', hint: '256～200000，即时生效；思考强度开启时建议 ≥2000，否则推理会吃掉输出预算导致回复被截断', live: true, type: 'number' },
   { key: 'LOG_LEVEL', label: '日志级别', hint: 'debug/info/warn/error', live: false, type: 'text' },
 ]
@@ -843,6 +844,9 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         break
       case 'DAILY_PING_CHAIN_WINDOW_MS':
         config.dailyPingChainWindowMs = Math.max(10000, num(value, config.dailyPingChainWindowMs))
+        break
+      case 'PRIVATE_WHITELIST':
+        config.privateWhitelist = new Set(String(value || '').split(/[,，\s]+/).filter((x) => /^\d{1,15}$/.test(x)).map(Number))
         break
       case 'MAX_TOKENS':
         config.maxTokens = Math.max(256, Math.min(200000, Math.floor(num(value, config.maxTokens))))

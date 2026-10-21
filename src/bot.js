@@ -82,6 +82,12 @@ export function decideReply({ isPrivate, atBot, replyToBot = false, groupId, con
 
   if (isPrivate) {
     if (s && s.atReplyEnabled === false) return { reply: false, reason: '本会话已关闭回复' }
+    // 只有「私聊白名单 / 管理员 / 控制台里加过的私聊」才回；陌生人私聊一律不回。
+    const uid = Number(String(chatKey || '').replace(/^p/, ''))
+    const listed = config.privateWhitelist instanceof Set && config.privateWhitelist.has(uid)
+    const admin = isBotAdmin(uid, config.adminUsers)
+    const configured = Boolean(chatSettings && typeof chatSettings.raw === 'function' && chatSettings.raw(chatKey))
+    if (!listed && !admin && !configured) return { reply: false, reason: '私聊不在白名单' }
     return { reply: true, reason: '私聊消息' }
   }
 

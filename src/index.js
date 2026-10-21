@@ -179,7 +179,8 @@ function visionEndpoint(provider) {
     return {
       provider: 'deepseek', key: config.deepseekApiKey, baseUrl: config.deepseekBaseUrl,
       model: config.visionModel || 'deepseek-flash', label: 'DeepSeek 视觉',
-      reasoningEffort: config.deepseekReasoningEffort, enableThinking: undefined,
+      // 识图不需要长思考：deepseek-flash 带思考时会把 max_tokens(300) 全烧在推理上，正文为空。
+      reasoningEffort: 'none', enableThinking: undefined,
     }
   }
   if (!config.dashscopeApiKey) return null

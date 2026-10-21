@@ -280,6 +280,8 @@ export function loadConfig() {
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean),
+    // 私聊白名单：只有这些 QQ（+管理员 +控制台里加过的私聊）才会收到回复
+    privateWhitelist: new Set(String(env.PRIVATE_WHITELIST ?? '').split(/[,，\s]+/).filter((x) => /^\d{1,15}$/.test(x)).map(Number)),
     idCheckOperators: String(env.ID_CHECK_OPERATORS ?? '')
       .split(',')
       .map((s) => s.trim())
