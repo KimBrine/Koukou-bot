@@ -19,7 +19,7 @@ import { loadPokeReplies, createPokeReplier } from './pokeReplies.js'
 import { createLongMemory } from './longMemory.js'
 import { createCustomCommands } from './customCommands.js'
 import { createCommandCenter } from './commandCenter.js'
-import { createStickers } from './stickers.js'
+import { createPersonaStickers } from './personaStickers.js'
 import { createStickerLearner } from './stickerLearn.js'
 import { createCustomCommandSchedule } from './customCommandSchedule.js'
 import { createTargetWatch } from './targetWatch.js'
@@ -180,7 +180,7 @@ function visionEndpoint(provider) {
       provider: 'deepseek', key: config.deepseekApiKey, baseUrl: config.deepseekBaseUrl,
       model: config.visionModel || 'deepseek-flash', label: 'DeepSeek 视觉',
       // 识图不需要长思考：deepseek-flash 带思考时会把 max_tokens(300) 全烧在推理上，正文为空。
-      reasoningEffort: config.visionReasoning || 'none', enableThinking: undefined,
+      reasoningEffort: /^deepseek.*flash/i.test(config.visionModel||'deepseek-flash')?'max':config.visionReasoning || 'none', enableThinking: undefined,
     }
   }
   if (!config.dashscopeApiKey) return null
@@ -196,10 +196,10 @@ function makeClient(ep) {
   return new DeepSeekClient({
     apiKey: ep.key, baseUrl: ep.baseUrl, model: ep.model,
     temperature: config.temperature,
-    maxTokens: Math.min(config.maxTokens, config.visionMaxTokens || 300),
+    maxTokens: Math.min(config.maxTokens, /^deepseek.*flash/i.test(ep.model)?Math.max(2048,config.visionMaxTokens||300):config.visionMaxTokens || 300),
     timeoutMs: config.timeoutMs, maxRetries: config.maxRetries,
     maxConcurrency: config.maxConcurrency, logger, label: ep.label,
-    reasoningEffort: ep.reasoningEffort, enableThinking: ep.enableThinking,
+    reasoningEffort: /^deepseek.*flash/i.test(ep.model)?'max':ep.reasoningEffort, enableThinking: ep.enableThinking,
   })
 }
 let visionActive = null
@@ -276,7 +276,8 @@ memory.onEvict = (key, entries) => longMemory.addEvicted(key, entries)
 const customCommands = createCustomCommands({ file: path.join(config.dataDir, 'custom-commands.json'), logger })
 
 // 表情包库：图片存 data/stickers，模型可用 [贴纸: 名称] 指定发送
-const stickers = createStickers({ dir: path.join(config.dataDir, 'stickers'), logger })
+const chatSettings = createChatSettings({ file: path.join(config.dataDir, 'chat-settings.json'), logger })
+const stickers = createPersonaStickers({ dir: path.join(config.dataDir, 'stickers'), config, chatSettings, memory, logger })
 const stickerFilterLLM = config.deepseekApiKey ? new DeepSeekClient({
   apiKey: config.deepseekApiKey, baseUrl: config.deepseekBaseUrl, model: 'deepseek-flash',
   reasoningEffort: 'max', temperature: 0.2, maxTokens: undefined,
@@ -372,7 +373,6 @@ const pokeReplier = createPokeReplier(loadPokeReplies(config.rootDir, logger, co
 const replyLog = new Map() // `${groupId}:${userId}` -> 上次回复时间戳
 // 反检测限流：所有发送路径共用（每个会话每小时上限 + 最小间隔）
 const rateLimiter = createRateLimiter({ perHour: config.rateLimitPerHour, minGapMs: config.rateLimitMinGapMs })
-const chatSettings = createChatSettings({ file: path.join(config.dataDir, 'chat-settings.json'), logger })
 const targetWatch = createTargetWatch({ config, logger, onebot, llm, memory, buildSystemPrompt: systemPrompt, replyLog, rateLimiter, longMemory, chatSettings })
 
 // 定时指令：按配置时点到指定群 @ 目标账号，发送固定内容。

@@ -10,7 +10,7 @@ export function createStickerLearner({ config, logger, onebot, stickers, filterL
   imageCache, fetchImpl = fetch, now = () => Date.now() }) {
   let windowStart = now(), used = 0, queue = Promise.resolve()
   // 学习范围：g<群号> 走群白名单，p<QQ号> 走「私聊也学」开关
-  const allowed = chatKey => {
+  const scopeAllowed = chatKey => {
     if (!config.stickerLearnEnabled) return false
     const key = String(chatKey || '')
     if (key.startsWith('p')) return Boolean(config.stickerLearnPrivate) && Number(key.slice(1)) > 0
@@ -49,7 +49,9 @@ export function createStickerLearner({ config, logger, onebot, stickers, filterL
     } catch { return null } finally { clearTimeout(timer) }
   }
 
-  async function learn({ images, chatKey, senderName, text }) {
+  async function learn({ images, chatKey, senderName, text }, selected) {
+    const stickers = selected.store
+    const allowed = key => scopeAllowed(key) && selected.current()
     if (!allowed(chatKey)) return null
     const tagClient=typeof tagLLM?.snapshot==='function'?tagLLM.snapshot():tagLLM
     if(typeof tagClient?.describeImages!=='function')return null
@@ -90,11 +92,12 @@ export function createStickerLearner({ config, logger, onebot, stickers, filterL
     // 兼容旧调用：只传 groupId 时等价于 g<群号>
     const { images, groupId } = message
     const chatKey = message.chatKey || (groupId ? 'g' + groupId : '')
-    if (!allowed(chatKey) || !stickers || !filterLLM?.describeImages || !tagLLM?.describeImages || !images?.length) return Promise.resolve(null)
+    if (!scopeAllowed(chatKey) || !stickers || !filterLLM?.describeImages || !tagLLM?.describeImages || !images?.length) return Promise.resolve(null)
     if (now() - windowStart >= 3600000) { windowStart = now(); used = 0 }
     if (used >= Math.max(0, config.stickerLearnPerHour || 0)) return Promise.resolve(null)
     used++
-    const task = queue.then(() => learn({ ...message, chatKey })).catch(err => {
+    const selected = stickers.snapshot?.(chatKey) || { store: stickers, current: () => true }
+    const task = queue.then(() => learn({ ...message, chatKey }, selected)).catch(err => {
       logger?.warn?.(`[表情包学习] 未收录：${err.message}`); return null
     })
     queue = task.then(() => {})
