@@ -941,7 +941,13 @@ function pageMetrics(){
 function pageErrors(){
   const items = errorInfo || []
   const rows = items.map(function(e){
-    return '<div style="padding:10px 0;border-bottom:1px dashed rgba(148,163,184,.2)"><div class="mut" style="font-size:12px">' + esc(new Date(e.time).toLocaleString()) + ' · ' + esc(e.scope || 'bot') + '</div><pre class="mono" style="white-space:pre-wrap;word-break:break-all;margin:6px 0;font-size:12px">' + esc(e.message || '') + '</pre></div>'
+    const warn = e.level === 'warn'
+    const color = warn ? '#c9973b' : '#e05555'
+    return '<div style="padding:10px 0 10px 10px;border-bottom:1px dashed rgba(148,163,184,.2);border-left:3px solid ' + color + '">' +
+      '<div class="mut" style="font-size:12px;display:flex;gap:8px;align-items:center">' +
+      '<span style="display:inline-block;padding:1px 8px;border-radius:999px;background:' + color + ';color:#fff;font-size:11px">' + (warn ? '警告' : '错误') + '</span>' +
+      esc(new Date(e.time).toLocaleString()) + ' · ' + esc(e.scope || 'bot') + '</div>' +
+      '<pre class="mono" style="white-space:pre-wrap;word-break:break-all;margin:6px 0;font-size:12px;color:' + (warn ? 'var(--text)' : color) + '">' + esc(e.message || '') + '</pre></div>'
   }).join('')
   return '<h1>错误中心</h1><div class="sub">最近 ' + items.length + ' 条错误；只记录，不影响运行。</div>' +
     '<div class="flexbar"><button class="btn" id="errorsRefresh">刷新</button><button class="btn" id="errorsClear">清空</button></div>' +
