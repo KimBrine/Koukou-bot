@@ -525,6 +525,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       configuredProvider: config.webSearchProvider || 'auto',
     }),
     'GET /api/stickers': async () => ({
+      persona: stickers?.scope?.() || null,
       items: stickers ? stickers.list() : [],
       blacklist: stickers?.blacklistEntries?.() || [],
       enabled: Boolean(config.stickersEnabled),
@@ -1139,47 +1140,62 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       return out
     },
     async 'sticker-add'(payload) {
+      if (stickers?.scope && payload?.stickerScope !== stickers.scope().token) throw new Error('人格已变化，请刷新表情包页面后再操作')
       if (!stickers) throw new Error('表情包库未启用')
       const out = stickers.add({ name: payload?.name, keywords: payload?.keywords, scenes: payload?.scenes, dataUrl: payload?.dataUrl, description: payload?.description })
       return { ok: true, item: out.item, duplicated: out.duplicated, count: stickers.count() }
     },
     async 'sticker-suggest'(payload) {
-      return {ok:true,draft:await suggestStickerMetadata({dataUrl:payload?.dataUrl,tagLLM:stickerTagLLM})}
+      if (stickers?.scope && payload?.stickerScope !== stickers.scope().token) throw new Error('人格已变化，请刷新表情包页面后再操作')
+      const selected = stickers?.snapshot?.()
+      const draft = await suggestStickerMetadata({dataUrl:payload?.dataUrl,tagLLM:stickerTagLLM})
+      if (selected && !selected.current()) throw new Error('人格已变化，已丢弃旧人格补全结果')
+      return {ok:true,draft}
     },
     async 'check-update'() {return updateChecker.check({force:true})},
     async 'sticker-update'(payload) {
+      if (stickers?.scope && payload?.stickerScope !== stickers.scope().token) throw new Error('人格已变化，请刷新表情包页面后再操作')
       if (!stickers) throw new Error('表情包库未启用')
       const item = stickers.update(String(payload?.id || ''), { name: payload?.name, keywords: payload?.keywords, scenes: payload?.scenes, description: payload?.description, dataUrl: payload?.dataUrl })
       if (!item) throw new Error('找不到这张表情包')
       return { ok: true, item }
     },
     async 'sticker-delete'(payload) {
+      if (stickers?.scope && payload?.stickerScope !== stickers.scope().token) throw new Error('人格已变化，请刷新表情包页面后再操作')
       if (!stickers) throw new Error('表情包库未启用')
       const ok = stickers.remove(String(payload?.id || ''))
       return { ok, count: stickers.count() }
     },
     async 'sticker-blacklist'(payload) {
+      if (stickers?.scope && payload?.stickerScope !== stickers.scope().token) throw new Error('人格已变化，请刷新表情包页面后再操作')
       if (!stickers) throw new Error('表情包库未启用')
       if (!stickers.blacklist(String(payload?.id || ''))) throw new Error('找不到这张表情包')
       return { ok:true, count:stickers.count() }
     },
     async 'sticker-unblock'(payload) {
+      if (stickers?.scope && payload?.stickerScope !== stickers.scope().token) throw new Error('人格已变化，请刷新表情包页面后再操作')
       if (!stickers) throw new Error('表情包库未启用')
       if (!stickers.unblock(String(payload?.hash || ''))) throw new Error('找不到这条黑名单')
       return { ok:true }
     },
     async 'sticker-send'(payload) {
+      if (stickers?.scope && payload?.stickerScope !== stickers.scope().token) throw new Error('人格已变化，请刷新表情包页面后再操作')
       if (!stickers) throw new Error('表情包库未启用')
       const groupId = String(payload?.groupId || '').trim()
       if (!/^\d{5,12}$/.test(groupId)) throw new Error('请选择要发送到的群')
-      const item = payload?.id ? stickers.get(String(payload.id)) : stickers.find(String(payload?.keyword || '')) || stickers.random()
+      const selected = stickers.snapshot?.('g' + groupId)
+      const library = selected?.store || stickers
+      if (stickers.scope && stickers.scope('g' + groupId).key !== stickers.scope().key) throw new Error('目标群使用另一个人格，请使用对应人格的图库发送')
+      const item = payload?.id ? library.get(String(payload.id)) : library.find(String(payload?.keyword || '')) || library.random()
       if (!item) throw new Error('表情包库里还没有图')
-      const file = stickers.dataUrlOf(item)
+      const file = library.dataUrlOf(item)
       if (!file) throw new Error('图片文件读不到，可能已被删除')
       const text=String(payload?.text || '').trim()
       if(!text||text.length>1000)throw new Error('请填写1到1000字的伴随文字，不能只发图片')
       const receipt=await onebot.sendGroup(groupId,text)
       if(!receipt?.message_id&&!receipt?.data?.message_id)throw new Error('文字发送未确认，未继续发送图片')
+      if (selected && !selected.current()) throw new Error('人格已变化，未继续发送旧人格图片')
+      if (!library.dataUrlOf(item)) throw new Error('图片已删除或拉黑，未继续发送')
       await onebot.sendGroup(groupId, [{ type: 'image', data: { file, sub_type: 1 } }])
       logger?.info?.(`[控制台] 测试发送表情包「${item.name}」到群 ${groupId}`)
       return { ok: true, name: item.name }
@@ -1445,6 +1461,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       }
       // 表情包图片（控制台预览用）
       if (req.method === 'GET' && url.pathname === '/api/sticker-blacklist-file') {
+        if (stickers?.scope && url.searchParams.get('scope') !== stickers.scope().token) return send(409, 'persona changed', 'text/plain; charset=utf-8')
         const image = stickers?.blacklistImage?.(String(url.searchParams.get('hash') || ''))
         if(!image)return send(404,'not found','text/plain; charset=utf-8')
         res.setHeader('Cache-Control','no-store')
@@ -1452,6 +1469,8 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         return send(200,image.buffer,image.mime)
       }
       if (req.method === 'GET' && url.pathname === '/api/sticker-file') {
+        if (stickers?.scope && url.searchParams.get('scope') !== stickers.scope().token) return send(409, 'persona changed', 'text/plain; charset=utf-8')
+        res.setHeader('Cache-Control','no-store')
         const id = String(url.searchParams.get('id') || '')
         const item = stickers ? stickers.get(id) : null
         if (!item) return send(404, 'not found', 'text/plain; charset=utf-8')

@@ -1024,6 +1024,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       if (!samePersona()) return
       const sessionPersonaText = prepareSessionPersona({ config, memory, longMemory, chatSettings, targetWatch, key })
       memoryRevision = memory.version?.(key)
+      const replyStickers = stickers?.forChat?.(key) || stickers
       runtimeStats?.noteMessage?.(key, Number(evt.time) * 1000 || Date.now())
 
       // 反检测限流：这里只查"每小时发言额度"（间隔不够的问题放到发送前用等待解决，
@@ -1185,7 +1186,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       // 会话专属要求（控制台里设的），跟在人设后面、机械规则前面
       // 表情包：把可用清单告诉模型，让它用 [贴纸: 名称] 指定（程序负责发图）
       let stickerHint = !questionMode && stickerSend.allowed(evt)
-        ? `\n\n【表情包发送规则】可用表情包：${stickers.summary(60)}。当其中一张能贴切表达当前情绪或回应时，可以主动挑一张，不必等对方明确要图；没有合适的就正常用文字。始终先写自然文字回复，选中后另起一行写 [贴纸: 名称]，不能只输出图片标记。程序会取走标记并发出真实图片，不会把它作为聊天正文展示。该标记是“禁止内部方括号标记”的明确例外；表情包发送与文字里的颜文字、emoji装饰限制分别处理，文字要求纯文字并不禁止选图。选图必须同时符合当前用户语境和你本轮回复的态度，不能只因出现一个情绪词就配图。认真安慰、讨论生死或群友冲突时尤其不要配嘲笑、吃瓜、夸张惊吓或撒娇的图；没有贴切的图就完全省略贴纸标记，35%只是上限机会，不是发图任务。不要根据以前发过什么推断这次也适合。只能逐字使用清单中的完整名称，每轮最多${config.stickerMaxPerReply || 1}张；是否实际发送由程序按配置概率决定，不能绕过。不编造、不为发图而硬凑。`
+        ? `\n\n【表情包发送规则】可用表情包：${replyStickers.summary(60)}。当其中一张能贴切表达当前情绪或回应时，可以主动挑一张，不必等对方明确要图；没有合适的就正常用文字。始终先写自然文字回复，选中后另起一行写 [贴纸: 名称]，不能只输出图片标记。程序会取走标记并发出真实图片，不会把它作为聊天正文展示。该标记是“禁止内部方括号标记”的明确例外；表情包发送与文字里的颜文字、emoji装饰限制分别处理，文字要求纯文字并不禁止选图。选图必须同时符合当前用户语境和你本轮回复的态度，不能只因出现一个情绪词就配图。认真安慰、讨论生死或群友冲突时尤其不要配嘲笑、吃瓜、夸张惊吓或撒娇的图；没有贴切的图就完全省略贴纸标记，35%只是上限机会，不是发图任务。不要根据以前发过什么推断这次也适合。只能逐字使用清单中的完整名称，每轮最多${config.stickerMaxPerReply || 1}张；是否实际发送由程序按配置概率决定，不能绕过。不编造、不为发图而硬凑。`
         : ''
       const stickerRequestPolicy=JSON.stringify(commandCenter?.get('request-sticker'))
       const stickerRequestAllowed=()=>directReply&&featureAllowed('request-sticker')&&JSON.stringify(commandCenter?.get('request-sticker'))===stickerRequestPolicy
@@ -1298,9 +1299,9 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         // 第一条的普通回复可能仍在生成；复读段已触发时取消这条迟到的搭话。
         if (!canContinue()) return
         // 先决定是否实际配图，再发送文字；重写文案不重新抽取概率。
-        let selection=questionMode?{items:[],reason:'解题不配表情包'}:stickerSend.select(evt,{text:reply,queries:stickerQueries,context:parsed.text,requested:stickerRequested})
+        let selection=questionMode?{items:[],reason:'解题不配表情包'}:stickerSend.select(evt,{text:reply,queries:stickerQueries,context:parsed.text,requested:stickerRequested,store:replyStickers})
         if(stickerRequested&&!stickerRequestAllowed())selection={items:[],reason:'明确索图指令已关闭或范围/权限改变'}
-        selection.items=selection.items.filter(item=>stickers?.dataUrlOf(item))
+        selection.items=selection.items.filter(item=>replyStickers?.dataUrlOf(item))
         if(!questionMode&&!selection.items.length&&claimsStickerDelivery(reply)){
           logger.info(`[表情包文案] 本轮不配图（${selection.reason}），修正发图承诺`)
           try{
@@ -1349,7 +1350,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         if (selection.items.length > 0 && stickers) {
           const sentText = record
           for (const item of selection.items) {
-            const file = item ? stickers.dataUrlOf(item) : null
+            const file = item ? replyStickers.dataUrlOf(item) : null
             if (!file) { logger.warn(`[表情包] 「${item.name}」文件不可读，跳过`); continue }
             try {
               if (!canContinue() || !stickerSend.allowed(evt) || (stickerRequested&&!stickerRequestAllowed())) break
@@ -1359,7 +1360,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
               else await onebot.sendGroup(evt.group_id, segments)
               logger.info(`[表情包] 发送「${item.name}」到 ${evt.message_type === 'private' ? '私聊' : '群 ' + evt.group_id}`)
               if (record) { record += '\n[表情包]' } else { record = '[表情包]' }
-              if (typeof stickers.noteUsage === 'function') stickers.noteUsage(item.id, sentText || parsed.text)
+              if (typeof replyStickers.noteUsage === 'function') replyStickers.noteUsage(item.id, sentText || parsed.text)
             } catch (err) {
               logger.warn(`[表情包] 发送失败：${err.message}`)
             }

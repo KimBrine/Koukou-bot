@@ -272,7 +272,7 @@ export function createStickers({ dir, logger, now = () => Date.now() }) {
   }
 
   function dataUrlOf(item) {
-    if (!item || isBlocked(item.hash)) return null
+    if (!item || !items.some(x => x.id === item.id && x.hash === item.hash && x.file === item.file) || isBlocked(item.hash)) return null
     try {
       const buf = readFileSync(fileOf(item))
       return `base64://${buf.toString('base64')}`
