@@ -104,9 +104,9 @@ export function createGroupMute({onebot,commandCenter,llm,logger,config={},canEx
   const dialogueFocus=history.filter(m=>m.userId===String(e.user_id)&&((m.mentionedIds||[]).length||m.reply)).slice(-5).map(m=>({messageId:m.id,mentionedIds:m.mentionedIds||[],reply:m.reply||null}))
   const cancel=()=>({handled:true,text:'好哒，刚才的请求就先取消啦～需要操作时再重新告诉我叭。'})
   let r;try{
-   const raw=await llm.chat(PROMPT+CLARIFICATION_PROMPT,[{role:'user',content:JSON.stringify({message,originalRequest:followup?{message:followup.message,intent:followup.intent}:undefined,senderId:String(e.user_id),mentionedIds:ats,ownerMode:owner,wholeOwnerMode:wholeOwner,selfMode:Boolean(selfPolicy),quoted,dialogueFocus,recent:history.map(({at,...m})=>m)})}],{signal:AbortSignal.timeout(20000),maxTokens:1600,temperature:0,rejectTruncated:true})
+   const raw=await llm.chat(PROMPT+CLARIFICATION_PROMPT,[{role:'user',content:JSON.stringify({message,originalRequest:followup?{message:followup.message,intent:followup.intent}:undefined,senderId:String(e.user_id),mentionedIds:ats,ownerMode:owner,wholeOwnerMode:wholeOwner,selfMode:Boolean(selfPolicy),quoted,dialogueFocus,recent:history.map(({at,...m})=>m)})}],{signal:AbortSignal.timeout(60000),temperature:0,rejectTruncated:true})
    r=JSON.parse(String(raw).trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,''))
-  }catch(err){logger?.warn?.(`[群禁言] AI解析失败，未执行动作：${err.message}`);return followup?cancel():null}
+  }catch(err){logger?.warn?.(`[群禁言] AI解析失败，未执行动作：${err.message}`);return followup||/禁言|解禁|小黑屋/.test(text)?{handled:true,text:'这次群管理请求没能解析成功，已取消本次请求，没有执行禁言或解禁。请重新告诉我目标和时长，我再认真核对一下～'}:null}
   if(!r||typeof r.intent!=='string'||r.intent==='none')return followup?cancel():null
   if(followup&&r.intent!==followup.intent)return cancel()
   if(followup?.durationText!=null){if(r.durationText!=null&&r.durationText!==followup.durationText)return cancel();r.durationText=followup.durationText}
