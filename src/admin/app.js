@@ -791,7 +791,7 @@ function pageStickers(){
     '<button class="btn primary" id="stkRulesSave">保存发送规则</button>',
     '<div style="height:1px;background:var(--line,#e5e5e5);margin:10px 0"></div>',
     '<div class="mut" style="margin-top:6px">DeepSeek Flash 初筛，Qwen 复核并打标签；无法确认的图不收录。已学习 ' + (stickerLearned || 0) + ' 张 / 共 ' + items.length + ' 张。</div>',
-    '<details class="learn-box" open><summary><b>群聊学习</b> <span class="pill">' + ((learn.groups || []).length) + ' 个群</span></summary>',
+    '<details class="learn-box"><summary><b>群聊学习</b> <span class="pill">' + ((learn.groups || []).length) + ' 个群</span></summary>',
     '<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:10px 0"><input type="checkbox" id="stkLearnToggle"' + (learn.enabled ? ' checked' : '') + '> 启用群聊表情包学习</label>',
     '<div class="note">只学习下面勾选的群，可选非白名单群；不改变聊天回复范围。</div>',
     '<input id="stkLearnSearch" placeholder="搜索群名或群号" style="width:100%;margin:8px 0">',
