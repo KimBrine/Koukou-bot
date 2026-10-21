@@ -53,10 +53,13 @@ try {
     assert.equal(readFileSync(path.join(t.dir, 'personas', '甲.txt'), 'utf8'), '保留人格')
     assert.deepEqual(JSON.parse(readFileSync(t.memory.file, 'utf8')), {})
   })
-  await test('重复启用相同版本不清记忆；同名正文改变会建立新边界', () => {
+  await test('同名修改正文不清记忆；换名字才建立新边界', () => {
     const t = fixture(); t.memory.push('g1', 'user', '保留')
     assert.equal(t.switchTo('甲', t.config.persona).changed, false); assert.equal(t.memory.get('g1').length, 1)
-    assert.equal(t.switchTo('甲', '甲的新版本').changed, true); assert.equal(t.memory.get('g1').length, 0)
+    // 同一个名字：只改正文，不重置
+    assert.equal(t.switchTo('甲', '甲的新版本').changed, false); assert.equal(t.memory.get('g1').length, 1)
+    // 换名字：新人格有自己的记忆分区
+    assert.equal(t.switchTo('乙', '乙的正文').changed, true); assert.equal(t.memory.get('g1').length, 0)
     assert.throws(() => t.switchTo('无效', '   '), /不能为空/)
   })
   await test('持久化失败恢复近期、长期及检索分区；备份失败不会开始清理', async () => {
@@ -158,8 +161,8 @@ try {
       t.memory.push('g1', 'user', '旧消息')
       await admin.actions['save-persona']({ name: '甲', content: '修改的甲' })
       assert.equal(t.config.persona, '你是严肃的甲。'); assert.equal(t.memory.get('g1').length, 1)
-      const r = await admin.actions['activate-persona']({ name: '甲' }); assert.equal(r.changed, true)
-      assert.equal(t.config.persona, '修改的甲'); assert.equal(t.memory.get('g1').length, 0)
+      const r = await admin.actions['activate-persona']({ name: '甲' }); assert.equal(r.changed, false)
+      assert.equal(t.config.persona, '修改的甲'); assert.equal(t.memory.get('g1').length, 1)
       assert.match(readFileSync(t.config.envFile, 'utf8'), /UNRELATED=keep/)
       await assert.rejects(admin.actions['activate-persona']({ name: '不存在' }), /不存在/)
     } finally { admin.server.close() }

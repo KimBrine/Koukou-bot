@@ -7,9 +7,9 @@ import { writeJsonAtomic } from './stateFile.js'
 export function activatePersona({ name, content, config, memory, longMemory, targetWatch, persist }) {
   if (!content.trim()) throw new Error('人格正文不能为空')
   if (config.activePersona === name && config.persona === content) return { ok: true, changed: false, persona: content }
-  // 同名且正文一致（仅空白/换行差异）时只更新正文，不重置记忆：
-  // 否则点一次「使用」就会把近期记忆和长期摘要全部清空。
-  if (config.activePersona === name && String(config.persona || '').trim() === content.trim()) {
+  // 同名人格只是修改正文：只更新提示词，绝不动记忆。
+  // 记忆跟着「名字」走，名字不变记忆就不变；换名字才切到另一份记忆。
+  if (config.activePersona === name) {
     config.persona = content
     config.personaRevision = (config.personaRevision || 0) + 1
     return { ok: true, changed: false, persona: content }
