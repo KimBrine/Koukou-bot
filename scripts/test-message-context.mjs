@@ -46,6 +46,20 @@ function setup({config={},getMsg,forwards={},chat,chatSettings,rateLimiter,visio
 const lastUser=t=>t.requests.at(-1)[1].at(-1).content
 const shape=t=>t.requests.at(-1)[0].match(/【本次回复的形态要求[^]*?(?=\n\n【|$)/)?.[0]
 try {
+  await test('陌生私聊实时和补读均不重建记忆，空管理员列表不绕过白名单',async()=>{
+    const t=setup({config:{privateWhitelist:new Set(),adminUsers:[]}})
+    await t.bot.handleMessage(t.event('陌生私聊',{message_type:'private'}))
+    const old=t.event('离线旧消息',{message_type:'private'})
+    old.messageContext={...old.messageContext,historical:true}
+    await t.bot.handleMessage(old)
+    assert.equal(t.memory.get('p'+user).length,0)
+    assert.equal(t.memory.keys().includes('p'+user),false)
+    assert.equal(t.requests.length,0)
+    t.cfg.privateWhitelist.add(user)
+    await t.bot.handleMessage(t.event('允许后的私聊',{message_type:'private'}))
+    assert.equal(t.requests.length,1)
+    assert.ok(t.memory.get('p'+user).length)
+  })
   await test('结构化点歌按平台发卡片，找不到或登录失效不误报成功',async()=>{
     const t=setup({musicSearch:async r=>{assert.equal(r.platform,'qq');assert.equal(r.id,'97773');return {id:'97773',name:'晴天',artist:'周杰伦',platform:'qq'}}})
     await t.bot.handleMessage(t.event([at(),text('点歌 QQ音乐 97773')]))

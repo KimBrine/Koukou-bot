@@ -696,6 +696,13 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       const conversationKey = evt.message_type === 'private' ? `p${evt.user_id}` : `g${evt.group_id}`
       let memoryRevision = memory.version?.(conversationKey)
       const samePersona = () => personaRevision === (config.personaRevision || 0) && memoryRevision === memory.version?.(conversationKey)
+      const privateAllowed = (uid) => {
+        const id = Number(uid)
+        if (config.privateWhitelist instanceof Set && config.privateWhitelist.has(id)) return true
+        if (!(config.privateWhitelist instanceof Set)) return true
+        if (hasAdmins(config.adminUsers) && isBotAdmin(id, config.adminUsers)) return true
+        return Boolean(chatSettings && typeof chatSettings.raw === 'function' && chatSettings.raw('p' + id))
+      }
       quotedMessages.remember(evt)
       const isOwn = evt.post_type === 'message_sent' || evt.message_sent_type === 'self' ||
         (onebot.selfId && String(evt.user_id) === String(onebot.selfId))
@@ -704,8 +711,8 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         const parsed = parseMessage(evt.message ?? evt.raw_message, onebot.selfId)
         dailySummary?.capture(evt, parsed)
         const key = evt.message_type === 'private' ? `p${evt.user_id}` : `g${evt.group_id}`
-        const tracked = evt.message_type === 'private' || config.whitelistGroups.has(Number(evt.group_id)) ||
-          dailySummary?.summaryGroups().includes(Number(evt.group_id))
+        const tracked = evt.message_type === 'private' ? privateAllowed(evt.user_id) : (config.whitelistGroups.has(Number(evt.group_id)) ||
+          dailySummary?.summaryGroups().includes(Number(evt.group_id)))
         if (tracked && parsed.text) {
           const name = evt.sender?.card || evt.sender?.nickname || String(evt.user_id)
           memory.push(key, 'user', evt.message_type === 'private' ? parsed.text : `【${name}】${parsed.text}`,
@@ -1059,7 +1066,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
 
       // 上下文记忆：白名单群/总结群/私聊里的每条消息都记下来（即使机器人这次不回复），
       // 这样它像真人一样"在场"，而不是只记得自己参与过的那几句。
-      if (remember && config.contextRememberAll) {
+      if (remember && config.contextRememberAll && (!isPrivate || privateAllowed(evt.user_id))) {
         memory.push(key, 'user', content, userMeta)
       }
 
