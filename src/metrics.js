@@ -25,6 +25,13 @@ export function createMetrics({ file, now = () => Date.now(), logger }) {
     const keys = Object.keys(data.days).sort()
     if (keys.length > 60) for (const k of keys.slice(0, keys.length - 60)) delete data.days[k]
   }
+  function markGroup(id) {
+    const k = dayKey(now())
+    const day = data.days[k] || (data.days[k] = {})
+    if (!Array.isArray(day.groups)) day.groups = []
+    const key = String(id)
+    if (!day.groups.includes(key)) { day.groups.push(key); dirty = true; schedule() }
+  }
   function bump(field, amount = 1) {
     const k = dayKey(now())
     const day = data.days[k] || (data.days[k] = {})
@@ -38,6 +45,7 @@ export function createMetrics({ file, now = () => Date.now(), logger }) {
       const d = data.days[k] || {}
       const row = { date: k }
       for (const f of FIELDS) row[f] = Number(d[f]) || 0
+      row.groups = Array.isArray(d.groups) ? d.groups.length : 0
       out.push(row)
     }
     return out
@@ -48,6 +56,7 @@ export function createMetrics({ file, now = () => Date.now(), logger }) {
     skipped: () => bump('skipped'),
     error: () => bump('errors'),
     sticker: () => bump('stickers'),
+    group: (id) => markGroup(id),
     search: () => bump('searches'),
     llm: (ms) => { bump('llmMs', Math.max(0, Math.round(Number(ms) || 0))); bump('llmCount') },
     snapshot, flush: save,

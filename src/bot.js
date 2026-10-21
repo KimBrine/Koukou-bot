@@ -694,6 +694,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
 
     async handleMessage(evt) {
       try { metrics?.received?.() } catch {}
+      try { if (evt.group_id) metrics?.group?.(evt.group_id) } catch {}
       const personaRevision = config.personaRevision || 0
       const conversationKey = evt.message_type === 'private' ? `p${evt.user_id}` : `g${evt.group_id}`
       let memoryRevision = memory.version?.(conversationKey)

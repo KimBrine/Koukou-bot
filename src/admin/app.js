@@ -272,8 +272,7 @@ function pageOverview(){
       '<button class="btn" data-act="daily-ping">立即发定时指令 (@示例机器人)</button></div></details></div>' +
     quickCard +
     adminCard +
-    '<div class="section-head"><h2>今日各群已记录消息</h2><span class="note">本地记录，供运行监测</span></div>' +
-    '<div class="card"><table class="tbl"><thead><tr><th>群</th><th>群号</th><th>条数</th></tr></thead><tbody id="todayGroups">' + overviewTodayRows() + '</tbody></table></div>' +
+    '<details class="card"><summary><b class="api-card-title">今日各群已记录消息</b> <span class="api-card-meta">本地记录</span></summary><div class="api-card-body"><table class="tbl"><thead><tr><th>群</th><th>群号</th><th>条数</th></tr></thead><tbody id="todayGroups">' + overviewTodayRows() + '</tbody></table></div></details>' +
     versionCard()
 }
 function proactiveSettingsPatch(box){
@@ -850,22 +849,31 @@ function pageMetrics(){
       '<div class="card"><h3>错误</h3><div class="kpi">' + errors + '</div><div class="note">占收到的 ' + fail + '%</div></div>' +
       '<div class="card"><h3>表情包</h3><div class="kpi">' + sum('stickers') + '</div><div class="note">发送次数</div></div>' +
       '<div class="card"><h3>联网搜索</h3><div class="kpi">' + sum('searches') + '</div><div class="note">调用次数</div></div>' +
+      '<div class="card"><h3>跳过未回复</h3><div class="kpi">' + sum('skipped') + '</div><div class="note">跳过率 ' + (received ? Math.round(sum('skipped') / received * 100) : 0) + '%</div></div>' +
+      '<div class="card"><h3>模型调用</h3><div class="kpi">' + sum('llmCount') + '</div><div class="note">生成次数</div></div>' +
       '<div class="card"><h3>平均生成耗时</h3><div class="kpi">' + avg + 's</div><div class="note">模型端到端</div></div>' +
     '</div>' +
     '<section class="card"><h2>消息与回复</h2>' + svgChart(list, [
       { name: '收到', color: '#3b6ea5', get: function(d){ return d.received } },
       { name: '已回复', color: '#4aa3a3', get: function(d){ return d.replied } }
     ], { mode: 'bar' }) + '</section>' +
-    '<section class="card"><h2>回复率与错误率</h2>' + svgChart(list, [
+    '<section class="card"><h2>回复率 / 跳过率 / 错误率</h2>' + svgChart(list, [
       { name: '回复率', color: '#4aa3a3', get: function(d){ return d.received ? d.replied / d.received * 100 : 0 }, fill: true },
+      { name: '跳过率', color: '#b8860b', get: function(d){ return d.received ? d.skipped / d.received * 100 : 0 } },
       { name: '错误率', color: '#d9534f', get: function(d){ return d.received ? d.errors / d.received * 100 : 0 } }
     ], { mode: 'line', percent: true }) + '</section>' +
     '<section class="card"><h2>表情包与搜索</h2>' + svgChart(list, [
       { name: '表情包发送', color: '#b8860b', get: function(d){ return d.stickers } },
       { name: '联网搜索', color: '#7a5cd6', get: function(d){ return d.searches } }
     ], { mode: 'bar' }) + '</section>' +
+    '<section class="card"><h2>活跃群数</h2>' + svgChart(list, [
+      { name: '有消息的群', color: '#7a5cd6', get: function(d){ return d.groups || 0 }, fill: true }
+    ], { mode: 'line' }) + '</section>' +
+    '<section class="card"><h2>模型调用次数</h2>' + svgChart(list, [
+      { name: '生成次数', color: '#3b6ea5', get: function(d){ return d.llmCount || 0 } }
+    ], { mode: 'bar' }) + '</section>' +
     '<section class="card"><h2>平均生成耗时（秒）</h2>' + svgChart(list, [
-      { name: '平均耗时', color: '#3b6ea5', get: function(d){ return d.llmCount ? d.llmMs / d.llmCount / 1000 : 0 }, fill: true }
+      { name: '平均耗时', color: '#4aa3a3', get: function(d){ return d.llmCount ? d.llmMs / d.llmCount / 1000 : 0 }, fill: true }
     ], { mode: 'line' }) + '</section>'
 }
 function pageSelfCheck(){
