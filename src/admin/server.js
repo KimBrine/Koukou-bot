@@ -1089,7 +1089,13 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       return { ok, removed: ok }
     },
     async 'save-builtin-command'(payload){return {ok:true,item:commandCenter.saveBuiltin(payload)}} ,
-    async 'generate-command'(payload){return {ok:true,draft:await commandCenter.generate(payload.description,{mode:payload.mode})}},
+    async 'generate-command'(payload){
+      const description=String(payload&&payload.description||'').trim()
+      if(!description)throw Error('请先写一句需求')
+      if(description.length>2000)throw Error('需求太长，最多 2000 字')
+      try{return {ok:true,draft:await commandCenter.generate(description,{mode:payload&&payload.mode})}}
+      catch(err){throw Error('AI 生成失败：'+(err&&err.message||'未知错误'))}
+    },
     async 'export-commands'(payload){return commandCenter.exportPack(payload)},
     async 'preview-commands'(payload){return commandCenter.preview(payload.content)},
     async 'import-commands'(payload){return {ok:true,...commandCenter.importPack(payload.content,{includeBuiltins:payload.includeBuiltins===true})}},

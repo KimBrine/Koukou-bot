@@ -72,7 +72,24 @@ window.CommandCenterUI=(()=>{
     if(g('ccMode'))g('ccMode').onchange=()=>{const next=g('ccMode').value,previous=draft.responseMode||'fixed';g('ccMode').value=previous;draft=collect();draft.responseMode=next;redraw()}
     if(g('ccEditor'))g('ccEditor').addEventListener('input',ev=>{if(ev.target.id!=='ccMode')try{draft=collect()}catch{}})
     if(g('ccSave'))g('ccSave').onclick=safely(async()=>{draft=collect();await api('/api/action/'+(builtin?'save-builtin-command':'save-custom-command'),draft);draft={enabled:false};builtin=false;await load();toast('已保存，立即生效')})
-    if(g('ccGenerate'))g('ccGenerate').onclick=safely(async()=>{description=g('ccGenerateDescription').value;generationMode=g('ccGenerateMode').value;g('ccGenerateStatus').textContent='正在生成，尚未保存…';const r=await api('/api/action/generate-command',{description,mode:generationMode});draft=r.draft;builtin=false;redraw();toast('草稿已填入下方表单，请检查后保存')})
+    if(g('ccGenerate'))g('ccGenerate').onclick=safely(async()=>{
+      const status=g('ccGenerateStatus')
+      description=g('ccGenerateDescription').value
+      generationMode=g('ccGenerateMode').value
+      if(!String(description||'').trim()){status.textContent='请先写一句需求';toast('请先写一句需求',true);return}
+      status.textContent='正在生成，尚未保存…'
+      let timer=null
+      try{
+        const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('生成超时（45 秒），请检查模型接口是否可用')),45000)})
+        const r=await Promise.race([api('/api/action/generate-command',{description,mode:generationMode}),timeout])
+        draft=r.draft;builtin=false
+        status.textContent='已生成草稿，请检查后保存'
+        redraw();toast('草稿已填入下方表单，请检查后保存')
+      }catch(e){
+        status.textContent='生成失败：'+(e.message||'未知错误')
+        toast('生成失败：'+(e.message||'未知错误'),true)
+      }finally{ if(timer)clearTimeout(timer) }
+    })
     if(g('ccPokeCheck'))g('ccPokeCheck').onclick=safely(async()=>{const r=await api('/api/action/check-poke',{});updateDiagnostics(r.diagnostics);toast(r.note)})
     document.querySelectorAll('[data-cc-export]').forEach(b=>b.onclick=safely(async()=>{const id=b.dataset.ccExport||null,pack=await api('/api/action/export-commands',{id,includeGroups:g('ccExportGroups')?.checked===true});const url=URL.createObjectURL(new Blob([JSON.stringify(pack,null,2)],{type:'application/json;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='Koukou-指令'+(id?'-'+id:'')+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}))
     if(g('ccImportFile'))g('ccImportFile').onchange=safely(async ev=>{const f=ev.target.files[0];if(!f)return;if(!/\.json$/i.test(f.name)||f.size>262144)throw Error('请选择不超过256 KB的JSON文件');importContent=await f.text();preview=await api('/api/action/preview-commands',{content:importContent});rerender();g('ccImportPreview')?.scrollIntoView({behavior:'smooth'})})
