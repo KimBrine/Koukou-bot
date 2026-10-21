@@ -60,6 +60,7 @@ let joinedGroups = []
 let friendList = []
 let memoryOverview = []
 let memoryDetail = null
+let memoryFold = { group: true, private: true }
 let customCommands = []
 let commandBuiltins = []
 let pokeDiagnostics = {}
@@ -588,11 +589,21 @@ function pageMemory(){
     if (String(key).startsWith('g')) return '群 ' + String(key).slice(1)
     return ''
   }
-  const rows = memoryOverview.map(function(m){
+  const rowOf = function(m){
     const name = nameOf(m.key)
     return '<tr><td><b>' + esc(name) + '</b><div class="mut" style="font-size:12px">' + esc(m.key) + '</div></td><td>' + (m.recent||0) + ' 条</td><td>' + (m.longTermChars||0) + ' 字</td><td>' + (m.pending||0) + '</td>' +
       '<td><button class="btn" data-memview="' + esc(m.key) + '">' + (memoryDetail && memoryDetail.key === m.key ? '收回' : '查看') + '</button> <button class="btn" data-memclear="' + esc(m.key) + '">清空</button></td></tr>'
-  }).join('')
+  }
+  const groupList = memoryOverview.filter(function(m){ return String(m.key).startsWith('g') })
+  const privList = memoryOverview.filter(function(m){ return String(m.key).startsWith('p') })
+  const folder = function(type, title, list){
+    const open = memoryFold[type] !== false
+    const head = '<div class="mem-folder" data-memfold="' + type + '" style="cursor:pointer;padding:10px 0;border-bottom:1px solid var(--line,#eee);display:flex;align-items:center;gap:8px">'
+      + '<b>' + (open ? '▾' : '▸') + ' ' + title + '</b><span class="pill">' + list.length + ' 个</span></div>'
+    if (!open) return head
+    if (!list.length) return head + '<div class="mut" style="padding:10px 0">还没有' + title + '记忆</div>'
+    return head + '<table class="tbl"><thead><tr><th>会话</th><th>近期</th><th>长期</th><th>待整理</th><th>操作</th></tr></thead><tbody>' + list.map(rowOf).join('') + '</tbody></table>'
+  }
   const d = memoryDetail
   const fmtTime = function(ts){ if(!ts) return ''; try { return new Date(ts).toLocaleString('zh-CN',{hour12:false}) } catch(e){ return '' } }
   const key = d ? d.key : ''
@@ -624,7 +635,7 @@ function pageMemory(){
   return [
     '<h1>记忆浏览</h1><div class="sub">当前人格 <b>' + esc(state?.config?.activePersona || '默认') + '</b>。近期、长期、待整理分开显示，都可以单条修改或删除。</div>',
     '<section class="card"><h2>会话列表 <span class="pill">' + memoryOverview.length + ' 个</span></h2>',
-    memoryOverview.length ? ('<table class="tbl"><thead><tr><th>会话</th><th>近期</th><th>长期</th><th>待整理</th><th>操作</th></tr></thead><tbody>' + rows + '</tbody></table>') : '<div class="mut">当前人格还没有任何记忆。</div>',
+    memoryOverview.length ? (folder('group', '群聊', groupList) + folder('private', '私聊', privList)) : '<div class="mut">当前人格还没有任何记忆。</div>',
     '</section>',
     d ? [
       '<section class="card"><h2>近期记忆 <span class="pill">' + (d.recent||[]).length + ' 条</span> <span class="mut" style="font-size:12px">' + esc(nameOf(key)) + '（' + esc(key) + '）</span></h2>',
@@ -1214,6 +1225,11 @@ async function bind(){
     memoryDetail = await api('/api/memory-detail?key=' + encodeURIComponent(key))
     render()
   }
+  document.querySelectorAll('[data-memfold]').forEach(el => el.onclick = () => {
+    const type = el.dataset.memfold
+    memoryFold[type] = memoryFold[type] === false
+    render()
+  })
   document.querySelectorAll('[data-memview]').forEach(el => el.onclick = async () => {
     const key = el.dataset.memview
     if (memoryDetail && memoryDetail.key === key) {
@@ -1221,6 +1237,7 @@ async function bind(){
       render()
       return
     }
+    memoryFold[String(key).startsWith('g') ? 'group' : 'private'] = true
     try { await reloadMemoryDetail(key) }
     catch (e) { toast('读取失败：' + e.message, true) }
   })
