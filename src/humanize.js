@@ -128,7 +128,7 @@ export function typingDelay({ min = 600, max = 2500 } = {}) {
   return sleep(ms)
 }
 
-/** 滑动窗口限流：每个会话每小时最多 N 条、两条之间最小间隔 */
+/** 滑动窗口限流：普通聊天整段计一次，独立动作按调用方记录；保留发送间隔。 */
 export function createRateLimiter({ perHour = 25, minGapMs = 4000 } = {}) {
   const lastSent = new Map() // key -> 上次发送时间戳
   const history = new Map() // key -> [时间戳...]
@@ -136,8 +136,7 @@ export function createRateLimiter({ perHour = 25, minGapMs = 4000 } = {}) {
   return {
     /**
      * 是否允许发送；allowed=false 时给出原因。
-     * ignoreGap=true 用于"同一条回复的第 2、3 行"：那是同一次说话的分条发送，
-     * 不该被"两条消息最小间隔"卡住，但仍要计入每小时的发言额度。
+     * ignoreGap=true 仅检查每小时额度；普通聊天的一段回复只在首条成功时计数。
      *
      * 间隔不够时返回 retryable=true 与 retryAfterMs —— 调用方**应该等一会儿再发，而不是丢掉这条消息**。
      * （曾经直接丢掉：私聊里连续两三秒发几条，后面几条就被静默丢弃，用户只看到"机器人不回"。）
@@ -171,6 +170,8 @@ export function createRateLimiter({ perHour = 25, minGapMs = 4000 } = {}) {
       arr.push(now)
       history.set(key, arr.filter((t) => now - t < 3600_000))
     },
+    /** 同一段的后续分条更新最小间隔起点，不增加小时计数。 */
+    touch(key, now = Date.now()) { lastSent.set(key, now) },
   }
 }
 

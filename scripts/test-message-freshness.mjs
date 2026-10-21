@@ -142,7 +142,7 @@ try {
     await running; assert.equal(t.sent.length, 0)
     assert.ok(!t.memory.get(`g${group}`).some(m => m.role === 'assistant'))
   })
-  await test('群里新话题到达，取消上一条仍在生成的主动插话；旧补发不会取消新消息', async () => {
+  await test('普通插话不取消在途主动回复，也不并行生成第二轮；旧补发只作背景', async () => {
     const completions = []
     const t = setup({ chat: () => new Promise(r => completions.push(r)), config: { autoPlusOneEnabled: false } })
     const first = t.bot.handleMessage(t.event('旧话题'))
@@ -150,8 +150,9 @@ try {
     const second = t.bot.handleMessage(t.event('新话题'))
     await new Promise(setImmediate)
     await t.bot.handleMessage(t.event('补发背景', { time: t.time() / 1000 - 3600 }))
-    completions[0]('旧回应'); completions[1]('新回应'); await Promise.all([first, second])
-    assert.deepEqual(t.sent, ['新回应'])
+    assert.equal(completions.length, 1)
+    completions[0]('当前回应'); await Promise.all([first, second])
+    assert.deepEqual(t.sent, ['当前回应'])
   })
   await test('稳定连接中延迟超过 90 秒的事件不回应，未超龄的事件照常', async () => {
     const t = setup({ config: { autoPlusOneEnabled: false } }); t.advance(120_000)

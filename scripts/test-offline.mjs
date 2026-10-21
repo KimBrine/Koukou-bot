@@ -7,7 +7,7 @@ const scripts = [
   'test-summary-report.mjs', 'test-summary-format.mjs', 'test-summary-quality.mjs',
   'test-summary-content.mjs', 'test-summary-names.mjs', 'test-summary-schedule.mjs', 'test-summary-jobs.mjs', 'test-summary-failure.mjs',
   'test-online-status.mjs', 'test-auto-plus-one.mjs', 'test-image-cache.mjs', 'test-admin-groups.mjs', 'test-message-freshness.mjs', 'test-model-request.mjs',
-  'test-forward-records.mjs', 'test-message-context.mjs',
+  'test-forward-records.mjs', 'test-message-context.mjs', 'test-proactive-delivery.mjs',
   'test-persona-files.mjs',
   'test-summary-references.mjs',
   'test-summary-reference-selection.mjs',
