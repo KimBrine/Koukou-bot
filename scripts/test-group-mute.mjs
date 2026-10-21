@@ -55,7 +55,7 @@ try{
   const t=fixture();t.enable('owner-mute');const e=t.event()
   const result=await t.run(e);assert.match(result.text,/1分钟/);assert.match(result.text,/小黑屋/)
   assert.deepEqual(t.bans,[{g:G,id:B,s:60}]);assert.equal(t.calls.length,1)
-  assert.equal(t.calls[0].options.maxTokens,1600);assert.ok(t.lookups.every(c=>c.options.noCache))
+  assert.equal(t.calls[0].options.maxTokens,undefined,'解析沿用配置的预算，不再固定1600');assert.ok(t.lookups.every(c=>c.options.noCache))
   await t.run(e);assert.equal(t.bans.length,1);assert.equal(t.calls.length,1)
  })
  await test('非群主不能冒用群主操作；消息sender.role伪造不生效',async()=>{
@@ -113,6 +113,15 @@ try{
    const t=fixture();t.enable('owner-mute');t.setHook(()=>{if(change==='off')t.commandCenter.saveBuiltin({...t.commandCenter.get('owner-mute'),enabled:false});if(change==='stale')t.setLive(false);if(change==='timeout')throw Error('timeout')})
    await t.run(t.event());assert.equal(t.bans.length,0)
   }
+ })
+ await test('解析截断或失败明确说明未执行，不跌入普通聊天编造权限',async()=>{
+  for(const reason of ['DeepSeek 达到输出 token 上限','timeout','bad json']){
+   const t=fixture();t.enable('owner-mute');t.setHook(()=>{throw Error(reason)})
+   const r=await t.run(t.event());assert.equal(r.handled,true);assert.match(r.text,/没能解析成功/);assert.match(r.text,/没有执行/);assert.equal(t.bans.length,0)
+   assert.equal(t.calls[0].options.maxTokens,undefined)
+  }
+  const t=fixture();t.enable('owner-mute');t.setHook(()=>{throw Error('timeout')})
+  assert.equal(await t.run(t.event('今天天气真好')),null,'普通聊天解析出错仍可正常走聊天流程')
  })
  await test('QQ接口失败不伪报成功、不自动重试',async()=>{
   const t=fixture();t.enable('owner-mute');let requests=0;t.onebot.setGroupBan=async()=>{requests++;throw Error('timeout')}
