@@ -242,6 +242,12 @@ function pageOverview(){
 }
 
 // ── 页面：会话 ──────────────────────────────────────────
+function proactiveSettingsPatch(box){
+  const enabled=box.querySelector('[data-f="proactiveEnabled"]')
+  if(!enabled)return {}
+  const rate=box.querySelector('[data-f="proactiveRate"]')
+  return {proactiveEnabled:enabled.checked,proactiveRate:box.querySelector('[data-global="proactiveRate"]')?.checked?null:Number(rate.value)}
+}
 function chatRow(c){
   const r = c.raw || {}, e = c.effective || {}
   const open = openChats.has(c.key) ? ' open' : ''
@@ -262,7 +268,7 @@ function chatRow(c){
       <span class="mut">${c.id}</span>
       ${c.inWhitelist ? '<span class="badge whitelist">白名单</span>' : ''}
       ${r.enabled === false ? '<span class="badge restart">已停用</span>' : ''}
-      ${r.proactiveEnabled === false ? '<span class="badge restart">不主动</span>' : ''}
+      ${c.type === 'group' && r.proactiveEnabled === false ? '<span class="badge restart">不主动</span>' : ''}
       <span style="flex:1"></span>
       <span class="mut" style="font-size:12px">今日 ${c.msgToday} 条 · 记忆 ${c.memory} 条${c.replies?(' · 已回 '+c.replies):''}</span>
       ${c.type === 'group' ? `<button class="btn sm ${c.inWhitelist ? 'danger' : ''}" data-whitelist="${c.inWhitelist ? 'remove' : 'add'}" data-group="${c.id}">${c.inWhitelist ? '移出白名单' : '加入白名单'}</button>` : ''}
@@ -270,14 +276,14 @@ function chatRow(c){
       <span class="mut">▾</span>
     </div>
     <div class="body">
-      <div class="frow"><label>聊天开关</label><div><label class="switch"><input type="checkbox" data-f="enabled" ${r.enabled === false ? '' : 'checked'}><i></i></label> <span class="mut">关掉后停止普通聊天；拍一拍、自动 +1 在“回复行为”单独控制</span></div></div>
-      <div class="frow"><label>被 @ / 引用时回复</label><div><label class="switch"><input type="checkbox" data-f="atReplyEnabled" ${r.atReplyEnabled === false ? '' : 'checked'}><i></i></label> <span class="mut">引用机器人自己的发言也视为直接对话，无需另加 @</span></div></div>
-      <div class="frow"><label>允许主动搭话</label><div><label class="switch"><input type="checkbox" data-f="proactiveEnabled" ${r.proactiveEnabled === false ? '' : 'checked'}><i></i></label> <span class="mut">仅在白名单群里有效${override('proactiveEnabled')}</span></div></div>
+      <div class="frow"><label>聊天开关</label><div><label class="switch"><input type="checkbox" data-f="enabled" ${r.enabled === false ? '' : 'checked'}><i></i></label> <span class="mut">${c.type==='group'?'关掉后停止普通聊天；拍一拍、自动 +1 在“回复行为”单独控制':'关掉后停止普通私聊回复；拍一拍在“回复行为”单独控制'}</span></div></div>
+      <div class="frow"><label>${c.type==='group'?'被 @ / 引用时回复':'回复私聊消息'}</label><div><label class="switch"><input type="checkbox" data-f="atReplyEnabled" ${r.atReplyEnabled === false ? '' : 'checked'}><i></i></label> <span class="mut">${c.type==='group'?'引用机器人自己的发言也视为直接对话，无需另加 @':'收到私聊消息时回复，不按群聊主动搭话概率抽取'}</span></div></div>
+      ${c.type==='group'?`<div class="frow"><label>允许主动搭话</label><div><label class="switch"><input type="checkbox" data-f="proactiveEnabled" ${r.proactiveEnabled === false ? '' : 'checked'}><i></i></label> <span class="mut">仅在白名单群里有效${override('proactiveEnabled')}</span></div></div>
       <div class="frow"><label>主动搭话概率</label><div>
         <div class="row"><input type="range" min="0" max="1" step="0.01" data-f="proactiveRate" value="${rateVal}">
         <span class="pill" data-show="proactiveRate">${(rateVal*100).toFixed(0)}%</span>
         <label class="mut" style="font-size:12px"><input type="checkbox" data-global="proactiveRate" ${r.proactiveRate===null||r.proactiveRate===undefined?'checked':''}> ${rateOrigin}(${(defaultRate*100).toFixed(0)}%)</label><a href="#humanize" class="mut" style="font-size:12px">修改默认值</a></div>
-      </div></div>
+      </div></div>`:''}
       <div class="frow"><label>装饰符号频率</label><div>
         <div class="row"><input type="range" min="0" max="1" step="0.01" data-f="emojiKeepRate" value="${emojiVal}">
         <span class="pill" data-show="emojiKeepRate">${(emojiVal*100).toFixed(0)}%</span>
@@ -897,8 +903,7 @@ async function bind(){
     const patch = {
       enabled: q('enabled').checked,
       atReplyEnabled: q('atReplyEnabled').checked,
-      proactiveEnabled: q('proactiveEnabled').checked,
-      proactiveRate: isGlobal('proactiveRate') ? null : Number(q('proactiveRate').value),
+      ...proactiveSettingsPatch(box),
       emojiKeepRate: isGlobal('emojiKeepRate') ? null : Number(q('emojiKeepRate').value),
       replyMaxLines: isGlobal('replyMaxLines') ? null : Number(q('replyMaxLines').value),
       lineMaxChars: isGlobal('replyMaxLines') ? null : Number(q('lineMaxChars').value),
