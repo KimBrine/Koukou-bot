@@ -158,3 +158,14 @@ details.advanced-box summary{cursor:pointer;font-weight:650}
 .upload-draft>img{width:100%;height:170px;object-fit:contain;border-radius:10px;background:#0002}
 .upload-draft>label{display:block;margin:10px 0}.upload-draft input:not([type=checkbox]),.upload-draft textarea{width:100%;margin-top:6px}
 .upload-draft .mut{overflow-wrap:anywhere}
+
+/* 模型与接口：折叠卡片 */
+details.card > summary { cursor: pointer; list-style: none; padding: 4px 0; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary::before { content: '▸'; margin-right: 10px; color: var(--muted, #98a2b3); font-size: 14px; }
+details.card[open] > summary::before { content: '▾'; }
+.api-card-title { font-size: 18px; font-weight: 600; }
+.api-card-meta { font-size: 14px; color: var(--muted, #98a2b3); margin-left: 10px; font-weight: 400; }
+.api-card-body { margin-top: 16px; }
+.api-card-body .frow > label { font-size: 14px; }
+details.card[open] { padding-bottom: 18px; }

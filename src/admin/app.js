@@ -61,6 +61,7 @@ let friendList = []
 let memoryOverview = []
 let memoryDetail = null
 let memoryFold = { group: false, private: true }
+let apiCardsOpen = { model: false, vision: false, search: false }
 let customCommands = []
 let commandBuiltins = []
 let pokeDiagnostics = {}
@@ -544,7 +545,7 @@ function webSearchCard(){
   if (presets.indexOf(cur) < 0) presets.unshift(cur)
   const label = { deepseek: 'DeepSeek 搜索（自带引擎）', bing: '必应网页（免密钥兜底）' }
   const opts = presets.map(function(m){ return '<option value="' + esc(m) + '"' + (m === cur ? ' selected' : '') + '>' + esc(label[m] || m) + '</option>' }).join('')
-  return '<details class="card"><summary style="cursor:pointer"><b>联网搜索</b> <span class="mut" style="font-size:12px">'
+  return '<details class="card" data-apicard="search"' + (apiCardsOpen.search ? ' open' : '') + '><summary><b class="api-card-title">联网搜索</b> <span class="api-card-meta">'
     + (info.enabled ? '已开启' : '已关闭') + ' · ' + esc(providerName[info.provider] || '—') + '</span></summary>'
     + '<div class="note" style="margin-top:8px">由模型判断要不要搜。模型下拉里选 DeepSeek / 通义模型 / 必应，保存即时生效。</div>'
     + '<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:10px 0"><input type="checkbox" id="wsEnabled"' + (info.enabled ? ' checked' : '') + '> 允许联网搜索</label>'
@@ -682,7 +683,7 @@ function modelPickerCard(){
     ? known.map(function(id){ return '<option value="' + esc(id) + '"' + (id === cur.model ? ' selected' : '') + '>' + esc(id) + '</option>' }).join('')
     : '<option value="' + esc(cur.model || '') + '">' + esc(cur.model || '（先点自动检测）') + '</option>'
   return [
-    '<details class="card"><summary style="cursor:pointer"><b>对话模型</b> <span class="mut" style="font-size:12px">' + esc(cur.provider || '') + ' · ' + esc(cur.model || '') + '</span></summary><div style="margin-top:10px">',
+    '<details class="card" data-apicard="model"' + (apiCardsOpen.model ? ' open' : '') + '><summary><b class="api-card-title">对话模型</b> <span class="api-card-meta">' + esc(cur.provider || '') + ' · ' + esc(cur.model || '') + '</span></summary><div class="api-card-body">',
     '<div class="note">选供应商 → 点「自动检测模型」→ 从下拉里选型号。选完立刻生效，不用再点保存。</div>',
     '<div class="frow"><label>供应商</label><div><select id="mpProvider">' + opts + '</select></div></div>',
     '<div class="frow"><label>接口地址</label><div><input id="mpBaseUrl" value="' + esc(cur.baseUrl || '') + '" placeholder="https://api.deepseek.com"><div class="mut" style="font-size:12px;margin-top:4px">需要兼容 OpenAI 的 /chat/completions 与 /models</div></div></div>',
@@ -715,7 +716,7 @@ function visionCard(){
     return '<div style="display:flex;align-items:center;gap:8px;margin:4px 0"><span class="pill">' + esc(x.name) + '</span><span class="mut" style="font-size:12px">' + esc(x.baseUrl) + '</span><span class="mut" style="font-size:12px">' + esc(x.model || '未选模型') + '</span><button class="btn sm" data-vp-del="' + esc(x.id) + '">删除</button></div>'
   }).join('') : '<div class="mut">还没有自定义接口</div>'
   return [
-    '<details class="card"><summary style="cursor:pointer"><b>识图设置</b> <span class="mut" style="font-size:12px">' + esc(provider) + ' · ' + esc(currentModel || '未选模型') + '</span></summary><div style="margin-top:10px">',
+    '<details class="card" data-apicard="vision"' + (apiCardsOpen.vision ? ' open' : '') + '><summary><b class="api-card-title">识图设置</b> <span class="api-card-meta">' + esc(provider) + ' · ' + esc(currentModel || '未选模型') + '</span></summary><div class="api-card-body">',
     '<div class="note">聊天读图与表情包打标都用这里的模型。可以添加多个自定义接口（OpenAI 兼容），在服务商里直接切换。</div>',
     row('服务商', '<select id="vcProvider">' + providerOptions + '</select>'),
     row('识图模型', '<div class="row" style="display:flex;gap:8px"><select id="vcModel" style="flex:1">' +
@@ -866,6 +867,9 @@ async function bind(){
     } catch(e) { toast('保存失败：' + e.message, true) }
     finally { wsSave.disabled = false }
   }
+  document.querySelectorAll('[data-apicard]').forEach(el => {
+    el.addEventListener('toggle', () => { apiCardsOpen[el.dataset.apicard] = el.open })
+  })
   document.querySelectorAll('[data-act]').forEach(b => b.onclick = async () => {
     const act = b.dataset.act
     if (act === 'summary') { await doSummary(); return }
