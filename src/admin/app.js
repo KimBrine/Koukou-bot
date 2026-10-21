@@ -60,7 +60,7 @@ let joinedGroups = []
 let friendList = []
 let memoryOverview = []
 let memoryDetail = null
-let memoryFold = { group: true, private: true }
+let memoryFold = { group: false, private: true }
 let customCommands = []
 let commandBuiltins = []
 let pokeDiagnostics = {}
@@ -1227,11 +1227,18 @@ async function bind(){
   }
   document.querySelectorAll('[data-memfold]').forEach(el => el.onclick = () => {
     const type = el.dataset.memfold
-    memoryFold[type] = memoryFold[type] === false
-    // 收起目录时，把这一组里已经展开的详情一起收掉
-    if (memoryFold[type] === false && memoryDetail) {
+    const opening = memoryFold[type] === false
+    if (opening) {
+      // 手风琴：同一时间只展开一个目录
+      memoryFold = { group: false, private: false }
+      memoryFold[type] = true
+    } else {
+      memoryFold[type] = false
+    }
+    // 详情只能存在于展开着的目录里；目录一收或换组，就自动收回
+    if (memoryDetail) {
       const isGroup = String(memoryDetail.key).startsWith('g')
-      if ((type === 'group') === isGroup) memoryDetail = null
+      if (!memoryFold[isGroup ? 'group' : 'private']) memoryDetail = null
     }
     render()
   })
@@ -1242,6 +1249,7 @@ async function bind(){
       render()
       return
     }
+    memoryFold = { group: false, private: false }
     memoryFold[String(key).startsWith('g') ? 'group' : 'private'] = true
     try { await reloadMemoryDetail(key) }
     catch (e) { toast('读取失败：' + e.message, true) }
