@@ -60,7 +60,8 @@ let joinedGroups = []
 let friendList = []
 let memoryOverview = []
 let memoryDetail = null
-let memoryFold = { group: false, private: true }
+let memoryFold = { group: false, private: false }
+let stickerCardOpen = new Set()
 let apiCardsOpen = { model: false, vision: false, search: false }
 let customCommands = []
 let commandBuiltins = []
@@ -766,7 +767,7 @@ function pageStickers(){
     return '<article data-stk-card="' + esc(s.id) + '" style="border:1px solid var(--line,#ddd);border-radius:14px;padding:16px;flex:1 1 300px;min-width:260px;max-width:420px">' +
       '<button class="btn" data-stk-preview="' + esc(s.id) + '" style="width:100%;padding:0" aria-label="预览 ' + esc(s.name) + '"><img data-stk-thumb="' + esc(s.id) + '" src="/api/sticker-file?id=' + encodeURIComponent(s.id) + '&scope=' + encodeURIComponent(stickerPersona?.token || '') + '&hash=' + encodeURIComponent(s.hash || '') + '" style="width:100%;height:180px;object-fit:contain;border-radius:10px;background:#0002" alt="' + esc(s.name) + '"></button>' +
       '<div style="margin:10px 0">' + badge + ' <b style="font-size:15px">' + esc(s.name) + '</b> <span class="mut">' + Math.ceil((s.size || 0)/1024) + ' KB · 用过 ' + (s.usage || 0) + ' 次</span></div>' +
-      '<details style="margin-top:6px"><summary style="cursor:pointer">详情 / 编辑</summary>' +
+      '<details style="margin-top:6px" data-stk-detail="' + esc(s.id) + '"' + (stickerCardOpen.has(String(s.id)) ? ' open' : '') + '><summary style="cursor:pointer">详情 / 编辑</summary>' +
       '<label>名称<input data-stk-name="' + esc(s.id) + '" value="' + esc(s.name) + '" maxlength="40" style="width:100%;margin:6px 0"></label>' +
       '<label>标签<input data-stk-kw="' + esc(s.id) + '" value="' + esc((s.keywords || []).join(' ')) + '" placeholder="空格或逗号分隔" style="width:100%;margin:6px 0"></label>' +
       '<label>描述<textarea data-stk-desc="' + esc(s.id) + '" maxlength="1000" rows="3" placeholder="画面内容、适合什么时候用；会供模型参考" style="width:100%;margin:6px 0">' + esc(s.description || '') + '</textarea></label>' +
@@ -849,6 +850,12 @@ async function bind(){
   const checkUpdate=document.getElementById('checkUpdate');if(checkUpdate)checkUpdate.onclick=()=>refreshUpdates(true)
   if(page==='stickers'){
     stickerControlsDirty=false
+    document.querySelectorAll('[data-stk-detail]').forEach(function(el){
+      el.addEventListener('toggle', function(){
+        if (el.open) stickerCardOpen.add(String(el.dataset.stkDetail))
+        else stickerCardOpen.delete(String(el.dataset.stkDetail))
+      })
+    })
     const learnSearch = document.getElementById('stkLearnSearch')
     if (learnSearch) learnSearch.oninput = function(){
       const q = learnSearch.value.trim().toLowerCase()
