@@ -66,6 +66,7 @@ let commandBuiltins = []
 let pokeDiagnostics = {}
 let modelsInfo = {}
 let modelsAvailable = (function(){ try { return JSON.parse(localStorage.getItem('koukou_models') || '[]') } catch (e) { return [] } })()
+let stickerPersona = null
 let stickerList = []
 let stickerBlacklist = []
 let stickerScenes = []
@@ -720,7 +721,7 @@ function visionCard(){
     row('识图模型', '<div class="row" style="display:flex;gap:8px"><select id="vcModel" style="flex:1">' +
       '<option value="' + esc(currentModel) + '"' + (currentModel ? ' selected' : '') + '>' + esc(currentModel || '（先点自动检测）') + '</option>' +
       '</select><button class="btn" type="button" id="vcDetect">自动检测模型</button></div><div class="mut" id="vcDetectHint" style="font-size:12px;margin-top:4px">' + (isCustom ? '自定义：点检测拿型号列表' : '点「自动检测模型」拿型号列表') + '</div>'),
-    row('识图思考强度', '<select id="vcReasoning">' + [['none','关闭（最稳，默认）'],['low','低'],['high','高']].map(function(x){ return '<option value="' + x[0] + '"' + (x[0] === (s.visionReasoning || 'none') ? ' selected' : '') + '>' + x[1] + '</option>' }).join('') + '</select>'),
+    row('识图思考强度', '<select id="vcReasoning">' + [['none','关闭（默认）'],['low','低'],['high','高'],['max','最高']].map(function(x){ return '<option value="' + x[0] + '"' + (x[0] === (s.visionReasoning || 'none') ? ' selected' : '') + '>' + x[1] + '</option>' }).join('') + '</select><div class="mut">DeepSeek Flash 固定使用 max，识图预算至少2048（仍受总预算限制）；其他模型使用独立设置。</div>'),
     row('识图 token 预算', '<input id="vcTokens" type="number" min="64" max="4000" value="' + (s.visionMaxTokens || 300) + '" style="width:120px"><div class="mut" style="font-size:12px;margin-top:3px">越大越能读复杂图，也越慢；默认 300</div>'),
     row('表情包打标模型', '<select id="vcTag">' +
       '<option value="auto"' + sel('auto', tagProvider) + '>自动（有通义用通义，否则 DeepSeek）</option>' +
@@ -762,7 +763,7 @@ function pageStickers(){
     }).join('')
     const badge = s.origin === 'learned' ? '<span class="pill" style="background:#2a7;color:#fff">学习</span>' : ''
     return '<article data-stk-card="' + esc(s.id) + '" style="border:1px solid var(--line,#ddd);border-radius:14px;padding:16px;flex:1 1 300px;min-width:260px;max-width:420px">' +
-      '<button class="btn" data-stk-preview="' + esc(s.id) + '" style="width:100%;padding:0" aria-label="预览 ' + esc(s.name) + '"><img data-stk-thumb="' + esc(s.id) + '" src="/api/sticker-file?id=' + encodeURIComponent(s.id) + '&hash=' + encodeURIComponent(s.hash || '') + '" style="width:100%;height:180px;object-fit:contain;border-radius:10px;background:#0002" alt="' + esc(s.name) + '"></button>' +
+      '<button class="btn" data-stk-preview="' + esc(s.id) + '" style="width:100%;padding:0" aria-label="预览 ' + esc(s.name) + '"><img data-stk-thumb="' + esc(s.id) + '" src="/api/sticker-file?id=' + encodeURIComponent(s.id) + '&scope=' + encodeURIComponent(stickerPersona?.token || '') + '&hash=' + encodeURIComponent(s.hash || '') + '" style="width:100%;height:180px;object-fit:contain;border-radius:10px;background:#0002" alt="' + esc(s.name) + '"></button>' +
       '<div style="margin:10px 0">' + badge + ' <span class="mut">' + Math.ceil((s.size || 0)/1024) + ' KB · ' + esc(s.mime) + ' · 用过 ' + (s.usage || 0) + ' 次</span></div>' +
       '<label>名称<input data-stk-name="' + esc(s.id) + '" value="' + esc(s.name) + '" maxlength="40" style="width:100%;margin:6px 0"></label>' +
       '<label>标签<input data-stk-kw="' + esc(s.id) + '" value="' + esc((s.keywords || []).join(' ')) + '" placeholder="空格或逗号分隔" style="width:100%;margin:6px 0"></label>' +
@@ -773,7 +774,7 @@ function pageStickers(){
       '<div class="flexbar"><button class="btn primary" data-stk-save="' + esc(s.id) + '">保存修改</button><button class="btn" data-stk-copy="' + esc(s.id) + '">复制哈希</button><button class="btn" data-stk-del="' + esc(s.id) + '">仅删除</button><button class="btn" data-stk-block="' + esc(s.id) + '">拉入黑名单并删除</button></div></article>'
   }).join('')
   return [
-    '<h1>表情包</h1><div class="sub">给每张图起名、打关键词和语境；机器人按语境挑图，模型也能用 [贴纸: 名称] 点名要。</div>',
+    '<h1>表情包</h1><p class="note">当前图库：' + esc(stickerPersona?.name || '默认人格') + ' · 图库、标签、使用记录和黑名单按人格分开；自动学习与配图跟随会话人格。切换后不会混用，原图库保留。</p><div class="sub">给每张图起名、打关键词和语境；机器人按语境挑图，模型也能用 [贴纸: 名称] 点名要。</div>',
     '<section class="card"><h2>表情包设置</h2>',
     '<label style="display:flex;align-items:center;gap:8px;font-size:14px"><input type="checkbox" id="stkEnabled"' + (settings.enabled !== false ? ' checked' : '') + '> 启用表情包（关闭后模型不会发图）</label>',
     '<div class="note">表情包必须跟随已成功发送的普通聊天文字回复。用户明确要求发表情包时直接尝试发送，不抽概率；普通聊天的自动配图（含模型主动选图）遵守下方概率；语境模式未选中合适图片时不随机补图。仍遵守开关、范围、黑名单及冷却；群总结、指令回执和 /Q 解题不自动配图。</div>',
@@ -804,7 +805,7 @@ function pageStickers(){
     '<button class="btn" id="stkSend">发送</button>',
     '</div></section>',
     '<section class="card"><h2>表情包黑名单 <span class="pill">' + stickerBlacklist.length + ' 张</span></h2><div class="note">这些图片不会被学习或发送。解除后允许重新学习或上传，不会自动放回表情包库。按原图哈希识别；重新压缩或裁剪后的图片不视为同一张。</div><input id="stkBlockedSearch" placeholder="搜索黑名单名称、标签、描述或哈希" aria-label="搜索表情包黑名单" style="width:100%;margin-bottom:16px">' + (stickerBlacklist.length ? '<div style="display:flex;flex-wrap:wrap;gap:12px">'+stickerBlacklist.map(s=>'<article data-stk-blocked-card="'+esc(s.hash)+'" style="border:1px solid var(--line,#ddd);border-radius:14px;padding:16px;flex:1 1 300px;min-width:260px;max-width:420px">'+
-      (s.hasPreview?'<button class="btn" data-stk-blocked-preview="'+esc(s.hash)+'" style="width:100%;padding:0" aria-label="预览黑名单 '+esc(s.name)+'"><img loading="lazy" src="/api/sticker-blacklist-file?hash='+encodeURIComponent(s.hash)+'" alt="'+esc(s.name)+'" style="width:100%;height:180px;object-fit:contain;border-radius:10px;background:#0002"></button>':'<div style="height:180px;display:grid;place-content:center;text-align:center;border-radius:10px;background:#0002"><strong>暂无图片预览</strong><span class="mut">旧版图片已删除，黑名单仍然有效</span></div>')+
+      (s.hasPreview?'<button class="btn" data-stk-blocked-preview="'+esc(s.hash)+'" style="width:100%;padding:0" aria-label="预览黑名单 '+esc(s.name)+'"><img loading="lazy" src="/api/sticker-blacklist-file?hash='+encodeURIComponent(s.hash)+'&scope='+encodeURIComponent(stickerPersona?.token || '')+'" alt="'+esc(s.name)+'" style="width:100%;height:180px;object-fit:contain;border-radius:10px;background:#0002"></button>':'<div style="height:180px;display:grid;place-content:center;text-align:center;border-radius:10px;background:#0002"><strong>暂无图片预览</strong><span class="mut">旧版图片已删除，黑名单仍然有效</span></div>')+
       '<div style="margin:10px 0"><span class="pill">已屏蔽</span> <span class="mut">'+(s.blockedAt?esc(new Date(s.blockedAt).toLocaleString()):'记录时间未知')+'</span></div><h3>'+esc(s.name||'未命名表情包')+'</h3>'+
       ((s.keywords||[]).length?'<div class="mut">标签：'+esc(s.keywords.join(' · '))+'</div>':'')+(s.description?'<p>'+esc(s.description)+'</p>':'')+
       '<details style="margin:12px 0"><summary>查看 SHA-256</summary><input readonly aria-label="黑名单哈希" value="'+esc(s.hash)+'" style="width:100%;font-family:monospace;font-size:12px;margin:8px 0"></details><div class="flexbar"><button class="btn primary" data-stk-unblock="'+esc(s.hash)+'">解除黑名单</button><button class="btn" data-stk-blocked-copy="'+esc(s.hash)+'">复制哈希</button></div></article>').join('')+'</div><div id="stkBlockedEmpty" class="mut" hidden>没有匹配的黑名单图片</div>' : '<div class="mut">暂无黑名单</div>') + '</section>',
@@ -1176,13 +1177,15 @@ async function bind(){
   if(stkSearch)stkSearch.oninput=()=>{const q=stkSearch.value.trim().toLowerCase();document.querySelectorAll('[data-stk-card]').forEach(el=>{const s=stickerList.find(s=>s.id===el.dataset.stkCard);el.hidden=![s?.name,...(s?.keywords || []),s?.description,s?.hash].join(' ').toLowerCase().includes(q)})}
   const blockedSearch=document.getElementById('stkBlockedSearch')
   if(blockedSearch)blockedSearch.oninput=()=>{const q=blockedSearch.value.trim().toLowerCase();let count=0;document.querySelectorAll('[data-stk-blocked-card]').forEach(el=>{const s=stickerBlacklist.find(s=>s.hash===el.dataset.stkBlockedCard);el.hidden=![s?.name,...(s?.keywords||[]),s?.description,s?.hash].join(' ').toLowerCase().includes(q);if(!el.hidden)count++});const empty=document.getElementById('stkBlockedEmpty');if(empty)empty.hidden=count>0}
-  document.querySelectorAll('[data-stk-blocked-preview]').forEach(el=>el.onclick=()=>{const s=stickerBlacklist.find(s=>s.hash===el.dataset.stkBlockedPreview);document.getElementById('stkPreviewTitle').textContent='黑名单 · '+s.name;document.getElementById('stkPreviewImage').src='/api/sticker-blacklist-file?hash='+encodeURIComponent(s.hash);document.getElementById('stkPreviewDialog').showModal()})
+  document.querySelectorAll('[data-stk-blocked-preview]').forEach(el=>el.onclick=()=>{const s=stickerBlacklist.find(s=>s.hash===el.dataset.stkBlockedPreview);document.getElementById('stkPreviewTitle').textContent='黑名单 · '+s.name;document.getElementById('stkPreviewImage').src='/api/sticker-blacklist-file?hash='+encodeURIComponent(s.hash)+'&scope='+encodeURIComponent(stickerPersona?.token || '');document.getElementById('stkPreviewDialog').showModal()})
   document.querySelectorAll('[data-stk-blocked-copy]').forEach(el=>el.onclick=async()=>{try{await navigator.clipboard.writeText(el.dataset.stkBlockedCopy);toast('哈希已复制')}catch{toast('可展开哈希手动复制',true)}})
-  document.querySelectorAll('[data-stk-preview]').forEach(el=>el.onclick=()=>{const s=stickerList.find(s=>s.id===el.dataset.stkPreview);document.getElementById('stkPreviewTitle').textContent=s.name;document.getElementById('stkPreviewImage').src='/api/sticker-file?id='+encodeURIComponent(s.id)+'&hash='+encodeURIComponent(s.hash || '');document.getElementById('stkPreviewDialog').showModal()})
+  document.querySelectorAll('[data-stk-preview]').forEach(el=>el.onclick=()=>{const s=stickerList.find(s=>s.id===el.dataset.stkPreview);document.getElementById('stkPreviewTitle').textContent=s.name;document.getElementById('stkPreviewImage').src='/api/sticker-file?id='+encodeURIComponent(s.id)+'&scope='+encodeURIComponent(stickerPersona?.token || '')+'&hash='+encodeURIComponent(s.hash || '');document.getElementById('stkPreviewDialog').showModal()})
   const previewClose=document.getElementById('stkPreviewClose');if(previewClose)previewClose.onclick=()=>document.getElementById('stkPreviewDialog').close()
   document.querySelectorAll('[data-stk-copy]').forEach(el=>el.onclick=async()=>{try{await navigator.clipboard.writeText(stickerList.find(s=>s.id===el.dataset.stkCopy).hash);toast('哈希已复制')}catch(e){toast('可在哈希输入框中手动复制',true)}})
   document.querySelectorAll('[data-stk-file]').forEach(el=>el.onchange=()=>{const f=el.files[0];if(!f)return;if(f.size>4*1024*1024){toast('图片不能超过4MB',true);el.value='';return}const r=new FileReader();r.onload=()=>{document.querySelector('[data-stk-thumb="'+el.dataset.stkFile+'"]').src=r.result};r.readAsDataURL(f)})
-  window.StickerUploadUI?.bind({api,toast,onSaved:load})
+  const boundStickerScope=stickerPersona?.token
+  const stickerApi=(path,body)=>api(path,{...body,stickerScope:boundStickerScope})
+  window.StickerUploadUI?.bind({api:stickerApi,toast,onSaved:load})
   document.querySelectorAll('[data-stk-save]').forEach(el => el.onclick = async () => {
     const id = el.dataset.stkSave
     const name = document.querySelector('[data-stk-name="' + id + '"]').value
@@ -1193,31 +1196,31 @@ async function bind(){
     el.disabled=true
     try {
       const dataUrl=file?await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=()=>reject(Error('图片读取失败'));r.readAsDataURL(file)}):undefined
-      await api('/api/action/sticker-update', { id, name, keywords, scenes, description, dataUrl }); toast('已保存'); await load() }
+      await stickerApi('/api/action/sticker-update', { id, name, keywords, scenes, description, dataUrl }); toast('已保存'); await load() }
     catch (e) { toast('保存失败：' + e.message, true) }
     finally{el.disabled=false}
   })
   document.querySelectorAll('[data-stk-del]').forEach(el => el.onclick = async () => {
     if (!await ask('仅删除这张表情包？', '图片文件也会一起删掉，但以后仍可能重新学习。不想再收录请选择“拉入黑名单并删除”。', '仅删除')) return
-    try { await api('/api/action/sticker-delete', { id: el.dataset.stkDel }); await load(); toast('已删除') }
+    try { await stickerApi('/api/action/sticker-delete', { id: el.dataset.stkDel }); await load(); toast('已删除') }
     catch (e) { toast('删除失败：' + e.message, true) }
   })
   document.querySelectorAll('[data-stk-block]').forEach(el=>el.onclick=async()=>{
     if(!await ask('拉入黑名单并删除？','会从可用库移除，保留图片供黑名单预览。以后自动学习和上传都不会再次收录；可在黑名单中解除。','拉入黑名单'))return
     el.disabled=true
-    try{await api('/api/action/sticker-blacklist',{id:el.dataset.stkBlock});await load();toast('已加入黑名单并删除')}
+    try{await stickerApi('/api/action/sticker-blacklist',{id:el.dataset.stkBlock});await load();toast('已加入黑名单并删除')}
     catch(e){toast('操作失败：'+e.message,true)}finally{el.disabled=false}
   })
   document.querySelectorAll('[data-stk-unblock]').forEach(el=>el.onclick=async()=>{
     el.disabled=true
-    try{await api('/api/action/sticker-unblock',{hash:el.dataset.stkUnblock});await load();toast('已解除，允许再次学习或上传')}
+    try{await stickerApi('/api/action/sticker-unblock',{hash:el.dataset.stkUnblock});await load();toast('已解除，允许再次学习或上传')}
     catch(e){toast('解除失败：'+e.message,true)}finally{el.disabled=false}
   })
   const stkSend = document.getElementById('stkSend')
   if (stkSend) stkSend.onclick = async () => {
     const groupId = document.getElementById('stkSendGroup').value
     const keyword = document.getElementById('stkSendKw').value.trim()
-    try { const r = await api('/api/action/sticker-send', { groupId, keyword, text:document.getElementById('stkSendText').value.trim() }); toast('已发送「' + r.name + '」') }
+    try { const r = await stickerApi('/api/action/sticker-send', { groupId, keyword, text:document.getElementById('stkSendText').value.trim() }); toast('已发送「' + r.name + '」') }
     catch (e) { toast('发送失败：' + e.message, true) }
   }
   // 记忆浏览：查看 / 单条改删 / 摘要编辑 / 清空
@@ -1638,6 +1641,9 @@ async function load(){
     commandBuiltins = cc.builtinItems || []
     pokeDiagnostics = cc.poke || {}
     modelsInfo = models || {}
+    if ((stk.persona?.token || '') !== (stickerPersona?.token || '')){document.querySelectorAll('dialog[open]').forEach(d=>d.close());toast('已切换人格图库，旧人格的未保存编辑已取消')}
+    stickerPersona = stk.persona || null
+    window.StickerUploadUI?.setScope(stickerPersona?.token || '')
     stickerList = stk.items || []
     stickerBlacklist = stk.blacklist || []
     stickerScenes = stk.scenes || []
@@ -1737,16 +1743,21 @@ async function refreshStickersUI() {
   try {
     const stk = await api('/api/stickers')
     if(page!=='stickers'||document.hidden)return
+    const personaChanged=(stk.persona?.token || '') !== (stickerPersona?.token || '')
+    if(personaChanged)stickerPending=true
     if(JSON.stringify([stickerList,stickerBlacklist,stickerLearn,stickerSettings])!==JSON.stringify([stk.items||[],stk.blacklist||[],stk.learn||{},stk.settings||{}]))stickerPending=true
     if (!stickerPending) return
     const mainEl = document.getElementById('main')
     const focused = document.activeElement
     const typing = focused && mainEl && mainEl.contains(focused) && /^(INPUT|TEXTAREA|SELECT)$/.test(focused.tagName)
     const dialogOpen = Boolean(document.querySelector('dialog[open]'))
-    if (typing || dialogOpen || stickerEditsDirty()) {
+    if (!personaChanged && (typing || dialogOpen || stickerEditsDirty())) {
       if (!stickerNotified) { stickerNotified = true; toast('表情包库有更新，保存当前修改后按 F5 刷新') }
       return
     }
+    if ((stk.persona?.token || '') !== (stickerPersona?.token || '')){document.querySelectorAll('dialog[open]').forEach(d=>d.close());toast('已切换人格图库，旧人格的未保存编辑已取消')}
+    stickerPersona = stk.persona || null
+    window.StickerUploadUI?.setScope(stickerPersona?.token || '')
     stickerList = stk.items || []
     stickerBlacklist = stk.blacklist || []
     stickerScenes = stk.scenes || []

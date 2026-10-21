@@ -46,6 +46,20 @@ function setup({config={},getMsg,forwards={},chat,chatSettings,rateLimiter,visio
 const lastUser=t=>t.requests.at(-1)[1].at(-1).content
 const shape=t=>t.requests.at(-1)[0].match(/【本次回复的形态要求[^]*?(?=\n\n【|$)/)?.[0]
 try {
+  await test('陌生私聊实时和补读均不重建记忆，空管理员列表不绕过白名单',async()=>{
+    const t=setup({config:{privateWhitelist:new Set(),adminUsers:[]}})
+    await t.bot.handleMessage(t.event('陌生私聊',{message_type:'private'}))
+    const old=t.event('离线旧消息',{message_type:'private'})
+    old.messageContext={...old.messageContext,historical:true}
+    await t.bot.handleMessage(old)
+    assert.equal(t.memory.get('p'+user).length,0)
+    assert.equal(t.memory.keys().includes('p'+user),false)
+    assert.equal(t.requests.length,0)
+    t.cfg.privateWhitelist.add(user)
+    await t.bot.handleMessage(t.event('允许后的私聊',{message_type:'private'}))
+    assert.equal(t.requests.length,1)
+    assert.ok(t.memory.get('p'+user).length)
+  })
   await test('结构化点歌按平台发卡片，找不到或登录失效不误报成功',async()=>{
     const t=setup({musicSearch:async r=>{assert.equal(r.platform,'qq');assert.equal(r.id,'97773');return {id:'97773',name:'晴天',artist:'周杰伦',platform:'qq'}}})
     await t.bot.handleMessage(t.event([at(),text('点歌 QQ音乐 97773')]))
@@ -84,6 +98,16 @@ try {
     const before=t.sent.length
     await t.bot.handleMessage(msg())
     assert.equal(scopes.length,2);assert.ok(t.sent.length>before,'无客户端时仍能正常处理文字')
+  })
+  await test('聊天提示词、发送图片和使用记录都使用会话人格图库',async()=>{
+    const item={id:'B',name:'B专属'},used=[]
+    const library={count:()=>1,summary:()=>item.name,find:q=>q===item.name?item:null,dataUrlOf:i=>i.id==='B'?'base64://Qg==':null,noteUsage:id=>used.push(id)}
+    const globalLibrary={forChat:key=>{assert.equal(key,'g'+group);return library},scope:()=>({key:'B'}),summary:()=>{throw Error('不应读取全局A图库')},dataUrlOf:()=>{throw Error('不应发送全局A图片')}}
+    const t=setup({stickers:globalLibrary,config:{stickersEnabled:true,stickerAutoRate:1},chat:()=> '你好呀 [贴纸: B专属]'})
+    await t.bot.handleMessage(t.event([at(),text('你好')]))
+    assert.match(t.requests[0][0],/可用表情包：B专属/)
+    assert.equal(t.sent[1][0].data.file,'base64://Qg==')
+    assert.deepEqual(used,['B'])
   })
   await test('表情包必须配文字，模型选图不能绕过0概率；只有标记时先修正文案',async()=>{
     const item={id:'sticker',name:'猫猫问号'}

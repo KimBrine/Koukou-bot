@@ -1,6 +1,7 @@
 /* 上传草稿独立保存，轮询与页面切换不丢文件；AI只补空白字段。 */
 window.StickerUploadUI=(()=>{
-  let drafts=[],busy=false,reading=0,scenes=[],tools=null,batchKeywords='',batchScenes=[]
+  let drafts=[],busy=false,reading=0,scenes=[],tools=null,batchKeywords='',batchScenes=[],scope='',epoch=0
+  function setScope(next){if(scope===next)return;scope=next;epoch++;drafts=[];busy=false;reading=0;batchKeywords='';batchScenes=[]}
   const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
   const disabled=()=>busy?' disabled':''
   function render(sceneList=[]){scenes=sceneList;return `<section class="card" id="stickerUploadPanel"><h2>上传表情包 <span class="pill">待上传 ${drafts.length} 张</span></h2>
@@ -17,39 +18,46 @@ window.StickerUploadUI=(()=>{
   function redraw(){const panel=document.getElementById('stickerUploadPanel');if(!panel)return;panel.outerHTML=render(scenes);bind(tools)}
   async function addFiles(files){
     if(busy||reading)return
+    const started=epoch
     reading++
     try{for(const f of Array.from(files||[])){
       if(drafts.length>=20){tools.toast('一批最多20张，请先上传或移除部分草稿',true);break}
       if(!['image/png','image/jpeg','image/webp','image/gif'].includes(f.type)||!f.size||f.size>4*1024*1024){tools.toast(f.name+'：请选择4MB以内的PNG/JPEG/WebP/GIF图片',true);continue}
       const dataUrl=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=()=>reject(Error('图片读取失败'));r.readAsDataURL(f)})
+      if(started!==epoch)return
       if(drafts.some(d=>d.dataUrl===dataUrl))continue
       drafts.push({id:crypto.randomUUID(),filename:f.name,size:f.size,dataUrl,name:'',keywords:'',description:'',scenes:[],status:''})
-    }}catch(e){tools.toast(e.message,true)}finally{reading--;redraw()}
+    }}catch(e){tools.toast(e.message,true)}finally{if(started===epoch){reading--;redraw()}}
   }
   async function fill(list){
     if(busy||reading||!list.length)return
+    const started=epoch, bound=tools
     busy=true;redraw()
     try{for(const d of list){
+      if(started!==epoch)return
       if(d.name.trim()&&d.keywords.trim()&&d.description.trim()&&d.scenes.length){d.status='已填写完整，跳过AI';continue}
       d.status='AI正在补全…';redraw()
-      try{const r=await tools.api('/api/action/sticker-suggest',{dataUrl:d.dataUrl}),v=r.draft
+      try{const r=await bound.api('/api/action/sticker-suggest',{dataUrl:d.dataUrl}),v=r.draft
+        if(started!==epoch)return
         for(const k of ['name','keywords','description'])if(!d[k].trim())d[k]=k==='keywords'?v.keywords.join(' '):v[k]
         if(!d.scenes.length)d.scenes=v.scenes||[]
         d.status='已由 '+v.model+' 补全，请检查后上传'
       }catch(e){d.status='补全失败：'+e.message+'；草稿已保留'}
       redraw()
-    }}finally{busy=false;redraw()}
+    }}finally{if(started===epoch){busy=false;redraw()}}
   }
   async function upload(){
     if(busy||reading)return
     if(!drafts.length){tools.toast('先拖入或选择图片',true);return}
+    const started=epoch, bound=tools
     busy=true;redraw();let count=0
     try{for(const d of [...drafts]){
+      if(started!==epoch)return
       d.status='上传中…';redraw()
-      try{await tools.api('/api/action/sticker-add',{dataUrl:d.dataUrl,name:d.name.trim()||d.filename.replace(/\.[^.]+$/,''),keywords:d.keywords,description:d.description,scenes:d.scenes});drafts=drafts.filter(x=>x.id!==d.id);count++}
+      try{await bound.api('/api/action/sticker-add',{dataUrl:d.dataUrl,name:d.name.trim()||d.filename.replace(/\.[^.]+$/,''),keywords:d.keywords,description:d.description,scenes:d.scenes});if(started!==epoch)return;drafts=drafts.filter(x=>x.id!==d.id);count++}
       catch(e){d.status='上传失败：'+e.message+'；可修改后重试'}
       redraw()
-    }}finally{busy=false;await tools.onSaved();redraw();tools.toast('已处理 '+count+' 张，失败草稿保留')}
+    }}finally{if(started===epoch){busy=false;await bound.onSaved();if(started===epoch){redraw();bound.toast('已处理 '+count+' 张，失败草稿保留')}}}
   }
   function bind(options){tools=options;if(!tools)return;const g=id=>document.getElementById(id),drop=g('stkDrop'),file=g('stkFile')
     if(!drop||!file)return
@@ -66,5 +74,5 @@ window.StickerUploadUI=(()=>{
     document.querySelectorAll('[data-upload-ai]').forEach(el=>el.onclick=()=>fill(drafts.filter(d=>d.id===el.dataset.uploadAi)))
     document.querySelectorAll('[data-upload-remove]').forEach(el=>el.onclick=()=>{if(busy)return;drafts=drafts.filter(d=>d.id!==el.dataset.uploadRemove);redraw()})
   }
-  return {render,bind,dirty:()=>busy||reading>0||drafts.length>0}
+  return {render,bind,setScope,dirty:()=>busy||reading>0||drafts.length>0}
 })()

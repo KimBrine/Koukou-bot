@@ -17,3 +17,5 @@ assert.equal(r('p999', configured).reply, true, '控制台加过的私聊要回'
 config.privateWhitelist = new Set()
 assert.equal(r('p999').reply, false, '清空白名单后陌生人仍不回')
 console.log('私聊白名单检查通过：陌生人静默 / 白名单与管理放行 / 已添加私聊放行')
+config.adminUsers=[]
+assert.equal(r('p999').reply,false,'管理员为空不能把所有人当管理员放行')
