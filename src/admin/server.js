@@ -12,6 +12,7 @@ import { activatePersona } from '../personaSwitch.js'
 import { applyConversationSettings, resetConversationMemory } from '../conversationSessions.js'
 import { writeTextAtomic } from '../stateFile.js'
 import { createWebSearch } from '../search.js'
+import { createImageHasher } from '../imagehash.js'
 import { createUpdateChecker } from '../updateCheck.js'
 import { suggestStickerMetadata } from '../stickerMetadata.js'
 
@@ -893,6 +894,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
   }
 
   let retagJob = null
+  const imageHasher = createImageHasher({ config, logger })
   const actions = {
     async 'set-config-batch'(payload) {
       const patch = payload?.patch && typeof payload.patch === 'object' && !Array.isArray(payload.patch) ? payload.patch : {}
@@ -1322,6 +1324,25 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       }
       logger?.info?.('[控制台] 已导入记忆')
       return { ok: true, recentKeys: Object.keys(mem || {}).length, longKeys: Object.keys(long || {}).length }
+    },
+    async 'detect-similar'() {
+      const list = stickers.list() || []
+      const files = list.map((x) => path.join(stickers.dir, x.file)).filter((f) => existsSync(f))
+      await imageHasher.hashFiles(files)
+      const groups = []
+      for (let i = 0; i < list.length; i += 1) {
+        const a = imageHasher.hashOf(list[i])
+        if (!a) continue
+        for (let j = i + 1; j < list.length; j += 1) {
+          const b = imageHasher.hashOf(list[j])
+          if (!b) continue
+          const d = imageHasher.distance(a, b)
+          if (d <= 8) groups.push({ distance: d, a: { id: list[i].id, name: list[i].name }, b: { id: list[j].id, name: list[j].name } })
+        }
+      }
+      groups.sort((x, y) => x.distance - y.distance)
+      logger?.info?.('[控制台] 相似图检测：' + list.length + ' 张，命中 ' + groups.length + ' 组')
+      return { checked: list.length, groups: groups.slice(0, 200) }
     },
     async 'retag-stickers'(payload) {
       if (!stickerTagLLM || typeof stickerTagLLM.describeImages !== 'function') throw new Error('打标模型未配置')

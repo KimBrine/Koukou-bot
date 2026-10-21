@@ -69,7 +69,7 @@ let backupInfo = { items: [], root: '' }
 let selfCheckInfo = null
 let metricsInfo = []
 let metricsRange = 7
-let stickerFold = { rules: false, learn: false, manual: false, blacklist: false }
+let stickerFold = { rules: false, learn: false, manual: false, blacklist: false, similar: false, library: true }
 let customCommands = []
 let commandBuiltins = []
 let pokeDiagnostics = {}
@@ -930,9 +930,10 @@ function pageStickers(){
       '<div style="margin:10px 0"><span class="pill">已屏蔽</span> <span class="mut">'+(s.blockedAt?esc(new Date(s.blockedAt).toLocaleString()):'记录时间未知')+'</span></div><h3>'+esc(s.name||'未命名表情包')+'</h3>'+
       ((s.keywords||[]).length?'<div class="mut">标签：'+esc(s.keywords.join(' · '))+'</div>':'')+(s.description?'<p>'+esc(s.description)+'</p>':'')+
       '<details style="margin:12px 0"><summary>查看 SHA-256</summary><input readonly aria-label="黑名单哈希" value="'+esc(s.hash)+'" style="width:100%;font-family:monospace;font-size:12px;margin:8px 0"></details><div class="flexbar"><button class="btn primary" data-stk-unblock="'+esc(s.hash)+'">解除黑名单</button><button class="btn" data-stk-blocked-copy="'+esc(s.hash)+'">复制哈希</button></div></article>').join('')+'</div><div id="stkBlockedEmpty" class="mut" hidden>没有匹配的黑名单图片</div>' : '<div class="mut">暂无黑名单</div>') + '</div></details>',
-    '<section class="card"><h2>表情包库 <span class="pill">' + items.length + ' 张</span></h2><input id="stkSearch" placeholder="搜索名称、标签、描述或哈希" style="width:100%;margin-bottom:16px">',
+    '<details class="card" data-stkfold="similar"' + (stickerFold.similar ? ' open' : '') + '><summary><b class="api-card-title">相似图检测</b> <span class="api-card-meta">找出重复收录</span></summary><div class="api-card-body"><div class="note">按图片指纹比较，重新压缩或裁剪过的近似图也能找出来；只提示，不会自动删。</div><div class="flexbar"><button class="btn" id="simRun">开始检测</button></div><div id="simList"></div></div></details>',
+    '<details class="card" data-stkfold="library"' + (stickerFold.library ? ' open' : '') + '><summary><b class="api-card-title">表情包库</b> <span class="api-card-meta">' + items.length + ' 张</span></summary><div class="api-card-body"><input id="stkSearch" placeholder="搜索名称、标签、描述或哈希" style="width:100%;margin-bottom:16px">',
     items.length ? ('<div style="display:flex;flex-wrap:wrap;gap:12px">' + cards + '</div>') : '<div class="mut">还没有表情包，先上传几张，或者打开上面的群聊学习。</div>',
-    '</section>',
+    '</div></details>',
     '<dialog id="stkPreviewDialog" style="max-width:90vw;max-height:90vh;background:var(--card,#15243a);color:inherit;border:1px solid #567;border-radius:16px;padding:20px"><h2 id="stkPreviewTitle"></h2><img id="stkPreviewImage" style="display:block;max-width:80vw;max-height:65vh;object-fit:contain" alt="表情包预览"><button class="btn" id="stkPreviewClose">关闭预览</button></dialog>'
   ].join('')
 }
@@ -1033,6 +1034,31 @@ async function bind(){
       await load()
     } catch(e){ toast('导入失败：' + e.message, true) }
     finally { memoryImport.value = '' }
+  }
+  const simRun = document.getElementById('simRun')
+  if (simRun) simRun.onclick = async function(){
+    const box = document.getElementById('simList')
+    simRun.disabled = true
+    if (box) box.innerHTML = '<div class="mut">正在计算图片指纹…</div>'
+    try {
+      const r = await api('/api/action/detect-similar', {})
+      if (!box) return
+      if (!r.groups.length) { box.innerHTML = '<div class="mut">检查了 ' + r.checked + ' 张，没有发现相似图</div>'; return }
+      box.innerHTML = '<div class="mut" style="margin:8px 0">检查 ' + r.checked + ' 张，发现 ' + r.groups.length + ' 组相似</div>' + r.groups.map(function(g){
+        const fig = function(x){
+          return '<figure style="margin:0;text-align:center"><img src="/api/sticker-file?id=' + encodeURIComponent(x.id) + '&scope=' + encodeURIComponent(stickerPersona?.token || '') + '" style="width:110px;height:110px;object-fit:contain;border-radius:10px;background:#0002"><figcaption class="mut" style="font-size:12px;margin:4px 0">' + esc(x.name) + '</figcaption><button class="btn sm" data-simdel="' + esc(x.id) + '">删这张</button></figure>'
+        }
+        return '<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:10px 0;border-bottom:1px dashed rgba(148,163,184,.2)">' + fig(g.a) + '<span class="mut">≈</span>' + fig(g.b) + '<span class="mut" style="font-size:12px">差异 ' + g.distance + '</span></div>'
+      }).join('')
+      box.querySelectorAll('[data-simdel]').forEach(function(b){
+        b.onclick = async function(){
+          if (!await ask('删除这张表情包？', '删除后不可恢复，可以重新上传。', '删除')) return
+          try { await api('/api/action/sticker-delete', { id: b.dataset.simdel }); b.closest('figure').remove(); toast('已删除') }
+          catch(e){ toast('删除失败：' + e.message, true) }
+        }
+      })
+    } catch(e){ if (box) box.innerHTML = '<div class="mut">检测失败：' + esc(e.message) + '</div>' }
+    finally { simRun.disabled = false }
   }
   const retagAll = document.getElementById('retagAll')
   if (retagAll) retagAll.onclick = async function(){
