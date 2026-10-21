@@ -591,7 +591,7 @@ function pageMemory(){
   const rows = memoryOverview.map(function(m){
     const name = nameOf(m.key)
     return '<tr><td><b>' + esc(name) + '</b><div class="mut" style="font-size:12px">' + esc(m.key) + '</div></td><td>' + (m.recent||0) + ' 条</td><td>' + (m.longTermChars||0) + ' 字</td><td>' + (m.pending||0) + '</td>' +
-      '<td><button class="btn" data-memview="' + esc(m.key) + '">查看</button> <button class="btn" data-memclear="' + esc(m.key) + '">清空</button></td></tr>'
+      '<td><button class="btn" data-memview="' + esc(m.key) + '">' + (memoryDetail && memoryDetail.key === m.key ? '收回' : '查看') + '</button> <button class="btn" data-memclear="' + esc(m.key) + '">清空</button></td></tr>'
   }).join('')
   const d = memoryDetail
   const fmtTime = function(ts){ if(!ts) return ''; try { return new Date(ts).toLocaleString('zh-CN',{hour12:false}) } catch(e){ return '' } }
@@ -1215,7 +1215,13 @@ async function bind(){
     render()
   }
   document.querySelectorAll('[data-memview]').forEach(el => el.onclick = async () => {
-    try { await reloadMemoryDetail(el.dataset.memview) }
+    const key = el.dataset.memview
+    if (memoryDetail && memoryDetail.key === key) {
+      memoryDetail = null
+      render()
+      return
+    }
+    try { await reloadMemoryDetail(key) }
     catch (e) { toast('读取失败：' + e.message, true) }
   })
   document.querySelectorAll('[data-mem-edit]').forEach(el => el.onclick = async () => {
