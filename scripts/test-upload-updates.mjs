@@ -36,15 +36,16 @@ await assert.rejects(()=>suggestStickerMetadata({dataUrl:PNG}),/尚未配置/)
 await assert.rejects(()=>suggestStickerMetadata({dataUrl:PNG,tagLLM:{describeImages:async()=>'{"isSticker":false}'}}),/未确认/)
 await assert.rejects(()=>suggestStickerMetadata({dataUrl:PNG,tagLLM:{describeImages:async()=>'{"isSticker":true,"name":"漏字段"}'}}),/字段不完整/)
 
-let html='',fields=[],apiCalls=0,uploads=0,fail=false
+let html='',fields=[],saveButtons=[],apiCalls=0,uploads=0,fail=false,ids=0
 const elements=Object.fromEntries(['stickerUploadPanel','stkDrop','stkFile','stkChoose','stkFillAll','stkUpload'].map(k=>[k,{}]))
 elements.stkDrop.classList={add(){},remove(){}}
 Object.defineProperty(elements.stickerUploadPanel,'outerHTML',{get:()=>html,set:v=>{html=v}})
 const document={getElementById:id=>elements[id],querySelectorAll:sel=>{
+ if(sel==='[data-upload-save]'){saveButtons=[...html.matchAll(/data-upload-save="([^"]+)"/g)].map(m=>({dataset:{uploadSave:m[1]}}));return saveButtons}
  if(sel!=='[data-upload-field]')return []
  fields=[...html.matchAll(/data-upload-field="([^"]+)" data-upload-id="([^"]+)"/g)].map(m=>({dataset:{uploadField:m[1],uploadId:m[2]},value:''}));return fields
 }}
-const context={window:{},document,crypto:{randomUUID:()=> 'test-id'},FileReader:class{readAsDataURL(){this.result=PNG;queueMicrotask(()=>this.onload())}}}
+const context={window:{},document,crypto:{randomUUID:()=> 'test-id-'+(++ids)},FileReader:class{readAsDataURL(file){this.result=file.name==='second.png'?'data:image/png;base64,'+Buffer.from('second-image').toString('base64'):PNG;queueMicrotask(()=>this.onload())}}}
 vm.createContext(context);vm.runInContext(readFileSync(new URL('../src/admin/stickerUpload.js',import.meta.url),'utf8'),context)
 const ui=context.window.StickerUploadUI
 ui.bind({toast(){},onSaved:async()=>{},api:async(route,body)=>{
@@ -59,4 +60,30 @@ await elements.stkUpload.onclick();assert.equal(uploads,1);assert.equal(ui.dirty
 await elements.stkFile.onchange();fail=true;await elements.stkFillAll.onclick();assert.match(html,/模拟超时.*草稿已保留/);assert.equal(ui.dirty(),true)
 let prevented=false;elements.stkDrop.ondragover({preventDefault(){prevented=true}})
 assert.equal(prevented,true)
+ui.setScope('another-persona')
+const saved=[],notices=[];let rejectSecond=true
+ui.bind({toast:m=>notices.push(m),onSaved:async()=>{},api:async(route,body)=>{
+ if(body.name==='second'&&rejectSecond)throw Error('模拟保存失败')
+ saved.push(body.name);return {duplicated:body.name==='second'}
+}})
+elements.stkFile.files=[{name:'first.png',size:100,type:'image/png'},{name:'second.png',size:120,type:'image/png'}]
+await elements.stkFile.onchange()
+assert.equal(saveButtons.length,2)
+assert.match(html,/保存全部到表情包库（2张）/)
+assert.match(html,/sticker-save-bar/)
+await saveButtons[0].onclick()
+assert.deepEqual(saved,['first'],'单张保存只导入选中图片')
+assert.equal(saveButtons.length,1)
+assert.equal(ui.dirty(),true,'其余草稿继续保留')
+assert.match(html,/还有1张尚未保存/)
+await elements.stkUpload.onclick()
+assert.match(html,/保存失败.*草稿已保留/)
+assert.equal(saveButtons.length,1)
+rejectSecond=false
+await saveButtons[0].onclick()
+assert.deepEqual(saved,['first','second'])
+assert.equal(ui.dirty(),false)
+assert.match(html,/已存在，未重复添加/)
+assert.ok(notices.some(m=>m.includes('已保存到当前人格')))
+
 console.log('上传与更新检查通过：拖拽/草稿/手填保护/失败保留/第二轮模型/正式版本比较/并发缓存/失败状态；无网络与付费调用。')

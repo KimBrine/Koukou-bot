@@ -218,3 +218,11 @@ details.card[open] > summary { padding-bottom: 16px; border-bottom: 1px solid va
 .learn-box > summary::-webkit-details-marker { display: none; }
 .learn-box > summary::before { content: '▸'; color: var(--muted, #9aabc0); transition: transform .18s ease; }
 .learn-box[open] > summary::before { transform: rotate(90deg); }
+
+/* Import actions stay visible after editing a long draft list. */
+.sticker-save-button{font-size:16px;font-weight:700;min-height:50px;padding:12px 20px!important;background:linear-gradient(135deg,#16866b,#237b9a)!important;border:1px solid #76e0c0!important;color:#fff!important;box-shadow:0 5px 16px #0003}
+.sticker-save-button:disabled{opacity:.5;box-shadow:none}
+.sticker-save-one{display:block;width:100%;margin:12px 0}
+.sticker-save-bar{position:sticky;bottom:12px;z-index:5;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-top:20px;padding:16px;background:var(--card,#182a40);border:1px solid #76e0c0;border-radius:14px;box-shadow:0 6px 24px #0005}
+.sticker-save-result{padding:12px 16px;border:1px solid #76e0c0;border-radius:10px;background:#16866b22}
+
