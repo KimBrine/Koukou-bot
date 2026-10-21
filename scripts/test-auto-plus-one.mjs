@@ -106,11 +106,12 @@ await test('相同图片、不同图片与失效链接图片都不触发 +1', as
   const t = setup(); await t.handle(event(a)); await t.handle(event(b)); assert.equal(t.sent.length, 0)
   assert.equal(plusOneFingerprint([{ type: 'image', data: {} }]), null)
 })
-await test('QQ 图片、纯 QQ 表情与对应 CQ 码均不跟读', async () => {
+await test('QQ 图片与图片表情包不跟读，纯QQ自带表情可识别', async () => {
   const image = key => [{ type: 'image', data: { url: `https://multimedia.nt.qq.com.cn/download?fileid=abc&rkey=${key}` } }]
   assert.equal(plusOneFingerprint(image('old')), null); assert.equal(plusOneFingerprint(image('new')), null)
   const face = resultId => [{ type: 'face', data: { id: '178', resultId } }]
-  for (const raw of [face(''), face('1'), face('2'), '[CQ:face,id=178]', '[CQ:image,file=test.jpg]']) assert.equal(plusOneFingerprint(raw), null)
+  for (const raw of [face(''), face('1'), face('2'), '[CQ:face,id=178]']) assert.ok(plusOneFingerprint(raw))
+  assert.equal(plusOneFingerprint('[CQ:image,file=test.jpg]'),null)
 })
 await test('文字夹QQ自带表情可跟读，数组和CQ码按编号、顺序和结果比较', async () => {
   const a = [...text('早安 '), { type: 'face', data: { id: 66, raw: { faceText: '[爱心]' } } }, { type: 'face', data: { id: '66' } }]
@@ -127,6 +128,21 @@ await test('文字夹QQ自带表情可跟读，数组和CQ码按编号、顺序�
   await t.handle(event(a)); await t.handle(event(a))
   assert.deepEqual(t.sent, [{ groupId: second.group_id, messageId: second.message_id }])
 })
+await test('纯QQ表情、纯emoji及任意混合均可触发一次，仍区分内容顺序与随机结果',async()=>{
+  const face={type:'face',data:{id:'66'}}
+  const cases=[[face],[face,face],text('💀'),text('👨‍👩‍👧‍👦👍🏽'),[...text('💀'),face],[face,...text('你好💀'),face],[...text(' '),face]]
+  for(const raw of cases){
+    assert.ok(plusOneFingerprint(raw))
+    const t=setup()
+    await t.handle(event(raw,{user_id:selfId}));await t.handle(event(raw));assert.equal(t.sent.length,0,'自身消息不作为第一条')
+    const second=event(raw);await t.handle(second);await t.handle(event(raw));await t.handle(event(raw))
+    assert.deepEqual(t.sent,[{groupId:second.group_id,messageId:second.message_id}])
+  }
+  assert.equal(plusOneFingerprint([face]),plusOneFingerprint('[CQ:face,id=66]'))
+  assert.notEqual(plusOneFingerprint([face,...text('💀')]),plusOneFingerprint([...text('💀'),face]))
+  assert.notEqual(plusOneFingerprint('[CQ:face,id=114,resultId=1]'),plusOneFingerprint('[CQ:face,id=114,resultId=2]'))
+  assert.equal(plusOneFingerprint([{type:'mface',data:{key:'image-sticker'}}]),null,'图片式商城表情不跟读')
+})
 await test('表情内容不同不能凑两条，文字夹表情也不能由机器人自己起头', async () => {
   const a = [...text('A'), { type: 'face', data: { id: '66' } }]
   const b = [...text('A'), { type: 'face', data: { id: '14' } }]
@@ -141,10 +157,10 @@ await test('文字混合图片或图片表情包仍不触发 +1', async () => {
     const t = setup(); const extra = typeof raw === 'string' ? { message: raw } : {}
     await t.handle(event(raw, extra)); await t.handle(event(raw, extra)); assert.equal(t.sent.length, 0)
   }
-  for (const raw of ['A[CQ:at,qq=200000010][CQ:face,id=66]', 'A[CQ:reply,id=1][CQ:face,id=66]', '/群总结[CQ:face,id=66]', ' [CQ:face,id=66]']) assert.equal(plusOneFingerprint(raw), null)
+  for (const raw of ['A[CQ:at,qq=200000010][CQ:face,id=66]', 'A[CQ:reply,id=1][CQ:face,id=66]', '/群总结[CQ:face,id=66]']) assert.equal(plusOneFingerprint(raw), null)
 })
 await test('指令、@、引用与不支持的消息不会跟读，并打断连续段', async () => {
-  for (const raw of ['/今日猪猪', '／群总结 3', '群总结', '/id_check', ' ', ...['image', 'face', 'at', 'reply', 'file', 'video', 'record', 'json', 'dice', 'forward'].map(type => [{ type, data: { qq: selfId, id: 1 } }])]) {
+  for (const raw of ['/今日猪猪', '／群总结 3', '群总结', '/id_check', ' ', ...['image', 'at', 'reply', 'file', 'video', 'record', 'json', 'dice', 'forward'].map(type => [{ type, data: { qq: selfId, id: 1 } }])]) {
     assert.equal(plusOneFingerprint(typeof raw === 'string' ? text(raw) : raw), null)
     const t = setup(); await t.handle(event('A')); await t.handle(event(raw)); await t.handle(event('A')); assert.equal(t.sent.length, 0)
   }
@@ -203,6 +219,14 @@ await test('机器人完整流程：文字夹两个爱心只原生跟一次，�
     assert.deepEqual(t.sent, [{ g: second.group_id, id: second.message_id }])
     assert.equal(t.modelCalls, 0); assert.equal(t.normal.length, 0)
   } finally { globalThis.fetch = original }
+})
+await test('机器人完整流程：纯QQ自带表情和纯emoji不受静音限制，不下载不调用AI',async()=>{
+  const original=globalThis.fetch;globalThis.fetch=()=>{throw Error('不应下载或请求模型')}
+  try{for(const raw of [[{type:'face',data:{id:'66'}}],text('💀'),[{type:'face',data:{id:'66'}},...text('💀')]]){
+    const t=mockBot({mutedGroups:new Set([200000002]),quietHours:'00:00-24:00'})
+    await t.bot.handleMessage(event(raw));const second=event(raw);await t.bot.handleMessage(second);await t.bot.handleMessage(event(raw))
+    assert.deepEqual(t.sent,[{g:second.group_id,id:second.message_id}]);assert.equal(t.modelCalls,0);assert.equal(t.normal.length,0)
+  }}finally{globalThis.fetch=original}
 })
 await test('机器人完整流程：图片连发不会被自动 +1', async () => {
   const t = mockBot(); const raw = [{ type: 'image', data: { file: `${'a'.repeat(32)}.jpg`, url: 'https://example.invalid/image' } }]

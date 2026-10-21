@@ -547,7 +547,7 @@ if (config.mutedGroups && config.mutedGroups.size > 0) {
 }
 logger.info(webSearch.isEnabled ? `联网搜索已启用（${{baidu:'百度千帆',deepseek:'DeepSeek 搜索',dashscope:'通义千问 API',bing:'必应网页兜底'}[webSearch.providerName] || webSearch.providerName}，私聊/被@时由模型自行决定要不要搜）` : '联网搜索未启用（控制台已关闭，或 WEB_SEARCH_PROVIDER=off）')
 logger.info(commandCenter.enabled('poke') ? `拍一拍回应已启用（冷却 ${Math.round(config.pokeCooldownMs / 1000)}s，语料 poke-replies.txt）` : '拍一拍回应未启用（POKE_REPLY_ENABLED=0）')
-logger.info(commandCenter.enabled('auto-plus-one') ? '自动+1已启用：仅白名单群，两条连续相同文字消息（可夹QQ自带表情）后原生跟一次；图片/纯表情不跟读，不受静音/安静时段限制，不调用模型' : '自动+1未启用（AUTO_PLUS_ONE_ENABLED=0）')
+logger.info(commandCenter.enabled('auto-plus-one') ? '自动+1已启用：仅白名单群，两条连续相同文字、emoji、QQ自带表情或任意混合消息后原生跟一次；图片和图片表情包不跟读，不受静音/安静时段限制，不调用模型' : '自动+1未启用（AUTO_PLUS_ONE_ENABLED=0）')
 logger.info(config.longMemoryEnabled
   ? `长期记忆已启用（摘要上限 ${config.longMemoryMaxChars} 字，每 ${Math.round(config.longMemoryIntervalMs / 60000)} 分钟整理一次）`
   : '长期记忆未启用（LONG_MEMORY_ENABLED=0）')
