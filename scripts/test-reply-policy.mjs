@@ -179,6 +179,8 @@ console.log('\n=== 4. 安静时段 / 冷却 / @ 优先级 ===')
   const cdCfg = mk({ proactiveRate: 1, proactiveCooldownMs: 30000 })
   const lastProactive = new Map()
   const first = decideReply({ isPrivate: false, atBot: false, groupId: 200000019, config: cdCfg, lastProactive, now: t(12, 0) })
+  ok('概率抽中本身不写成功冷却', lastProactive.size === 0)
+  lastProactive.set(200000019, t(12, 0)) // 实际发送确认后才开始冷却。
   const second = decideReply({ isPrivate: false, atBot: false, groupId: 200000019, config: cdCfg, lastProactive, now: t(12, 0) + 10000 })
   const third = decideReply({ isPrivate: false, atBot: false, groupId: 200000019, config: cdCfg, lastProactive, now: t(12, 0) + 31000 })
   ok('第一次主动', first.reply === true)
@@ -223,7 +225,7 @@ console.log('\n=== 6. 会话独立设置（控制台里改的那些）===')
   ok(
     '关掉被@必回 → 被@ 也不回',
     decideReply({ isPrivate: false, atBot: true, groupId: 200000019, config: base, lastProactive: new Map(), chatSettings: cs, chatKey: 'g200000019' }).reason ===
-      '本会话已关闭被@必回',
+      '本会话已关闭@/引用回复',
   )
   cs.set('g200000019', { atReplyEnabled: true, proactiveEnabled: false })
   ok('关掉主动搭话 → 不主动', run('g200000019').reason === '本会话已关闭主动搭话', `→ ${run('g200000019').reason}`)

@@ -106,7 +106,6 @@ export function decideReply({ isPrivate, atBot, replyToBot = false, groupId, con
       if (config.proactiveCooldownMs > 0 && now - last < config.proactiveCooldownMs) {
         return { reply: false, reason: '主动搭话冷却中' }
       }
-      lastProactive.set(groupId, now)
       return { reply: true, reason: '白名单群主动搭话' }
     }
     return { reply: false, reason: '白名单群未抽中' }
@@ -306,6 +305,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
   const stickerSend = createStickerSendPolicy({config,stickers,rand})
   const failedRecently = new Map() // 私聊报错提示限频：key -> 上次提示时间戳
   const lastProactive = new Map() // 白名单群主动搭话冷却：groupId -> 上次时间戳
+  const pendingProactive = new Map() // 每群至多一轮主动生成；失败释放，不占成功冷却。
   const lastPoke = new Map() // 拍一拍回应冷却：会话 key -> 上次时间戳
   // 最近一次 /id_check 的结果：groupId -> { group_id, at, bad, kicked }
   // 只活在内存里（5 分钟有效期）：机器人一重启就作废，踢人指令会静默失效 —— 这是安全方向
@@ -348,20 +348,20 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
   /**
    * 分条发送一次回复：每一行单独作为一条消息发出（真人分条发消息的节奏）。
    * - 第 1 行之前已经等过"打字延迟"；第 2、3 行之间只等一个较短的补句间隔；
-   * - 每一行都计入每小时发言额度；后段行若触发限流则不再发（不会截断成半句话）。
+   * - 整段回复只计一次额度；成功发出首条后，后续分条不再次扣额度。
    */
   async function sendReplyLines(evt, lines, key, { directReply = false, perHourLimit = null, canSend = () => true, onSent = () => {} } = {}) {
     const sent = []
+    let counted = false
     for (let i = 0; i < lines.length; i++) {
       if (i > 0) {
-        const gate = rateLimiter?.check(key, Date.now(), { ignoreGap: true, perHourLimit })
-        if (gate && !gate.allowed) {
-          logger.info(`[限流] 后续 ${lines.length - i} 行未发送（${gate.reason}）`)
-          break
-        }
         await typingDelay({ min: config.lineGapMinMs, max: config.lineGapMaxMs })
       }
-      if (!canSend() || !replyStillCurrent(onebot, evt, { latestOnly: evt.message_type !== 'private' && !directReply })) break
+      if (!canSend() || !replyStillCurrent(onebot, evt)) break
+      if (!counted) {
+        const gate = rateLimiter?.check(key, Date.now(), { ignoreGap: true, perHourLimit })
+        if (gate && !gate.allowed) { logger.info(`[限流] ${key} 整段回复未发送（${gate.reason}）`); break }
+      }
       const cleanLine = stripInternalReplyMetadata(lines[i])
       if (!cleanLine) continue
       const outgoing = renderFacesToCq(cleanLine)
@@ -369,10 +369,13 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         if (!canSend()) return sent
         const receipt = evt.message_type === 'private' ? await onebot.sendPrivate(evt.user_id, piece) : await onebot.sendGroup(evt.group_id, piece)
         quotedMessages.rememberSent(evt, receipt, piece)
+        if (receipt?.message_id != null || receipt?.data?.message_id != null) {
+          if (!counted) { rateLimiter?.record(key); counted = true }
+          else rateLimiter?.touch?.(key)
+        }
         onSent(receipt)
       }
       sent.push(cleanLine)
-      rateLimiter?.record(key)
     }
     return sent
   }
@@ -978,6 +981,16 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       const key = isPrivate ? `p${evt.user_id}` : `g${groupId}`
 
       const decision = decideReply({ isPrivate, atBot: parsed.atBot, replyToBot, groupId, config, lastProactive, chatSettings, chatKey: key })
+      const proactive = decision.reply && decision.reason === '白名单群主动搭话'
+      const pendingToken = proactive ? { session: onebot.messageTimeline?.session } : null
+      if (proactive) {
+        const active = pendingProactive.get(groupId)
+        if (active && active.session === pendingToken.session) {
+          decision.reply = false
+          decision.reason = '本群已有主动回复正在生成'
+        } else pendingProactive.set(groupId, pendingToken)
+      }
+      try {
 
       // 本会话生效值：会话设置优先，其次全局（在控制台改了立刻生效，无需重启）
       const eff = chatSettings ? chatSettings.resolve(key, config) : null
@@ -995,7 +1008,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       if (decision.reply && rateLimiter) {
         const gate = rateLimiter.check(key, Date.now(), { ignoreGap: true, perHourLimit: hourCap })
         if (!gate.allowed) {
-          logger.info(`[限流] 跳过回复（${gate.reason}）${mustReply ? '（这是必回消息，说明额度真的用尽了）' : ''}`)
+          logger.info(`[限流] ${key} 跳过回复（${gate.reason}）${mustReply ? '（这是必回消息，说明额度真的用尽了）' : ''}`)
           return
         }
       }
@@ -1038,8 +1051,15 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       }
 
       // 点歌：明确要歌就直接搜一首发音乐名片，再让模型自然接一句
-      const canContinue = () => samePersona() && featureCurrent() && sameSessionPersona(config, chatSettings, key, sessionPersonaText) &&
-        replyStillCurrent(onebot, evt, { latestOnly: !directReply }) && !autoPlusOne.wasTriggered(repetition)
+      const proactiveAllowed = () => {
+        if (!proactive) return true
+        const current = chatSettings?.get(key)
+        return config.whitelistGroups.has(Number(groupId)) && !config.mutedGroups?.has(Number(groupId)) &&
+          current?.enabled !== false && current?.proactiveEnabled !== false &&
+          !isQuietHour(current?.quietHours ?? config.quietHours, new Date())
+      }
+      const canContinue = () => samePersona() && featureCurrent() && proactiveAllowed() && sameSessionPersona(config, chatSettings, key, sessionPersonaText) &&
+        replyStillCurrent(onebot, evt) && !autoPlusOne.wasTriggered(repetition)
       let musicNote = ''
       try {
         const musicInput=directReply&&!questionMode?parseMusicRequest(parsed.text,quoted?.text||''):null
@@ -1280,7 +1300,12 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         // 本条用户消息若未记入（未被追踪的群），这里补记，保证答案不悬空
         // 多行时逐行分条发送（像人说完一句再补一句）
         let textConfirmed=false
-        finalLines = await sendReplyLines(evt, finalLines, key, { directReply, perHourLimit: hourCap, canSend: canContinue, onSent:receipt=>{if(receipt?.message_id!=null||receipt?.data?.message_id!=null)textConfirmed=true} })
+        finalLines = await sendReplyLines(evt, finalLines, key, { directReply, perHourLimit: hourCap, canSend: canContinue, onSent:receipt=>{
+          if(receipt?.message_id!=null||receipt?.data?.message_id!=null){
+            if(!textConfirmed&&proactive)lastProactive.set(groupId,Date.now())
+            textConfirmed=true
+          }
+        } })
         if (!finalLines.length || !samePersona()) return
         record = finalLines.join('\n')
         if(!textConfirmed)selection={items:[],reason:'文字发送回执未确认'}
@@ -1330,6 +1355,9 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
             }
           }
         }
+      }
+      } finally {
+        if (pendingToken && pendingProactive.get(groupId) === pendingToken) pendingProactive.delete(groupId)
       }
     },
   }
