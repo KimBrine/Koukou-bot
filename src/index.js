@@ -19,6 +19,7 @@ import { createBackup } from './backup.js'
 import { createSelfCheck } from './selfcheck.js'
 import { createNotifier } from './notify.js'
 import { createMetrics } from './metrics.js'
+import { createImageHasher } from './imagehash.js'
 import { loadPokeReplies, createPokeReplier } from './pokeReplies.js'
 import { createLongMemory } from './longMemory.js'
 import { createCustomCommands } from './customCommands.js'
@@ -257,6 +258,7 @@ const backupService = createBackup({ config, logger })
 const notifier = createNotifier({ config, onebot, logger, file: path.join(config.dataDir, 'notifications.json') })
 const selfCheck = createSelfCheck({ config, onebot, backup: backupService, logger })
 const metricsService = createMetrics({ file: path.join(config.dataDir, 'metrics.json'), logger })
+const stickerHasher = createImageHasher({ config, logger })
 // 所有 logger.error 都计入当天错误数（用于失败率曲线）
 {
   const rawError = logger.error.bind(logger)
@@ -326,6 +328,24 @@ const stickerTagLLM = new Proxy({}, {
   has(_t, prop) { return Boolean(tagActive && prop in tagActive) },
 })
 const stickerLearner = createStickerLearner({ config, logger, onebot, stickers,
+  similar: async (dataUrl) => {
+    const m = /^data:([^;]+);base64,(.*)$/.exec(String(dataUrl || ''))
+    if (!m) return false
+    const buf = Buffer.from(m[2], 'base64')
+    const tmp = path.join(config.dataDir, 'tmp-similar-' + process.pid + '-' + Date.now() + '.img')
+    try {
+      writeFileSync(tmp, buf)
+      await stickerHasher.hashFiles([tmp])
+      const h = stickerHasher.hashOf({ file: path.basename(tmp) })
+      if (!h) return false
+      const files = (stickers.list() || []).map((x) => path.join(stickers.dir, x.file)).filter((f) => existsSync(f))
+      await stickerHasher.hashFiles(files)
+      return (stickers.list() || []).some((item) => {
+        const other = stickerHasher.hashOf(item)
+        return other && stickerHasher.distance(h, other) <= 8
+      })
+    } catch { return false } finally { try { rmSync(tmp, { force: true }) } catch {} }
+  },
   filterLLM: stickerFilterLLM, tagLLM: stickerTagLLM, imageCache: sharedImageCache })
 const commandCenter = createCommandCenter({file:path.join(config.dataDir,'command-center.json'),customCommands,config,logger,llm})
 

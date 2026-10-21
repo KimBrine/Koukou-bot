@@ -668,7 +668,7 @@ function pageMemory(){
       '<div class="mono" id="lmBox" style="max-height:240px;overflow:auto;margin-top:10px">—</div></section>',
     '<section class="card"><h2>日报原始文件</h2><div class="note">每天按群保存的原始消息，用于追溯。</div><div id="dailyFiles"></div></section>',
     backupCard(),
-    '<section class="card"><h2>导出 / 导入</h2><div class="note">导出会下载一个 JSON 文件（保存位置由浏览器弹窗选择）；导入前会自动备份当前记忆。</div><div class="flexbar"><button class="btn" id="exportMemory">导出记忆</button><label class="btn" style="cursor:pointer">导入记忆<input type="file" id="memoryImport" accept="application/json,.json" style="display:none"></label></div></section>'
+    '<section class="card"><h2>导出 / 导入</h2><div class="note">导出会下载一个 JSON 文件（保存位置由浏览器弹窗选择）；导入前会自动备份当前记忆。</div><div class="flexbar"><button class="btn" id="exportMemory">导出 JSON</button><button class="btn" id="exportMemoryMd">导出 Markdown</button><label class="btn" style="cursor:pointer">导入记忆<input type="file" id="memoryImport" accept="application/json,.json" style="display:none"></label></div></section>'
   ].join('')
   return [
     '<h1>记忆浏览</h1><div class="sub">当前人格 <b>' + esc(state?.config?.activePersona || '默认') + '</b>。近期、长期、待整理分开显示，都可以单条修改或删除。</div>',
@@ -790,9 +790,9 @@ function selfCheckCard(){
 }
 function backupCard(){
   const items = (backupInfo.items || []).slice(0, 7)
-  const rows = items.map(function(x){ return '<tr><td class="mono">' + esc(x.name) + '</td><td>' + (x.size / 1024 / 1024).toFixed(1) + ' MB</td></tr>' }).join('')
+  const rows = items.map(function(x){ return '<tr><td class="mono">' + esc(x.name) + '</td><td>' + (x.size / 1024 / 1024).toFixed(1) + ' MB</td><td style="text-align:right"><button class="btn sm" data-restore="' + esc(x.name) + '">还原</button></td></tr>' }).join('')
   return '<section class="card"><h2>备份</h2><div class="note">每天自动备份一次，保留最近 7 份。位置：' + esc(backupInfo.root || 'data/backups') + '</div>' +
-    (rows ? '<table class="tbl"><thead><tr><th>备份</th><th>大小</th></tr></thead><tbody>' + rows + '</tbody></table>' : '<div class="mut">还没有备份</div>') +
+    (rows ? '<table class="tbl"><thead><tr><th>备份</th><th>大小</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' : '<div class="mut">还没有备份</div>') +
     '<div class="flexbar"><button class="btn primary" id="doBackup">立即备份</button></div></section>'
 }
 function svgChart(list, series, { mode = 'line', height = 160, percent = false } = {}){
@@ -831,6 +831,36 @@ function svgChart(list, series, { mode = 'line', height = 160, percent = false }
   const legend = series.map(function(s){ return '<span style="margin-right:14px"><i style="display:inline-block;width:10px;height:10px;border-radius:2px;background:' + s.color + ';margin-right:5px"></i>' + esc(s.name) + '</span>' }).join('')
   return '<div class="mut" style="font-size:12px;margin-bottom:4px">' + legend + '</div><svg viewBox="0 0 ' + w + ' ' + height + '" style="width:100%;height:auto">' + grid + paths + labels + '</svg>'
 }
+function downloadText(filename, text, type){
+  const blob = new Blob([text], { type: type || 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = filename
+  document.body.appendChild(a); a.click(); a.remove()
+  setTimeout(function(){ URL.revokeObjectURL(url) }, 1000)
+}
+function memoryMarkdown(data){
+  const lines = ['# 记忆导出', '', '导出时间：' + new Date(data.exportedAt || Date.now()).toLocaleString(), '']
+  const mem = data.memory || {}, long = data.longMemory || {}
+  const keys = Array.from(new Set(Object.keys(mem).concat(Object.keys(long))))
+  for (const k of keys) {
+    lines.push('## ' + k, '')
+    const l = long[k]
+    if (l && l.summary) lines.push('### 长期记忆', '', l.summary, '')
+    const rows = mem[k] || []
+    if (rows.length) {
+      lines.push('### 近期消息（' + rows.length + ' 条）', '')
+      for (const m of rows) lines.push('- [' + (m.time ? new Date(m.time).toLocaleString() : '') + '] ' + m.role + '：' + String(m.content || '').replace(/\n/g, ' '))
+      lines.push('')
+    }
+  }
+  return lines.join('\n')
+}
+function metricsCsv(list){
+  const head = ['date', 'received', 'replied', 'skipped', 'errors', 'stickers', 'searches', 'llmCount', 'llmMs', 'groups']
+  const rows = (list || []).map(function(d){ return head.map(function(k){ return d[k] == null ? 0 : d[k] }).join(',') })
+  return head.join(',') + '\n' + rows.join('\n')
+}
 function pageMetrics(){
   const list = metricsInfo || []
   const sum = function(k){ return list.reduce(function(n, d){ return n + (Number(d[k]) || 0) }, 0) }
@@ -841,8 +871,9 @@ function pageMetrics(){
   const rangeBtns = [[7, '7 天'], [14, '14 天'], [30, '30 天']].map(function(x){
     return '<button class="btn sm' + (metricsRange === x[0] ? ' primary' : '') + '" data-mrange="' + x[0] + '">' + x[1] + '</button>'
   }).join(' ')
+  const chartCard = function(title, inner){ return '<details class="card"><summary><b class="api-card-title">' + title + '</b> <span class="api-card-meta">点开查看</span></summary><div class="api-card-body">' + inner + '</div></details>' }
   return '<h1>运行概览</h1><div class="sub">按天统计，用来判断机器人是"在正常工作"还是"在空转"；数据每 30 秒落盘。</div>' +
-    '<div class="flexbar">' + rangeBtns + '</div>' +
+    '<div class="flexbar">' + rangeBtns + '<button class="btn" id="metricsCsv" style="margin-left:auto">导出 CSV</button></div>' +
     '<div class="grid g3">' +
       '<div class="card"><h3>收到消息</h3><div class="kpi">' + received + '</div><div class="note">' + list.length + ' 天合计</div></div>' +
       '<div class="card"><h3>已回复</h3><div class="kpi">' + replied + '</div><div class="note">回复率 ' + rate + '%</div></div>' +
@@ -853,28 +884,28 @@ function pageMetrics(){
       '<div class="card"><h3>模型调用</h3><div class="kpi">' + sum('llmCount') + '</div><div class="note">生成次数</div></div>' +
       '<div class="card"><h3>平均生成耗时</h3><div class="kpi">' + avg + 's</div><div class="note">模型端到端</div></div>' +
     '</div>' +
-    '<section class="card"><h2>消息与回复</h2>' + svgChart(list, [
+    chartCard('消息与回复', svgChart(list, [
       { name: '收到', color: '#3b6ea5', get: function(d){ return d.received } },
       { name: '已回复', color: '#4aa3a3', get: function(d){ return d.replied } }
-    ], { mode: 'bar' }) + '</section>' +
-    '<section class="card"><h2>回复率 / 跳过率 / 错误率</h2>' + svgChart(list, [
+    ], { mode: 'bar' })) +
+    chartCard('回复率 / 跳过率 / 错误率', svgChart(list, [
       { name: '回复率', color: '#4aa3a3', get: function(d){ return d.received ? d.replied / d.received * 100 : 0 }, fill: true },
       { name: '跳过率', color: '#b8860b', get: function(d){ return d.received ? d.skipped / d.received * 100 : 0 } },
       { name: '错误率', color: '#d9534f', get: function(d){ return d.received ? d.errors / d.received * 100 : 0 } }
-    ], { mode: 'line', percent: true }) + '</section>' +
-    '<section class="card"><h2>表情包与搜索</h2>' + svgChart(list, [
+    ], { mode: 'line', percent: true })) +
+    chartCard('表情包与搜索', svgChart(list, [
       { name: '表情包发送', color: '#b8860b', get: function(d){ return d.stickers } },
       { name: '联网搜索', color: '#7a5cd6', get: function(d){ return d.searches } }
-    ], { mode: 'bar' }) + '</section>' +
-    '<section class="card"><h2>活跃群数</h2>' + svgChart(list, [
+    ], { mode: 'bar' })) +
+    chartCard('活跃群数', svgChart(list, [
       { name: '有消息的群', color: '#7a5cd6', get: function(d){ return d.groups || 0 }, fill: true }
-    ], { mode: 'line' }) + '</section>' +
-    '<section class="card"><h2>模型调用次数</h2>' + svgChart(list, [
+    ], { mode: 'line' })) +
+    chartCard('模型调用次数', svgChart(list, [
       { name: '生成次数', color: '#3b6ea5', get: function(d){ return d.llmCount || 0 } }
-    ], { mode: 'bar' }) + '</section>' +
-    '<section class="card"><h2>平均生成耗时（秒）</h2>' + svgChart(list, [
+    ], { mode: 'bar' })) +
+    chartCard('平均生成耗时（秒）', svgChart(list, [
       { name: '平均耗时', color: '#4aa3a3', get: function(d){ return d.llmCount ? d.llmMs / d.llmCount / 1000 : 0 }, fill: true }
-    ], { mode: 'line' }) + '</section>'
+    ], { mode: 'line' }))
 }
 function pageSelfCheck(){
   return '<h1>自检</h1><div class="sub">检查机器人能不能正常跑：Key、连接、目录、磁盘、备份与记忆文件。</div>' + selfCheckCard()
@@ -913,7 +944,7 @@ function pageStickers(){
       '</details></article>'
   }).join('')
   return [
-    '<h1>表情包</h1><div class="flexbar" style="margin:8px 0"><button class="btn" id="retagAll">一键生成标签</button><span class="mut" id="retagHint"></span></div><p class="note">当前图库：' + esc(stickerPersona?.name || '默认人格') + ' · 图库、标签、使用记录和黑名单按人格分开；自动学习与配图跟随会话人格。切换后不会混用，原图库保留。</p><div class="sub">给每张图起名、打关键词和语境；机器人按语境挑图，模型也能用 [贴纸: 名称] 点名要。</div>',
+    '<h1>表情包</h1><div class="flexbar" style="margin:8px 0"><button class="btn" id="retagAll">一键生成标签</button><button class="btn" id="retagMissing">只补缺失标签</button><span class="mut" id="retagHint"></span></div><p class="note">当前图库：' + esc(stickerPersona?.name || '默认人格') + ' · 图库、标签、使用记录和黑名单按人格分开；自动学习与配图跟随会话人格。切换后不会混用，原图库保留。</p><div class="sub">给每张图起名、打关键词和语境；机器人按语境挑图，模型也能用 [贴纸: 名称] 点名要。</div>',
     '<details class="card" data-stkfold="rules"' + (stickerFold.rules ? ' open' : '') + '><summary><b class="api-card-title">发送规则</b> <span class="api-card-meta">概率 ' + Math.round(settings.autoRate ?? 35) + '% · 每次最多 ' + (settings.maxPerReply || 1) + ' 张</span></summary><div class="api-card-body">',
     '<label style="display:flex;align-items:center;gap:8px;font-size:14px"><input type="checkbox" id="stkEnabled"' + (settings.enabled !== false ? ' checked' : '') + '> 启用表情包（关闭后模型不会发图）</label>',
     '<div class="note">表情包必须跟随已成功发送的普通聊天文字回复。用户明确要求发表情包时直接尝试发送，不抽概率；普通聊天的自动配图（含模型主动选图）遵守下方概率；语境模式未选中合适图片时不随机补图。仍遵守开关、范围、黑名单及冷却；群总结、指令回执和 /Q 解题不自动配图。</div>',
@@ -1047,6 +1078,36 @@ async function bind(){
       toast('已导出记忆文件')
     } catch(e){ toast('导出失败：' + e.message, true) }
   }
+  const exportMemoryMd = document.getElementById('exportMemoryMd')
+  if (exportMemoryMd) exportMemoryMd.onclick = async function(){
+    try {
+      const data = await api('/api/memory-export')
+      const now = new Date(); const pad = function(n){ return String(n).padStart(2,'0') }
+      downloadText('koukou-memory-' + now.getFullYear() + pad(now.getMonth()+1) + pad(now.getDate()) + '.md', memoryMarkdown(data), 'text/markdown;charset=utf-8')
+      toast('已导出 Markdown')
+    } catch(e){ toast('导出失败：' + e.message, true) }
+  }
+  const metricsCsvBtn = document.getElementById('metricsCsv')
+  if (metricsCsvBtn) metricsCsvBtn.onclick = function(){
+    downloadText('koukou-metrics-' + metricsRange + 'd.csv', metricsCsv(metricsInfo), 'text/csv;charset=utf-8')
+    toast('已导出 CSV')
+  }
+  const retagMissing = document.getElementById('retagMissing')
+  if (retagMissing) retagMissing.onclick = async function(){
+    const hint = document.getElementById('retagHint')
+    retagMissing.disabled = true
+    try {
+      const r = await api('/api/action/retag-stickers', { onlyMissing: true })
+      if (hint) hint.textContent = '待补 ' + r.total + ' 张…'
+      const timer = setInterval(async function(){
+        try {
+          const st = await api('/api/stickers/retag-status')
+          if (hint) hint.textContent = st.running ? ('补标中 ' + st.done + '/' + st.total) : ('完成 ' + st.done + '/' + st.total + '，失败 ' + st.errors)
+          if (!st.running) { clearInterval(timer); retagMissing.disabled = false; await load() }
+        } catch(e){ clearInterval(timer); retagMissing.disabled = false }
+      }, 2000)
+    } catch(e){ toast('启动失败：' + e.message, true); retagMissing.disabled = false }
+  }
   const memoryImport = document.getElementById('memoryImport')
   if (memoryImport) memoryImport.onchange = async function(){
     const file = memoryImport.files && memoryImport.files[0]
@@ -1101,6 +1162,17 @@ async function bind(){
       }, 2000)
     } catch(e){ toast('启动失败：' + e.message, true); retagAll.disabled = false }
   }
+  document.querySelectorAll('[data-restore]').forEach(function(b){
+    b.onclick = async function(){
+      if (!await ask('还原到 ' + b.dataset.restore + '？', '会先自动备份当前数据，再覆盖记忆、表情包和配置；还原后需要重启。', '还原')) return
+      b.disabled = true
+      try {
+        const r = await api('/api/action/restore-backup', { name: b.dataset.restore })
+        toast('已还原 ' + r.restored + '，正在重启…')
+        await api('/api/action/restart-bot', {})
+      } catch(e){ toast('还原失败：' + e.message, true); b.disabled = false }
+    }
+  })
   const doBackup = document.getElementById('doBackup')
   if (doBackup) doBackup.onclick = async function(){
     doBackup.disabled = true

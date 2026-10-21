@@ -1348,7 +1348,9 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       if (!stickerTagLLM || typeof stickerTagLLM.describeImages !== 'function') throw new Error('打标模型未配置')
       if (retagJob && retagJob.running) throw new Error('正在生成中，请稍候')
       const only = Array.isArray(payload && payload.ids) ? payload.ids : null
-      const list = (stickers.list() || []).filter((x) => !only || only.includes(x.id))
+      const missingOnly = payload && payload.onlyMissing === true
+      let list = (stickers.list() || []).filter((x) => !only || only.includes(x.id))
+      if (missingOnly) list = list.filter((x) => !String(x.description || '').trim() || !(x.keywords || []).length || !String(x.name || '').trim())
       retagJob = { running: true, done: 0, total: list.length, errors: 0, startedAt: Date.now() }
       ;(async () => {
         for (const item of list) {
@@ -1369,6 +1371,24 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         logger?.info?.('[控制台] 表情包批量打标完成：' + retagJob.done + ' 张，失败 ' + retagJob.errors)
       })().catch((err) => { retagJob.running = false; retagJob.error = err.message })
       return { ok: true, total: list.length }
+    },
+    async 'restore-backup'(payload) {
+      const name = String((payload && payload.name) || '')
+      if (!/^\d{8}-\d{6}$/.test(name)) throw new Error('备份名称无效')
+      const dir = path.join(config.dataDir, 'backups', name)
+      if (!existsSync(dir)) throw new Error('找不到这份备份')
+      if (!backup) throw new Error('备份服务未启用')
+      const before = backup.run({ reason: '还原前自动备份' })
+      const items = ['memory.json', 'memory.json.reset.json', 'long-memory.json', 'long-memory.json.state.json', 'chat-settings.json', 'custom-commands.json', 'vision-providers.json', 'personas', 'stickers']
+      for (const item of items) {
+        const src = path.join(dir, item)
+        if (!existsSync(src)) continue
+        const dest = path.join(config.dataDir, item)
+        try { rmSync(dest, { recursive: true, force: true }); cpSync(src, dest, { recursive: true }) }
+        catch (err) { throw new Error('还原 ' + item + ' 失败：' + err.message) }
+      }
+      logger?.info?.('[控制台] 已从备份还原：' + name + '（还原前已备份为 ' + before.name + '）')
+      return { ok: true, restored: name, before: before.name }
     },
     async 'backup'() {
       if (!backup) throw new Error('备份不可用')
