@@ -1152,7 +1152,7 @@ async function bind(){
     const box = document.getElementById('personaCheckResult')
     personaCheck.disabled = true
     try {
-      const r = await api('/api/action/persona-check')
+      const r = await api('/api/action/persona-check', {})
       if (box) box.textContent = r.warnings.length ? ('发现 ' + r.warnings.length + ' 条：' + r.warnings.join('；')) : ('未发现明显矛盾（' + r.length + ' 字，' + r.lines + ' 段）')
       toast(r.warnings.length ? '发现 ' + r.warnings.length + ' 条可疑表述' : '未发现明显矛盾')
     } catch(e){ toast('检查失败：' + e.message, true) }
