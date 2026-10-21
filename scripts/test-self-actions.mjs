@@ -13,7 +13,7 @@ const root=mkdtempSync(path.join(os.tmpdir(),'koukou-self-actions-')),stores=[]
 const G=200000002,U=200000011,V=200000012,BOT='200000010'
 const logger={info(){},warn(){},error(){},debug(){}}
 let seq=1,passed=0
-const result=(intent='recall_self',selfSource='我')=>({intent,selfSource,confidence:.99})
+const result=(intent='recall_self',selfSource='我')=>({intent,executor:'bot',selfSource,confidence:.99})
 function fixture(){
  const dir=path.join(root,String(++seq)),calls=[],removed=[],pokes=[],sent=[],reads=[]
  let answer=result(),reply='拍到你啦～',onParse=null,live=true,clock=Date.now(),botRole='admin',actorRole='member'
@@ -197,6 +197,28 @@ try{
   await t.run(next,{followup});assert.deepEqual(t.pokes,[{g:G,id:V}]);assert.equal(t.removed.length,0)
   assert.equal(JSON.parse(t.calls[1].messages[0].content).awaitingPoke,true)
   assert.equal(t.reserve(t.event('还有这位',null,U,G,false)),null)
+ })
+ await test('执行者不是机器人或没有确认时，即便模型误报poke且@了别人也不拍',async()=>{
+  for(const executor of ['other','unknown',undefined]){
+   const t=fixture();t.enable('request-poke');t.setAnswer({...result('poke'),executor})
+   const e=t.event('戳',null);e.evt.message=[{type:'at',data:{qq:V}},{type:'text',data:{text:'戳'}},{type:'at',data:{qq:BOT}}]
+   assert.equal(await t.run(e),null);assert.equal(t.pokes.length,0);assert.equal(t.calls.length,1)
+   const payload=JSON.parse(t.calls[0].messages[0].content)
+   assert.equal(payload.messageWithMentions,`<@${V}>戳<@${BOT}>`);assert.equal(payload.botId,BOT)
+   assert.match(t.calls[0].prompt,/先判断谁执行/)
+  }
+ })
+ await test('引用机器人或模型选择机器人为目标，不反向寻找其他成员代拍',async()=>{
+  const t=fixture();t.enable('request-poke');t.setAnswer({...result('poke'),target:{type:'reply'}})
+  t.onebot.getMsg=async id=>({message_type:'group',group_id:G,message_id:id,user_id:BOT})
+  assert.equal(await t.run(t.event('拍拍这位')),null);assert.equal(t.pokes.length,0)
+ })
+ await test('拍人补充改变执行者也结束旧请求，不沿用上次的机器人身份',async()=>{
+  const t=fixture();t.enable('request-poke');t.setAnswer(result('poke'))
+  const first=t.event('帮忙拍拍',null);t.reserve(first);const ask=await t.run(first);assert.equal(t.actions.arm(first.evt,ask),true)
+  const next=t.event('让别人来戳我',null,U,G,false),followup=t.reserve(next)
+  t.setAnswer({...result('poke'),executor:'other'})
+  assert.match((await t.run(next,{followup})).text,/结束/);assert.equal(t.pokes.length,0)
  })
  console.log(`${passed} self-action cases passed; no real QQ actions or paid model calls.`)
 }finally{for(const m of stores)if(m.timer)clearTimeout(m.timer);assert.equal(path.dirname(root),os.tmpdir());rmSync(root,{recursive:true,force:true})}
