@@ -19,7 +19,7 @@ const DEFINITIONS=[
   {id:'id-check',name:'群名片核对',trigger:'/id_check',description:'核对群名片；默认沿用原开放群，修改范围后仍遵守授权操作员规则',ai:'none',semantic:true,pattern:ID_CHECK_CMD_RE},
   {id:'id-check-kick',name:'按核对结果移出成员',trigger:'/id_check_kick',description:'仍须满足原有核对记录、操作员、时限和机器人权限条件，仅精确指令触发',ai:'none',pattern:ID_CHECK_KICK_CMD_RE},
   {id:'poke',name:'拍一拍回应',trigger:'拍机器人头像',description:'只检测拍机器人自己的事件；默认使用原有私有回复语料',ai:'optional'},
-  {id:'auto-plus-one',name:'自动 +1',trigger:'连续两条文字（可夹 QQ 表情）',description:'仅白名单群，连续段只跟一次；继续独立于静音和安静时段',ai:'none'},
+  {id:'auto-plus-one',name:'自动 +1',trigger:'连续两条相同文字、emoji、QQ表情或混合消息',description:'仅白名单群，连续段只跟一次；继续独立于静音和安静时段',ai:'none'},
   {id:'self-recall',name:'帮忙撤回消息',trigger:'引用本人消息并 @机器人 帮我撤回',description:'普通成员可撤回本人消息；群主，或同时担任本群管理员的机器人管理员，可引用撤回其他成员消息。无引用时只接本人两分钟内下一条补充；机器人须有群管理权限，受QQ限制',ai:'required',groupAction:true},
   {id:'request-poke',name:'请求拍一拍群成员',trigger:'@机器人 拍一拍 指定成员',description:'仅白名单群，任何成员可请求拍自己或其他指定成员；支持@、昵称、引用与近期上下文，实际成功后按当前人格回复一句话',ai:'required',groupAction:true,whitelistOnly:true},
   {id:'owner-mute',name:'群管理自然语言禁言',trigger:'@机器人 禁言/解禁 指定成员',description:'所选群的群主，或同时拥有本群管理权限的已配置机器人管理员，可指定成员、引用发言人或明确上下文对象，支持批量与数学时长；默认一分钟，超过30天不执行',ai:'required',management:true},

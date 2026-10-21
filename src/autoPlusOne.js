@@ -24,7 +24,7 @@ function segments(raw) {
   return out
 }
 
-/** 允许文字夹 QQ 自带表情，保留文字空白与表情顺序；须含有效文字。 */
+/** 允许文字（含Unicode emoji）、纯QQ自带表情及任意混合；保留空白与顺序。 */
 export function plusOneFingerprint(raw) {
   const parts = []
   let text = ''
@@ -47,7 +47,7 @@ export function plusOneFingerprint(raw) {
       return null
     }
   }
-  if (!parts.length || !text.trim()) return null
+  if (!parts.length || (!text.trim() && !parts.some(p => p[0] === 'face'))) return null
   if (/^\s*[\/／]/.test(text) || /^\s*(?:今日总结|每日总结|群总结|群聊总结)\s*(?:d\s*)?\d{0,2}\s*[。！!~～]?\s*$/i.test(text)) return null
   return createHash('sha256').update(JSON.stringify(parts)).digest('hex')
 }
