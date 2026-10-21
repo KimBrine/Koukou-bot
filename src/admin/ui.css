@@ -211,3 +211,10 @@ details.card[open] > summary { padding-bottom: 16px; border-bottom: 1px solid va
 .api-card-body .frow > label { font-size: 14px; }
 .api-card-body .frow input,
 .api-card-body .frow select { min-height: 38px; border-radius: 10px; }
+
+/* 表情包学习：群聊/私聊折叠块 */
+.learn-box { margin: 10px 0; border: 1px solid var(--line, #263850); border-radius: 12px; padding: 6px 14px; background: rgba(148, 163, 184, .05); }
+.learn-box > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 10px; padding: 6px 0; user-select: none; color: var(--text, #eef5ff); }
+.learn-box > summary::-webkit-details-marker { display: none; }
+.learn-box > summary::before { content: '▸'; color: var(--muted, #9aabc0); transition: transform .18s ease; }
+.learn-box[open] > summary::before { transform: rotate(90deg); }
