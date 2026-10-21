@@ -322,6 +322,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
   const summaryCmdRe = SUMMARY_CMD_RE
   let repeatSession = onebot.messageTimeline?.session
   const lastReplayNote = new Map()
+  const privateSkipNotes = new Map()
   const quotedMessages = createQuotedMessageResolver({ onebot, logger })
   const groupMute = createGroupMute({onebot,commandCenter,llm,logger,config,canExecute:evt=>replyStillCurrent(onebot,evt)})
   const selfActions = createSelfActions({onebot,commandCenter,llm,logger,config,canExecute:evt=>replyStillCurrent(onebot,evt)})
@@ -1062,6 +1063,13 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         memory.push(key, 'user', content, userMeta)
       }
 
+      if (!decision.reply && isPrivate) {
+        const lastSkipNote = privateSkipNotes.get(key) || 0
+        if (Date.now() - lastSkipNote > 60000) {
+          privateSkipNotes.set(key, Date.now())
+          logger.info('[私聊跳过] ' + key + '：' + decision.reason)
+        }
+      }
       if (!decision.reply) {
         runtimeStats?.noteSkip?.()
         logger.debug(`忽略消息（${decision.reason}）id=${evt.message_id}`)

@@ -9,7 +9,6 @@ const PAGES = [
   ['memory','▤  记忆浏览'],
   ['stickers','☺  表情包'],
   ['logs','≡  运行日志'],
-  ['data','▦  数据与记忆'],
 ]
 let page = location.hash.replace('#','') || 'overview'
 if (!PAGES.some(p => p[0] === page)) page = 'overview'
@@ -538,7 +537,8 @@ function pageHumanize(){
 function webSearchCard(){
   const info = webSearchInfo || {}
   const presets = ['deepseek','qwen-plus','qwen-max','qwen-turbo','qwen3-max','qwen-flash','bing']
-  const cur = info.model || 'qwen-plus'
+  const providerName = { dashscope: '通义千问', deepseek: 'DeepSeek 搜索', bing: '必应网页', baidu: '百度千帆' }
+  const cur = info.provider === 'deepseek' ? 'deepseek' : (info.provider === 'bing' ? 'bing' : (info.model || 'qwen-plus'))
   if (presets.indexOf(cur) < 0) presets.unshift(cur)
   const label = { deepseek: 'DeepSeek 搜索（自带引擎）', bing: '必应网页（免密钥兜底）' }
   const opts = presets.map(function(m){ return '<option value="' + esc(m) + '"' + (m === cur ? ' selected' : '') + '>' + esc(label[m] || m) + '</option>' }).join('')
@@ -547,7 +547,7 @@ function webSearchCard(){
     + '<label>搜索渠道<select id="wsProvider">'+[['auto','自动'],['deepseek','DeepSeek'],['dashscope','通义千问'],['baidu','百度千帆'],['bing','必应网页'],['off','关闭']].map(x=>'<option value="'+x[0]+'"'+((info.configuredProvider||'auto')===x[0]?' selected':'')+'>'+x[1]+'</option>').join('')+'</select></label>'
     + '<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:10px 0"><input type="checkbox" id="wsEnabled"' + (info.enabled ? ' checked' : '') + '> 允许联网搜索</label>'
     + '<div class="frow"><label>搜索模型</label><div><select id="wsModel">' + opts + '</select>'
-    + '<div class="mut" style="font-size:12px;margin-top:3px">当前实际：' + esc(info.provider || '—') + ' · ' + esc(cur) + '</div></div></div>'
+    + '<div class="mut" style="font-size:12px;margin-top:3px">当前实际：' + esc(providerName[info.provider] || info.provider || '—') + ' · ' + esc(cur) + '</div></div></div>'
     + '<div class="flexbar"><button class="btn primary" id="wsSave">保存（即时生效）</button><span class="mut" id="wsHint"></span></div></section>'
 }
 function pageApi(){
@@ -578,23 +578,6 @@ function pageLogs(){
   </div>
   <div class="logbox mono" id="logBot" style="max-height:420px"></div>`
 }
-function pageData(){
-  return `<h1>数据与记忆</h1><div class="sub">查看会话记忆、长期记忆摘要和原始日报文件。旧消息归档后保留原文，回复时按当前话题检索相关片段；摘要优先保留约定、偏好、未完事项和更正。人格切换会开启独立记忆分区。</div>
-  <h2>会话记忆</h2>
-  <div class="card"><div class="row">
-    <select id="memKey">${chats.map(c=>`<option value="${c.key}">${esc(c.name)}（${c.key}）</option>`).join('')}</select>
-    <button class="btn" id="loadMem">查看</button>
-  </div><div class="mono" id="memBox" style="max-height:420px;overflow:auto;margin-top:10px">选择会话后点查看</div></div>
-  <h2>长期记忆摘要</h2>
-  <div class="card"><div class="row">
-    <select id="lmKey">${chats.map(c=>`<option value="${c.key}">${esc(c.name)}（${c.key}）</option>`).join('')}</select>
-    <input id="lmQuery" placeholder="可选：输入话题，找回相关旧原话" aria-label="长期记忆检索话题">
-    <button class="btn" id="loadLm">查看 / 检索</button>
-  </div><div class="mono" id="lmBox" style="max-height:240px;overflow:auto;margin-top:10px">—</div></div>
-  <h2>日报原始文件</h2>
-  <div class="card" id="dailyFiles"></div>`
-}
-
 function pageCommands(){ return CommandCenterUI.render({custom:customCommands,builtins:commandBuiltins,poke:pokeDiagnostics,groups:joinedGroups}) }
 // ── 渲染 ───────────────────────────────────────────────
 function pageMemory(){
@@ -622,6 +605,14 @@ function pageMemory(){
       '<button class="btn sm" data-pending-del="' + idx + '">删</button>' +
       '</div><div>' + esc(p.text) + '</div></div>'
   }).join('') : ''
+  const extraCards = [
+    '<section class="card"><h2>长期记忆检索</h2><div class="note">按话题找回旧原话；也可以直接看某个会话的长期摘要。</div>' +
+      '<div class="row"><select id="lmKey">' + chats.map(function(c){ return '<option value="' + esc(c.key) + '">' + esc(c.name) + '（' + esc(c.key) + '）</option>' }).join('') + '</select>' +
+      '<input id="lmQuery" placeholder="可选：输入话题，找回相关旧原话" aria-label="长期记忆检索话题">' +
+      '<button class="btn" id="loadLm">查看 / 检索</button></div>' +
+      '<div class="mono" id="lmBox" style="max-height:240px;overflow:auto;margin-top:10px">—</div></section>',
+    '<section class="card"><h2>日报原始文件</h2><div class="note">每天按群保存的原始消息，用于追溯。</div><div id="dailyFiles"></div></section>'
+  ].join('')
   return [
     '<h1>记忆浏览</h1><div class="sub">当前人格 <b>' + esc(state?.config?.activePersona || '默认') + '</b>。近期、长期、待整理分开显示，都可以单条修改或删除。</div>',
     '<section class="card"><h2>会话列表 <span class="pill">' + memoryOverview.length + ' 个</span></h2>',
@@ -643,7 +634,7 @@ function pageMemory(){
       '<div style="max-height:360px;overflow:auto;margin-top:8px">' + (pendingRows || '<div class="mut">没有待整理的原文。</div>') + '</div>',
       '</section>'
     ].join('') : '<section class="card"><div class="mut">点上面「查看」，会同时显示近期、长期和待整理三块内容。</div></section>'
-  ].join('')
+  ].join('') + extraCards
 }
 function configFlag(key){
   const s = state?.config
@@ -817,11 +808,11 @@ function render(){
   else if (page === 'memory') html = pageMemory()
   else if (page === 'stickers') html = pageStickers()
   else if (page === 'logs') html = pageLogs()
-  else html = pageData()
+  else html = pageMemory()
   main.innerHTML = html
   bind().catch(e => toast('界面初始化失败：' + e.message, true))
   if (page === 'logs') refreshLogs()
-  if (page === 'report' || page === 'data') loadDaily()
+  if (page === 'report' || page === 'memory') loadDaily()
 }
 
 async function bind(){

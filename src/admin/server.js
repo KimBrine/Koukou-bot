@@ -1289,7 +1289,8 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     async 'set-websearch'(payload) {
       const enabled = payload?.enabled !== false
       let model = String(payload?.model || config.webSearchModel || 'qwen-plus').trim()
-      const provider=String(payload?.provider || (model==='deepseek'||model==='bing'?model:config.webSearchProvider||'auto')).toLowerCase()
+      const requestedProvider = String(payload?.provider || '').toLowerCase()
+      const provider = requestedProvider || (model === 'deepseek' || model === 'bing' ? model : 'dashscope')
       if(model==='deepseek'||model==='bing')model='qwen-plus'
       if(!['auto','deepseek','dashscope','baidu','bing','off'].includes(provider))throw Error('联网搜索服务商无效')
       if (model && !/^[A-Za-z0-9._:-]{1,64}$/.test(model)) throw new Error('模型名不合法')
