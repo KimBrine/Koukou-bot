@@ -1228,6 +1228,11 @@ async function bind(){
   document.querySelectorAll('[data-memfold]').forEach(el => el.onclick = () => {
     const type = el.dataset.memfold
     memoryFold[type] = memoryFold[type] === false
+    // 收起目录时，把这一组里已经展开的详情一起收掉
+    if (memoryFold[type] === false && memoryDetail) {
+      const isGroup = String(memoryDetail.key).startsWith('g')
+      if ((type === 'group') === isGroup) memoryDetail = null
+    }
     render()
   })
   document.querySelectorAll('[data-memview]').forEach(el => el.onclick = async () => {
