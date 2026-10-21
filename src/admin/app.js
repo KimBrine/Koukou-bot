@@ -581,8 +581,16 @@ function pageLogs(){
 function pageCommands(){ return CommandCenterUI.render({custom:customCommands,builtins:commandBuiltins,poke:pokeDiagnostics,groups:joinedGroups}) }
 // ── 渲染 ───────────────────────────────────────────────
 function pageMemory(){
+  const nameOf = function(key){
+    const c = (chats || []).find(function(x){ return String(x.key) === String(key) })
+    if (c && c.name) return c.name
+    if (String(key).startsWith('p')) return 'QQ ' + String(key).slice(1)
+    if (String(key).startsWith('g')) return '群 ' + String(key).slice(1)
+    return ''
+  }
   const rows = memoryOverview.map(function(m){
-    return '<tr><td class="mono">' + esc(m.key) + '</td><td>' + (m.recent||0) + ' 条</td><td>' + (m.longTermChars||0) + ' 字</td><td>' + (m.pending||0) + '</td>' +
+    const name = nameOf(m.key)
+    return '<tr><td><b>' + esc(name) + '</b><div class="mut" style="font-size:12px">' + esc(m.key) + '</div></td><td>' + (m.recent||0) + ' 条</td><td>' + (m.longTermChars||0) + ' 字</td><td>' + (m.pending||0) + '</td>' +
       '<td><button class="btn" data-memview="' + esc(m.key) + '">查看</button> <button class="btn" data-memclear="' + esc(m.key) + '">清空</button></td></tr>'
   }).join('')
   const d = memoryDetail
@@ -619,7 +627,7 @@ function pageMemory(){
     memoryOverview.length ? ('<table class="tbl"><thead><tr><th>会话</th><th>近期</th><th>长期</th><th>待整理</th><th>操作</th></tr></thead><tbody>' + rows + '</tbody></table>') : '<div class="mut">当前人格还没有任何记忆。</div>',
     '</section>',
     d ? [
-      '<section class="card"><h2>近期记忆 <span class="pill">' + (d.recent||[]).length + ' 条</span> <span class="mut" style="font-size:12px">' + esc(key) + '</span></h2>',
+      '<section class="card"><h2>近期记忆 <span class="pill">' + (d.recent||[]).length + ' 条</span> <span class="mut" style="font-size:12px">' + esc(nameOf(key)) + '（' + esc(key) + '）</span></h2>',
       '<div class="note">每条都能改正文或单条删除；删除只影响这一条。</div>',
       '<div style="max-height:360px;overflow:auto;margin-top:8px">' + (recentRows || '<div class="mut">这个会话没有近期记忆。</div>') + '</div>',
       '</section>',
