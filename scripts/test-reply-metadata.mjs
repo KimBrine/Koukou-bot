@@ -1,6 +1,6 @@
 // 模型、QQ 和记忆均用离线替身；不调用外部服务。
 import assert from 'node:assert/strict'
-import { stripInternalReplyMetadata } from '../src/replySanitizer.js'
+import { stripInternalReplyMetadata, hasInternalToolMarkup } from '../src/replySanitizer.js'
 import { modelHistory } from '../src/memory.js'
 import { createBot } from '../src/bot.js'
 import { createTargetWatch } from '../src/targetWatch.js'
@@ -13,13 +13,13 @@ const config = { whitelistGroups: new Set([200000002]), mutedGroups: new Set(), 
 const event = type => ({ post_type: 'message', message_type: type, user_id: 200000011, group_id: 200000002,
   message_id: 1, time: Date.now() / 1000, sender: { nickname: '群友甲' }, message: [
     { type: 'at', data: { qq: '200000010' } }, { type: 'text', data: { text: '你觉得呢' } }] })
-function setup(outputs) {
+function setup(outputs, extra = {}) {
   const sent = [], history = [], requests = []
   const memory = { get() { return history }, push(k, role, content, meta) { history.push({ role, content, ...meta }) } }
   const onebot = { selfId: '200000010', async sendGroup(g, content) { sent.push(content); return { message_id: 2 } },
     async sendPrivate(u, content) { sent.push(content); return { message_id: 2 } } }
   const llm = { async chat(...args) { requests.push(args); return outputs.shift() } }
-  const bot = createBot({ config, logger, onebot, memory, llm, rand: () => 0.5, buildSystemPrompt: () => '聊天' })
+  const bot = createBot({ config, logger, onebot, memory, llm, rand: () => 0.5, buildSystemPrompt: () => '聊天', ...extra })
   return { bot, sent, history, requests, memory, onebot, llm }
 }
 await test('完整、半截、重复及夹在正文中的内部标记被移除，带括号的昵称不误截正文', () => {
@@ -83,5 +83,47 @@ await test('盯人回复沿用相同清理与单次修复，不让失败批次�
     if (second === '继续聊呀') { assert.equal(t.sent.length, 1); assert.match(t.sent[0][1].data.text, /继续聊呀/) }
     else assert.equal(t.sent.length, 0)
   }
+})
+const dsml='<｜DSML｜function_calls>\n<｜DSML｜invoke name="web_search"><｜DSML｜parameter name="query">示例查询</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜function_calls>'
+await test('完整DSML、双竖线变体、截断协议和旧XML调用及参数均被拦截',()=>{
+  for(const raw of [dsml,dsml.replaceAll('｜','｜｜'),'<||DSML||invoke name="web_search">{"query":"test"}',
+    '<｜｜DS…','<｜｜DSML｜｜ invoke name="web_search"><｜｜DSML｜…',
+    '<tool_call>web_search<tool_args>{"query":"test"}</tool_args></tool_call>',
+    '<function_call>{"name":"web_search"}', '<invoke name="web_search">args']){
+   assert.equal(hasInternalToolMarkup(raw),true,raw);assert.equal(stripInternalReplyMetadata(raw),'',raw)
+  }
+  for(const raw of ['x < y','DSML是一种工具协议','[表情:微笑]','<div>普通网页标签</div>'])assert.equal(hasInternalToolMarkup(raw),false,raw)
+  assert.equal(stripInternalReplyMetadata('正文'+dsml),'正文')
+  assert.equal(stripInternalReplyMetadata('```xml\n<tool_call>web_search</tool_call>\n```'),'')
+})
+await test('普通对话中的工具协议在裁剪前重生成，发出的内容和记忆不含协议',async()=>{
+ for(const type of ['group','private']){
+  const t=setup([dsml,'这才是自然回答']);await t.bot.handleMessage(event(type))
+  assert.deepEqual(t.sent,['这才是自然回答']);assert.equal(t.requests.length,2)
+  assert.ok(t.history.filter(m=>m.role==='assistant').every(m=>!hasInternalToolMarkup(m.content)))
+ }
+ const t=setup([dsml,'前缀'+dsml]);await t.bot.handleMessage(event('group'));assert.deepEqual(t.sent,[])
+})
+await test('搜索后泄漏协议，修复时保留实际搜索结果，不重复执行搜索',async()=>{
+ let searched=0;const search=async()=>{searched++;return {summary:'真实搜索摘要：示例页面公开信息。'}}
+ const t=setup([],{webSearch:search}),rawCalls=[]
+ t.llm.chatRaw=async msgs=>{rawCalls.push(msgs);return rawCalls.length===1?{content:'',toolCalls:[{id:'s1',type:'function',function:{name:'web_search',arguments:'{"query":"示例资料"}'}}]}:rawCalls.length===2?{content:dsml}:{content:'根据公开资料，请核对原始页面。'}}
+ await t.bot.handleMessage(event('group'))
+ assert.equal(searched,1);assert.equal(rawCalls.length,3);assert.equal(t.requests.length,0)
+ assert.ok(rawCalls[2].some(m=>m.role==='tool'&&m.tool_call_id==='s1'&&m.content.includes('真实搜索摘要')))
+ assert.deepEqual(t.sent,['根据公开资料，请核对原始页面。'])
+})
+await test('搜索结果连续输出协议时停止，不发送工具草稿或重复搜索',async()=>{
+ let searched=0,rawCalls=0;const t=setup([],{webSearch:async()=>{searched++;return {summary:'真实摘要'}}})
+ t.llm.chatRaw=async()=>++rawCalls===1?{content:'我先查查',toolCalls:[{id:'s1',type:'function',function:{name:'web_search',arguments:'{"query":"例子"}'}}]}:{content:dsml}
+ await t.bot.handleMessage(event('group'));assert.equal(rawCalls,3);assert.equal(searched,1);assert.equal(t.sent.length,0)
+ assert.equal(t.history.filter(m=>m.role==='assistant').length,0)
+})
+await test('正文中的伪调用不作为原生调用执行；未知原生工具也不执行搜索',async()=>{
+ let searched=0;const search=async()=>{searched++;return {summary:'摘要'}}
+ const t=setup(['没有查到可靠资料，请提供更多信息。'],{webSearch:search});t.llm.chatRaw=async()=>({content:dsml})
+ await t.bot.handleMessage(event('group'));assert.equal(searched,0);assert.equal(t.requests.length,1);assert.equal(t.sent.length,1)
+ const u=setup([],{webSearch:search});let n=0;u.llm.chatRaw=async()=>++n===1?{toolCalls:[{id:'x',function:{name:'not_allowed',arguments:'{"query":"test"}'}}]}:{content:'当前工具不可用。'}
+ await u.bot.handleMessage(event('group'));assert.equal(searched,0);assert.equal(u.sent.length,1)
 })
 console.log(`${passed} cases passed`)

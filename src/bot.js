@@ -9,7 +9,7 @@ import { replyStillCurrent, messageTime, currentMessageHint, LIVE_MESSAGE_MAX_AG
 import { modelHistory } from './memory.js'
 import { buildReplyFocus } from './replyFocus.js'
 import { conversationRules } from './conversationRules.js'
-import { stripInternalReplyMetadata, REPLY_REPAIR_HINT } from './replySanitizer.js'
+import { stripInternalReplyMetadata, hasInternalToolMarkup, REPLY_REPAIR_HINT } from './replySanitizer.js'
 import { parseMusicRequest, resolveMusicRequest, searchSong, musicPlatformName } from './music.js'
 import { parseMessage } from './cq.js'
 import { isBotAdmin, hasAdmins, adminHint } from './permissions.js'
@@ -543,6 +543,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       const answers = []
       for (const call of calls) {
         if(answers.length>=2){answers.push({id:call.id,text:'本轮搜索次数已达上限，请根据已有结果作答。'});continue}
+        if(call.function?.name!=='web_search'){answers.push({id:call.id,text:'此工具不可用，请根据已有资料作答。'});continue}
         let query = ''
         try {
           const value=JSON.parse(call.function?.arguments || '{}').query
@@ -566,10 +567,21 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       msgs.push({ role: 'assistant', content: first.content || '', tool_calls: calls,...(first.reasoningContent!==undefined?{reasoning_content:first.reasoningContent}:{}) })
       for (const item of answers) msgs.push({ role: 'tool', tool_call_id: item.id, content: item.text })
       try {
-        const second = await llm.chatRaw(msgs)
-        if (second.content) return second.content
+        let second = await llm.chatRaw(msgs)
+        if (hasInternalToolMarkup(second.content) || second.toolCalls?.length || !stripInternalReplyMetadata(second.content)) {
+          logger.warn('[联网搜索] 最终回答含工具协议或没有正文，保留搜索结果重生成一次')
+          second = await llm.chatRaw([...msgs,{role:'user',content:'搜索阶段已经结束，请只根据上面的真实搜索结果回答原问题；结果不足就明确说明，不要继续调用工具，不要输出DSML、工具参数或调用格式，只输出给用户看的自然语言正文。'}])
+        }
+        if (second.toolCalls?.length || hasInternalToolMarkup(second.content)) {
+          logger.warn('[联网搜索] 重生成仍含工具协议，取消发送')
+          throw new Error('搜索结果回答连续输出工具协议，已拦截')
+        }
+        const answer = stripInternalReplyMetadata(second.content)
+        if (answer) return answer
+        throw new Error('搜索结果回答没有可发送正文')
       } catch (err) {
-        logger.warn(`联网搜索后生成失败，退回普通回复：${err.message}`)
+        logger.warn(`联网搜索后生成失败，不发送工具草稿：${err.message}`)
+        throw err
       }
     }
     if (first.content) return first.content
@@ -1232,11 +1244,13 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
           // 纯文本 / 图片没取到内容（此时 imageNote 已明确告知模型该怎么措辞）
           reply = await llm.chat(systemPrompt, [...baseHistory, { role: 'user', content:focusedContent }])
         }
+        const leakedToolMarkup = hasInternalToolMarkup(reply)
         reply = stripInternalReplyMetadata(reply)
-        if (!reply) {
+        if (!reply || leakedToolMarkup) {
           if (!canContinue()) return
-          logger.warn('[回复清理] 模型只输出内部标记或残片，重新生成一次')
-          reply = stripInternalReplyMetadata(await llm.chat(replyPrompt + REPLY_REPAIR_HINT, [...baseHistory, { role: 'user', content: replyContent }]))
+          logger.warn('[回复清理] 模型输出内部协议、标记或空正文，重新生成一次')
+          const repaired = await llm.chat(replyPrompt + REPLY_REPAIR_HINT, [...baseHistory, { role: 'user', content: replyContent }])
+          reply = hasInternalToolMarkup(repaired) ? '' : stripInternalReplyMetadata(repaired)
           if (!reply) { logger.warn('[回复清理] 重生成仍无有效正文，取消发送'); return }
         }
         if (hasImages && activeVision?.guardReply) reply = activeVision.guardReply(reply, imageDescription)
