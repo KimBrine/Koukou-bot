@@ -217,7 +217,7 @@ function validateGroupConfig(key, value) {
   }
 }
 
-export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, quietGreetings, personaGreetings, bot, customCommands, commandCenter, llm, stickers, stickerTagLLM, updateChecker=createUpdateChecker({currentVersion:APP_VERSION}), switchVision, visionProviders, restartBot, webSearch, switchWebSearch }) {
+export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, quietGreetings, personaGreetings, bot, customCommands, commandCenter, llm, stickers, stickerTagLLM, updateChecker=createUpdateChecker({currentVersion:APP_VERSION}), switchVision, visionProviders, restartBot, webSearch, switchWebSearch, backup, selfcheck }) {
   // 本实例自己的 .env（并行跑两个实例时，写死 rootDir\.env 会改到另一个实例的配置上）
   const envFile = config.envFile || path.join(config.rootDir, '.env')
   const logFile = path.join(config.logDir || path.join(config.rootDir, 'logs'), 'bot.log')
@@ -518,6 +518,12 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         hasKey: Boolean(config.deepseekApiKey),
       },
     }),
+    'GET /api/backups': async () => ({ items: backup ? backup.list().map((x) => ({ name: x.name, size: x.size })) : [], root: backup ? backup.root : '' }),
+    'GET /api/selfcheck': async () => {
+      if (!selfcheck) return { items: [] }
+      const st = onebot && typeof onebot.status === 'function' ? onebot.status() : null
+      return typeof selfcheck === 'function' ? selfcheck(st) : selfcheck.run(st)
+    },
     'GET /api/websearch': async () => ({
       enabled: Boolean(config.webSearchEnabled),
       model: config.webSearchModel || 'qwen-plus',
@@ -1286,6 +1292,12 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       }
       logger?.info?.(`[控制台] 已删除会话 ${key}${whitelistRemoved ? '（并从白名单移除）' : ''}`)
       return { ok: true, key, whitelistRemoved, dailyBackup, ...result }
+    },
+    async 'backup'() {
+      if (!backup) throw new Error('备份不可用')
+      const result = backup.run({ reason: 'manual' })
+      logger?.info?.('[控制台] 手动备份完成：' + result.name)
+      return { ok: true, ...result }
     },
     async 'cleanup-groups'() {
       const mem = readJsonSafe(config.memoryFile, {})

@@ -15,6 +15,9 @@ import { createVisionProviders } from './visionProviders.js'
 import { createSummaryVisionClient } from './summaryReferences.js'
 import { createDailySummary, buildSummaryPrompt } from './dailySummary.js'
 import { createWebSearch } from './search.js'
+import { createBackup } from './backup.js'
+import { createSelfCheck } from './selfcheck.js'
+import { createNotifier } from './notify.js'
 import { loadPokeReplies, createPokeReplier } from './pokeReplies.js'
 import { createLongMemory } from './longMemory.js'
 import { createCustomCommands } from './customCommands.js'
@@ -248,6 +251,10 @@ const wsUrl = config.onebotAccessToken
   : config.onebotWsUrl
 
 const onebot = new OneBotClient({ url: wsUrl, logger, probeUserId: config.idCheckOperators?.[0] || config.dailyPingTarget })
+// 备份 / 自检 / 异常通知
+const backupService = createBackup({ config, logger })
+const notifier = createNotifier({ config, onebot, logger, file: path.join(config.dataDir, 'notifications.json') })
+const selfCheck = createSelfCheck({ config, onebot, backup: backupService, logger })
 const sharedImageCache = config.dataDir && config.visionCacheEnabled !== false ? createImageCache({
   dir: path.join(config.dataDir, 'image-cache'), maxBytes: config.visionCacheMaxBytes,
   maxEntries: config.visionCacheMaxEntries, maxImageBytes: config.visionMaxImageBytes,
@@ -441,6 +448,8 @@ if (config.adminEnabled) {
     switchVision: () => { rebuildVision(); rebuildStickerTag() },
     webSearch,
     switchWebSearch: (patch) => webSearch.setOptions(patch),
+    backup: backupService,
+    selfcheck: selfCheck,
     visionProviders,
     restartBot: () => {
       // 让一个独立进程在 1.2 秒后杀掉当前实例并用计划任务重新拉起（避免自己杀自己杀不干净）
@@ -468,6 +477,28 @@ if (config.adminEnabled) {
   })
   adminServer.start(config.adminPort)
 }
+
+// 自动备份：启动 1 分钟后检查一次，之后每 6 小时检查；一天内已有备份就跳过。
+function maybeBackup(reason) {
+  try {
+    if (Date.now() - backupService.lastBackupAt() < 20 * 3600 * 1000) return
+    const result = backupService.run({ reason })
+    notifier.notify('backup-ok', '已自动备份记忆与表情包：' + result.name, { minIntervalMs: 20 * 3600 * 1000 }).catch(() => {})
+  } catch (err) { logger.warn('自动备份失败：' + err.message) }
+}
+setTimeout(() => maybeBackup('startup'), 60 * 1000).unref?.()
+setInterval(() => maybeBackup('auto'), 6 * 3600 * 1000).unref?.()
+
+// 掉线提醒：连续两次检测不到 OneBot 才通知，避免抖动刷屏。
+let offlineTicks = 0
+setInterval(() => {
+  try {
+    const st = onebot.status()
+    if (st && st.connected) { offlineTicks = 0; return }
+    offlineTicks += 1
+    if (offlineTicks === 2) notifier.notify('onebot-offline', 'OneBot 连接断开（3001），机器人暂时收不到消息').catch(() => {})
+  } catch {}
+}, 2 * 60 * 1000).unref?.()
 
 // 独立持久化发送状态，重启后先核对已发送/待核验记录。
 const customSchedule = createCustomCommandSchedule({
@@ -513,8 +544,8 @@ function shutdown() {
 process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)
 
-process.on('unhandledRejection', (err) => logger.error(`未处理的 Promise 拒绝：${err?.stack || err}`))
-process.on('uncaughtException', (err) => logger.error(`未捕获异常：${err?.stack || err}`))
+process.on('unhandledRejection', (err) => { logger.error(`未处理的 Promise 拒绝：${err?.stack || err}`); notifier.notify('crash', '未处理的 Promise 拒绝：' + String(err?.message || err).slice(0, 200)).catch(() => {}) })
+process.on('uncaughtException', (err) => { logger.error(`未捕获异常：${err?.stack || err}`); notifier.notify('crash', '未捕获异常：' + String(err?.message || err).slice(0, 200)).catch(() => {}) })
 
 logger.info('===== DeepSeek × QQ 机器人启动 =====')
 logger.info(`模型：${config.deepseekModel}｜DeepSeek思考强度：${config.deepseekReasoningEffort ?? '服务端默认'}`)

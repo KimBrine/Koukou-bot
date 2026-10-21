@@ -63,6 +63,8 @@ let memoryDetail = null
 let memoryFold = { group: false, private: false }
 let stickerCardOpen = new Set()
 let apiCardsOpen = { model: false, vision: false, search: false }
+let backupInfo = { items: [], root: '' }
+let selfCheckInfo = null
 let customCommands = []
 let commandBuiltins = []
 let pokeDiagnostics = {}
@@ -225,7 +227,7 @@ function pageOverview(){
     '<div class="mut" style="margin-top:8px">当前管理员：' + (admins.length ? admins.map(esc).join('、') : '未配置（群总结等沿用公开范围；清除记忆须显式配置管理员）') + '</div>',
     '</section>'
   ].join('')
-    return quickCard + adminCard + versionCard() + `
+    return quickCard + adminCard + versionCard() + selfCheckCard() + `
   <div class="hero"><span class="hero-status">${dot(b.online === true)} ${accountStatusText(b)}</span>
     <h1>机器人工作台</h1><div class="sub"><span id="updatedAt">${new Date().toLocaleTimeString('zh-CN',{hour12:false})}</span> 更新 · 集中管理运行状态与操作</div></div>
   <div class="grid g3">${cards.map(([k,v,s]) => `<div class="card"><h3>${k}</h3><div class="kpi">${v}</div><div class="note">${s||''}</div></div>`).join('')}</div>
@@ -633,7 +635,8 @@ function pageMemory(){
       '<input id="lmQuery" placeholder="可选：输入话题，找回相关旧原话" aria-label="长期记忆检索话题">' +
       '<button class="btn" id="loadLm">查看 / 检索</button></div>' +
       '<div class="mono" id="lmBox" style="max-height:240px;overflow:auto;margin-top:10px">—</div></section>',
-    '<section class="card"><h2>日报原始文件</h2><div class="note">每天按群保存的原始消息，用于追溯。</div><div id="dailyFiles"></div></section>'
+    '<section class="card"><h2>日报原始文件</h2><div class="note">每天按群保存的原始消息，用于追溯。</div><div id="dailyFiles"></div></section>',
+    backupCard()
   ].join('')
   return [
     '<h1>记忆浏览</h1><div class="sub">当前人格 <b>' + esc(state?.config?.activePersona || '默认') + '</b>。近期、长期、待整理分开显示，都可以单条修改或删除。</div>',
@@ -743,6 +746,22 @@ function visionCard(){
     '</details>',
     '</div></details>'
   ].join('')
+}
+function selfCheckCard(){
+  const info = selfCheckInfo
+  const rows = (info && info.items ? info.items : []).map(function(x){
+    return '<div class="frow"><label>' + esc(x.label) + '</label><div>' + (x.ok ? '✅' : '❌') + ' <span class="mut">' + esc(x.detail || '') + '</span></div></div>'
+  }).join('')
+  return '<section class="card"><h2>自检 ' + (info ? (info.failed ? '<span class="pill" style="background:#a33;color:#fff">' + info.failed + ' 项异常</span>' : '<span class="pill">全部正常</span>') : '') + '</h2>' +
+    (rows || '<div class="mut">点下面按钮运行一次自检</div>') +
+    '<div class="flexbar"><button class="btn" id="runSelfcheck">重新检查</button></div></section>'
+}
+function backupCard(){
+  const items = (backupInfo.items || []).slice(0, 7)
+  const rows = items.map(function(x){ return '<tr><td class="mono">' + esc(x.name) + '</td><td>' + (x.size / 1024 / 1024).toFixed(1) + ' MB</td></tr>' }).join('')
+  return '<section class="card"><h2>备份</h2><div class="note">每天自动备份一次，保留最近 7 份。位置：' + esc(backupInfo.root || 'data/backups') + '</div>' +
+    (rows ? '<table class="tbl"><thead><tr><th>备份</th><th>大小</th></tr></thead><tbody>' + rows + '</tbody></table>' : '<div class="mut">还没有备份</div>') +
+    '<div class="flexbar"><button class="btn primary" id="doBackup">立即备份</button></div></section>'
 }
 function pageStickers(){
   const items = stickerList || []
@@ -890,6 +909,20 @@ async function bind(){
   document.querySelectorAll('[data-apicard]').forEach(el => {
     el.addEventListener('toggle', () => { apiCardsOpen[el.dataset.apicard] = el.open })
   })
+  const doBackup = document.getElementById('doBackup')
+  if (doBackup) doBackup.onclick = async function(){
+    doBackup.disabled = true
+    try { const r = await api('/api/action/backup', {}); toast('已备份：' + r.name); await load() }
+    catch(e){ toast('备份失败：' + e.message, true) }
+    finally { doBackup.disabled = false }
+  }
+  const runSelfcheck = document.getElementById('runSelfcheck')
+  if (runSelfcheck) runSelfcheck.onclick = async function(){
+    runSelfcheck.disabled = true
+    try { selfCheckInfo = await api('/api/selfcheck'); render() }
+    catch(e){ toast('自检失败：' + e.message, true) }
+    finally { runSelfcheck.disabled = false }
+  }
   document.querySelectorAll('[data-act]').forEach(b => b.onclick = async () => {
     const act = b.dataset.act
     if (act === 'summary') { await doSummary(); return }
@@ -1675,6 +1708,8 @@ async function load(){
     stickerLearn = stk.learn || {}
     stickerSettings = stk.settings || {}
     webSearchInfo = await api('/api/websearch').catch(function(){ return {} })
+    backupInfo = await api('/api/backups').catch(function(){ return { items: [], root: '' } })
+    selfCheckInfo = await api('/api/selfcheck').catch(function(){ return null })
     updateSideStatus(s.bot)
     // 预取人格内容与附加说明
     for (const item of personas) {
