@@ -226,3 +226,6 @@ details.card[open] > summary { padding-bottom: 16px; border-bottom: 1px solid va
 .sticker-save-bar{position:sticky;bottom:12px;z-index:5;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-top:20px;padding:16px;background:var(--card,#182a40);border:1px solid #76e0c0;border-radius:14px;box-shadow:0 6px 24px #0005}
 .sticker-save-result{padding:12px 16px;border:1px solid #76e0c0;border-radius:10px;background:#16866b22}
 
+
+/* 记忆时间线日期分隔 */
+.day-sep { margin: 14px 0 8px; padding: 4px 10px; font-size: 12px; color: var(--muted, #9aabc0); border-left: 3px solid #3b5b86; background: rgba(148, 163, 184, .08); border-radius: 4px; }

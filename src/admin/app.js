@@ -612,8 +612,11 @@ function pageMemory(){
   const d = memoryDetail
   const fmtTime = function(ts){ if(!ts) return ''; try { return new Date(ts).toLocaleString('zh-CN',{hour12:false}) } catch(e){ return '' } }
   const key = d ? d.key : ''
+  let lastDay = ''
   const recentRows = d ? (d.recent||[]).map(function(m, idx){
-    return '<div style="margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--line,#eee)">' +
+    const day = m.time ? new Date(m.time).toLocaleDateString('zh-CN') : '时间未知'
+    const dayHeader = day !== lastDay ? (lastDay = day, '<div class="day-sep">' + esc(day) + '</div>') : ''
+    return dayHeader + '<div style="margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--line,#eee)">' +
       '<div style="display:flex;gap:8px;align-items:center;margin-bottom:4px">' +
       '<span class="badge">' + (m.role === 'assistant' ? '机器人' : '对方') + '</span>' +
       '<span class="mut" style="font-size:12px">' + esc(fmtTime(m.time)) + '</span>' +
@@ -622,7 +625,7 @@ function pageMemory(){
       '</div><div>' + esc(m.content) + '</div></div>'
   }).join('') : ''
   const pendingRows = d ? (d.pending||[]).map(function(p, idx){
-    return '<div style="margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--line,#eee)">' +
+    return dayHeader + '<div style="margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--line,#eee)">' +
       '<div style="display:flex;gap:8px;align-items:center;margin-bottom:4px">' +
       '<span class="badge">' + esc(p.name || p.userId || '群友') + '</span>' +
       '<span class="mut" style="font-size:12px">' + esc(fmtTime(p.time)) + '</span>' +
@@ -636,7 +639,8 @@ function pageMemory(){
       '<button class="btn" id="loadLm">查看 / 检索</button></div>' +
       '<div class="mono" id="lmBox" style="max-height:240px;overflow:auto;margin-top:10px">—</div></section>',
     '<section class="card"><h2>日报原始文件</h2><div class="note">每天按群保存的原始消息，用于追溯。</div><div id="dailyFiles"></div></section>',
-    backupCard()
+    backupCard(),
+    '<section class="card"><h2>导出 / 导入</h2><div class="note">导出会下载一个 JSON 文件（保存位置由浏览器弹窗选择）；导入前会自动备份当前记忆。</div><div class="flexbar"><button class="btn" id="exportMemory">导出记忆</button><label class="btn" style="cursor:pointer">导入记忆<input type="file" id="memoryImport" accept="application/json,.json" style="display:none"></label></div></section>'
   ].join('')
   return [
     '<h1>记忆浏览</h1><div class="sub">当前人格 <b>' + esc(state?.config?.activePersona || '默认') + '</b>。近期、长期、待整理分开显示，都可以单条修改或删除。</div>',
@@ -909,6 +913,34 @@ async function bind(){
   document.querySelectorAll('[data-apicard]').forEach(el => {
     el.addEventListener('toggle', () => { apiCardsOpen[el.dataset.apicard] = el.open })
   })
+  const exportMemory = document.getElementById('exportMemory')
+  if (exportMemory) exportMemory.onclick = async function(){
+    try {
+      const data = await api('/api/memory-export')
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const now = new Date(); const pad = function(n){ return String(n).padStart(2,'0') }
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'koukou-memory-' + now.getFullYear() + pad(now.getMonth()+1) + pad(now.getDate()) + '.json'
+      document.body.appendChild(a); a.click(); a.remove()
+      setTimeout(function(){ URL.revokeObjectURL(url) }, 1000)
+      toast('已导出记忆文件')
+    } catch(e){ toast('导出失败：' + e.message, true) }
+  }
+  const memoryImport = document.getElementById('memoryImport')
+  if (memoryImport) memoryImport.onchange = async function(){
+    const file = memoryImport.files && memoryImport.files[0]
+    if (!file) return
+    if (!await ask('导入记忆？', '会先用当前数据做一份备份，然后覆盖文件里同名会话的记忆。', '导入')) { memoryImport.value = ''; return }
+    try {
+      const data = JSON.parse(await file.text())
+      const r = await api('/api/action/memory-import', { data })
+      toast('已导入：近期 ' + r.recentKeys + ' 个会话，长期 ' + r.longKeys + ' 个')
+      await load()
+    } catch(e){ toast('导入失败：' + e.message, true) }
+    finally { memoryImport.value = '' }
+  }
   const doBackup = document.getElementById('doBackup')
   if (doBackup) doBackup.onclick = async function(){
     doBackup.disabled = true

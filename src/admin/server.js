@@ -519,6 +519,15 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       },
     }),
     'GET /api/backups': async () => ({ items: backup ? backup.list().map((x) => ({ name: x.name, size: x.size })) : [], root: backup ? backup.root : '' }),
+    'GET /api/memory-export': async () => {
+      const readJson = (file) => { try { return JSON.parse(readFileSync(file, 'utf8')) } catch { return {} } }
+      return {
+        version: 1,
+        exportedAt: Date.now(),
+        memory: readJson(config.memoryFile),
+        longMemory: readJson(path.join(config.dataDir, 'long-memory.json')),
+      }
+    },
     'GET /api/selfcheck': async () => {
       if (!selfcheck) return { items: [] }
       const st = onebot && typeof onebot.status === 'function' ? onebot.status() : null
@@ -1292,6 +1301,21 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       }
       logger?.info?.(`[控制台] 已删除会话 ${key}${whitelistRemoved ? '（并从白名单移除）' : ''}`)
       return { ok: true, key, whitelistRemoved, dailyBackup, ...result }
+    },
+    async 'memory-import'(payload) {
+      const data = payload && payload.data
+      if (!data || typeof data !== 'object') throw new Error('导入内容无效')
+      const mem = data.memory && typeof data.memory === 'object' ? data.memory : null
+      const long = data.longMemory && typeof data.longMemory === 'object' ? data.longMemory : null
+      if (!mem && !long) throw new Error('文件里没有记忆数据')
+      if (backup) backup.run({ reason: '导入前备份' })
+      if (mem) memory.restore({ chats: mem, resetAt: 0, keyResetAt: {} })
+      if (long) {
+        const snap = typeof longMemory.snapshot === 'function' ? longMemory.snapshot() : null
+        longMemory.restore({ chats: long, epoch: snap && snap.epoch, keyEpochs: (snap && snap.keyEpochs) || {} })
+      }
+      logger?.info?.('[控制台] 已导入记忆')
+      return { ok: true, recentKeys: Object.keys(mem || {}).length, longKeys: Object.keys(long || {}).length }
     },
     async 'backup'() {
       if (!backup) throw new Error('备份不可用')
