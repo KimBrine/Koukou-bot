@@ -115,6 +115,8 @@ const EDITABLE = [
   { key: 'STICKER_PICK_MODE', label: '表情包选图方式', hint: 'context / model / random', live: true, type: 'text' },
   { key: 'STICKER_COOLDOWN_SECONDS', label: '同一会话配图间隔（秒）', hint: '0不额外限制', live: true, type: 'number' },
   { key: 'DEEPSEEK_API_KEY', label: '模型 Key', live: true, type: 'secret' },
+  { key: 'VISION_REASONING', label: '识图思考强度', hint: 'none 最稳（默认）；low/high 更细但更慢，也更容易吃光 token 预算', live: true, type: 'text' },
+  { key: 'VISION_MAX_TOKENS', label: '识图 token 预算', hint: '64～4000，默认 300；复杂图片可调高', live: true, type: 'number' },
   { key: 'VISION_PROVIDER', label: '识图服务商', hint: '当前选用哪家服务识别图片', live: true, type: 'text' },
   { key: 'VISION_MODEL', label: 'DeepSeek 识图模型', hint: '识图服务商为 DeepSeek 时使用', live: true, type: 'text' },
   { key: 'STICKER_TAG_PROVIDER', label: '表情包打标模型', hint: 'auto = 有通义用通义，否则 DeepSeek，再否则自定义；也可指定 deepseek / dashscope / custom', live: true, type: 'text' },
@@ -457,6 +459,9 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         replyTimingEnabled: Boolean(config.replyTimingEnabled),
         replyMinBudget: config.replyMinBudget,
         visionProvider: config.visionProvider,
+        visionReasoning: config.visionReasoning || 'none',
+        visionMaxTokens: config.visionMaxTokens || 300,
+        privateWhitelist: [...(config.privateWhitelist || [])],
         visionCustomModel: config.visionCustomModel,
         visionModelDeepseek: config.visionModel || '',
         visionCustomReady: Boolean(config.visionCustomApiKey && config.visionCustomBaseUrl && config.visionCustomModel),
@@ -848,6 +853,14 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         break
       case 'PRIVATE_WHITELIST':
         config.privateWhitelist = new Set(String(value || '').split(/[,，\s]+/).filter((x) => /^\d{1,15}$/.test(x)).map(Number))
+        break
+      case 'VISION_REASONING':
+        config.visionReasoning = ['none', 'low', 'high'].includes(String(value || '').toLowerCase()) ? String(value).toLowerCase() : 'none'
+        try { switchVision?.() } catch {}
+        break
+      case 'VISION_MAX_TOKENS':
+        config.visionMaxTokens = Math.max(64, Math.min(4000, Math.floor(num(value, config.visionMaxTokens))))
+        try { switchVision?.() } catch {}
         break
       case 'MAX_TOKENS':
         config.maxTokens = Math.max(256, Math.min(200000, Math.floor(num(value, config.maxTokens))))

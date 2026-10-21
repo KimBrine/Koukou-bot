@@ -340,7 +340,7 @@ function pageChats(){
       <span class="badge">${chats.length} 个会话</span>
     </div>
     <div class="toolgroup">
-      <select id="newchatType" aria-label="会话类型" style="max-width:120px"><option value="g">群聊</option><option value="p">私聊</option></select>
+      <select id="newchatType" aria-label="会话类型" style="max-width:120px"><option value="g">普通群聊</option><option value="w">白名单群</option><option value="p">私聊（加入白名单）</option></select>
       <select id="newchatPick" aria-label="选择联系人或群" style="max-width:260px"></select>
       <input id="newchat" type="text" inputmode="numeric" placeholder="或直接输入号码" style="max-width:160px">
       <button class="btn" id="addchat">添加普通会话</button><button class="btn" id="cleanGroups" title="把不在白名单里的群从会话列表里删掉（记忆和设置一起清）">清理非白名单群</button><span class="note">需要主动搭话的群，请使用上方「添加 / 导入白名单群」。</span>
@@ -709,6 +709,8 @@ function visionCard(){
     row('识图模型', '<div class="row" style="display:flex;gap:8px"><select id="vcModel" style="flex:1">' +
       '<option value="' + esc(currentModel) + '"' + (currentModel ? ' selected' : '') + '>' + esc(currentModel || '（先点自动检测）') + '</option>' +
       '</select><button class="btn" type="button" id="vcDetect">自动检测模型</button></div><div class="mut" id="vcDetectHint" style="font-size:12px;margin-top:4px">' + (isCustom ? '自定义：点检测拿型号列表' : '点「自动检测模型」拿型号列表') + '</div>'),
+    row('识图思考强度', '<select id="vcReasoning">' + [['none','关闭（最稳，默认）'],['low','低'],['high','高']].map(function(x){ return '<option value="' + x[0] + '"' + (x[0] === (s.visionReasoning || 'none') ? ' selected' : '') + '>' + x[1] + '</option>' }).join('') + '</select>'),
+    row('识图 token 预算', '<input id="vcTokens" type="number" min="64" max="4000" value="' + (s.visionMaxTokens || 300) + '" style="width:120px"><div class="mut" style="font-size:12px;margin-top:3px">越大越能读复杂图，也越慢；默认 300</div>'),
     row('表情包打标模型', '<select id="vcTag">' +
       '<option value="auto"' + sel('auto', tagProvider) + '>自动（有通义用通义，否则 DeepSeek）</option>' +
       '<option value="deepseek"' + sel('deepseek', tagProvider) + '>DeepSeek</option>' +
@@ -1005,7 +1007,7 @@ async function bind(){
     const model = vcModel.value.trim()
     vcSave.disabled = true
     try {
-      const patch={VISION_PROVIDER:provider,STICKER_TAG_PROVIDER:document.getElementById('vcTag').value}
+      const patch={VISION_PROVIDER:provider,STICKER_TAG_PROVIDER:document.getElementById('vcTag').value,VISION_REASONING:(document.getElementById('vcReasoning')||{}).value||'none',VISION_MAX_TOKENS:String((document.getElementById('vcTokens')||{}).value||300)}
       if (String(provider).startsWith('custom:')) {
         const id = String(provider).slice(7)
         if (model) await api('/api/action/vision-provider-update', { id: id, model: model })
@@ -1314,9 +1316,26 @@ async function bind(){
   if (add) add.onclick = async () => {
     const v = document.getElementById('newchat').value.trim()
     if (!/^\d{5,12}$/.test(v)) { toast('请输入 5～12 位数字 ID', true); return }
-    const key = document.getElementById('newchatType').value + v
-    try { await api('/api/action/set-chat', { key, patch: {} }); openChats.add(key); await load(); toast('已添加会话，可展开设置') }
-    catch(e){ toast('添加失败：' + e.message, true) }
+    const type = document.getElementById('newchatType').value
+    const key = type + v
+    try {
+      if (type === 'w') {
+        await api('/api/action/update-whitelist', { operation: 'add', groupIds: [Number(v)] })
+        await api('/api/action/set-chat', { key: 'g' + v, patch: {} })
+        toast('已加入白名单群，可主动搭话')
+      } else if (type === 'p') {
+        await api('/api/action/set-chat', { key: 'p' + v, patch: {} })
+        const current = (state && state.config && state.config.privateWhitelist) || []
+        if (!current.map(String).includes(String(v))) {
+          await api('/api/action/set-config', { key: 'PRIVATE_WHITELIST', value: current.concat([v]).join(',') })
+        }
+        toast('已添加私聊并加入白名单')
+      } else {
+        await api('/api/action/set-chat', { key: 'g' + v, patch: {} })
+        toast('已添加群会话，可展开设置')
+      }
+      openChats.add(key); await load()
+    } catch(e){ toast('添加失败：' + e.message, true) }
   }
   const search = document.getElementById('chatSearch')
   if (search) search.oninput = () => {

@@ -180,14 +180,15 @@ function visionEndpoint(provider) {
       provider: 'deepseek', key: config.deepseekApiKey, baseUrl: config.deepseekBaseUrl,
       model: config.visionModel || 'deepseek-flash', label: 'DeepSeek 视觉',
       // 识图不需要长思考：deepseek-flash 带思考时会把 max_tokens(300) 全烧在推理上，正文为空。
-      reasoningEffort: 'none', enableThinking: undefined,
+      reasoningEffort: config.visionReasoning || 'none', enableThinking: undefined,
     }
   }
   if (!config.dashscopeApiKey) return null
   return {
     provider: 'dashscope', key: config.dashscopeApiKey, baseUrl: config.dashscopeBaseUrl,
     model: config.dashscopeModel, label: '通义千问VL', reasoningEffort: undefined,
-    enableThinking: isQwenHybridModel(config.dashscopeModel) ? config.dashscopeThinking : undefined,
+    // 识图强度独立于对话模型：none 关思考；low/high 交给混合模型开思考
+    enableThinking: isQwenHybridModel(config.dashscopeModel) ? (config.visionReasoning === 'none' ? false : (config.visionReasoning ? true : config.dashscopeThinking)) : undefined,
   }
 }
 function makeClient(ep) {
@@ -195,7 +196,7 @@ function makeClient(ep) {
   return new DeepSeekClient({
     apiKey: ep.key, baseUrl: ep.baseUrl, model: ep.model,
     temperature: config.temperature,
-    maxTokens: Math.min(config.maxTokens, 300),
+    maxTokens: Math.min(config.maxTokens, config.visionMaxTokens || 300),
     timeoutMs: config.timeoutMs, maxRetries: config.maxRetries,
     maxConcurrency: config.maxConcurrency, logger, label: ep.label,
     reasoningEffort: ep.reasoningEffort, enableThinking: ep.enableThinking,
