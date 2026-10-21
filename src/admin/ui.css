@@ -229,3 +229,13 @@ details.card[open] > summary { padding-bottom: 16px; border-bottom: 1px solid va
 
 /* 记忆时间线日期分隔 */
 .day-sep { margin: 14px 0 8px; padding: 4px 10px; font-size: 12px; color: var(--muted, #9aabc0); border-left: 3px solid #3b5b86; background: rgba(148, 163, 184, .08); border-radius: 4px; }
+
+/* 首页版本卡片（紧凑） */
+.version-card { padding: 14px 18px; }
+.version-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.version-main { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 14px; }
+.version-status { color: var(--muted, #9aabc0); font-size: 13px; max-width: 560px; }
+.version-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.version-foot { margin-top: 8px; display: flex; gap: 10px; align-items: center; font-size: 12px; flex-wrap: wrap; }
+.version-help summary { cursor: pointer; font-size: 12px; color: var(--muted, #9aabc0); }
+.version-help p { margin: 6px 0 0; line-height: 1.6; max-width: 720px; }

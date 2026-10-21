@@ -1,8 +1,9 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 
 const DAY = 86400000
+const FIELDS = ['received', 'replied', 'skipped', 'errors', 'stickers', 'searches', 'llmMs', 'llmCount']
 
-/** 轻量指标：每天记收到/回复条数，30 秒批量落盘一次。 */
+/** 轻量指标：按天累计消息、回复、跳过、错误、表情包、搜索与耗时，30 秒批量落盘。 */
 export function createMetrics({ file, now = () => Date.now(), logger }) {
   let data = { days: {} }
   try { if (existsSync(file)) data = JSON.parse(readFileSync(file, 'utf8')) || { days: {} } } catch {}
@@ -24,10 +25,10 @@ export function createMetrics({ file, now = () => Date.now(), logger }) {
     const keys = Object.keys(data.days).sort()
     if (keys.length > 60) for (const k of keys.slice(0, keys.length - 60)) delete data.days[k]
   }
-  function bump(field) {
+  function bump(field, amount = 1) {
     const k = dayKey(now())
-    const day = data.days[k] || (data.days[k] = { received: 0, replied: 0 })
-    day[field] = (Number(day[field]) || 0) + 1
+    const day = data.days[k] || (data.days[k] = {})
+    day[field] = (Number(day[field]) || 0) + amount
     dirty = true; schedule(); prune()
   }
   function snapshot(days = 7) {
@@ -35,9 +36,20 @@ export function createMetrics({ file, now = () => Date.now(), logger }) {
     for (let i = days - 1; i >= 0; i--) {
       const k = dayKey(now() - i * DAY)
       const d = data.days[k] || {}
-      out.push({ date: k, received: Number(d.received) || 0, replied: Number(d.replied) || 0 })
+      const row = { date: k }
+      for (const f of FIELDS) row[f] = Number(d[f]) || 0
+      out.push(row)
     }
     return out
   }
-  return { received: () => bump('received'), replied: () => bump('replied'), snapshot, flush: save }
+  return {
+    received: () => bump('received'),
+    replied: () => bump('replied'),
+    skipped: () => bump('skipped'),
+    error: () => bump('errors'),
+    sticker: () => bump('stickers'),
+    search: () => bump('searches'),
+    llm: (ms) => { bump('llmMs', Math.max(0, Math.round(Number(ms) || 0))); bump('llmCount') },
+    snapshot, flush: save,
+  }
 }

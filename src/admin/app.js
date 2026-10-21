@@ -68,6 +68,8 @@ let apiCardsOpen = { model: false, vision: false, search: false }
 let backupInfo = { items: [], root: '' }
 let selfCheckInfo = null
 let metricsInfo = []
+let metricsRange = 7
+let stickerFold = { rules: false, learn: false, manual: false, blacklist: false }
 let customCommands = []
 let commandBuiltins = []
 let pokeDiagnostics = {}
@@ -183,7 +185,14 @@ async function refreshUpdates(force=false){
   try{updateInfo=await api(force?'/api/action/check-update':'/api/updates',force?{}:undefined)}catch(e){updateInfo={...updateInfo,status:'error',message:e.message}}
   finally{updateChecking=false;paintUpdates();if(button)button.disabled=false}
 }
-function versionCard(){return '<section class="card"><h2>版本与更新</h2><p>当前版本：<strong id="currentVersion">v'+esc(updateInfo?.currentVersion||state?.version||'读取中')+'</strong></p><p id="versionStatus">'+esc(updateStatusText())+'</p><p id="versionChecked" class="mut">'+(updateInfo?.checkedAt?'上次检查：'+esc(new Date(updateInfo.checkedAt).toLocaleString()):'')+'</p><div class="flexbar"><button class="btn" id="checkUpdate">检查更新</button><a class="btn primary" id="versionLink" href="'+esc(updateInfo?.url||'https://github.com/KimBrine/Koukou-bot/tags')+'" target="_blank" rel="noopener noreferrer"'+(updateInfo?.status==='available'?'':' hidden')+'>查看新版</a></div><p class="mut">自动检查GitHub正式标签（最多100个），缓存6小时；手动检查间隔至少30秒。检查失败不代表已是最新。更新前请备份私有配置与数据；这里不会自动安装。</p></section>'}
+function versionCard(){
+  const ver = updateInfo?.currentVersion || state?.version || ''
+  const checked = updateInfo?.checkedAt ? ('上次检查 ' + new Date(updateInfo.checkedAt).toLocaleTimeString('zh-CN',{hour12:false})) : ''
+  return '<section class="card version-card"><div class="version-row">' +
+    '<div class="version-main"><span class="badge">当前版本</span> <strong id="currentVersion">v' + esc(ver || '读取中') + '</strong> <span id="versionStatus" class="version-status">' + esc(updateStatusText()) + '</span></div>' +
+    '<div class="version-actions"><button class="btn sm" id="checkUpdate">检查更新</button><a class="btn sm primary" id="versionLink" href="' + esc(updateInfo?.url || 'https://github.com/KimBrine/Koukou-bot/tags') + '" target="_blank" rel="noopener noreferrer"' + (updateInfo?.status === 'available' ? '' : ' hidden') + '>查看新版</a></div>' +
+    '</div><div class="version-foot"><span id="versionChecked" class="mut">' + esc(checked) + '</span><details class="version-help"><summary>更新说明</summary><p class="mut">自动检查 GitHub 正式标签（最多 100 个），缓存 6 小时；手动检查间隔至少 30 秒。检查失败不代表已是最新。更新前请备份私有配置与数据；这里不会自动安装。</p></details></div></section>'
+}
 
 function pageOverview(){
   const b = state?.bot ?? {}
@@ -754,23 +763,6 @@ function visionCard(){
     '</div></details>'
   ].join('')
 }
-function metricsCard(){
-  const list = metricsInfo || []
-  const max = Math.max(1, ...list.map(function(d){ return Math.max(d.received || 0, d.replied || 0) }))
-  const w = 560, h = 150, bw = w / Math.max(1, list.length)
-  const bars = list.map(function(d, i){
-    const rh = (d.received || 0) / max * (h - 30)
-    const ph = (d.replied || 0) / max * (h - 30)
-    return '<g><rect x="' + (i * bw + bw * 0.12) + '" y="' + (h - 12 - rh) + '" width="' + (bw * 0.34) + '" height="' + rh + '" fill="#3b6ea5" rx="3"></rect>' +
-      '<rect x="' + (i * bw + bw * 0.52) + '" y="' + (h - 12 - ph) + '" width="' + (bw * 0.34) + '" height="' + ph + '" fill="#4aa3a3" rx="3"></rect>' +
-      '<text x="' + (i * bw + bw / 2) + '" y="' + (h + 2) + '" font-size="10" text-anchor="middle" fill="#9aabc0">' + esc(d.date.slice(5)) + '</text></g>'
-  }).join('')
-  const totalR = list.reduce(function(n, d){ return n + (d.received || 0) }, 0)
-  const totalP = list.reduce(function(n, d){ return n + (d.replied || 0) }, 0)
-  return '<section class="card"><h2>最近 ' + list.length + ' 天</h2><div class="note">蓝 = 收到消息，青 = 已回复</div>' +
-    '<svg viewBox="0 0 ' + w + ' ' + (h + 8) + '" style="width:100%;height:auto;margin-top:8px">' + bars + '</svg>' +
-    '<div class="mut">合计：收到 ' + totalR + ' 条 · 回复 ' + totalP + ' 条</div></section>'
-}
 function selfCheckCard(){
   const info = selfCheckInfo
   const rows = (info && info.items ? info.items : []).map(function(x){
@@ -787,8 +779,77 @@ function backupCard(){
     (rows ? '<table class="tbl"><thead><tr><th>备份</th><th>大小</th></tr></thead><tbody>' + rows + '</tbody></table>' : '<div class="mut">还没有备份</div>') +
     '<div class="flexbar"><button class="btn primary" id="doBackup">立即备份</button></div></section>'
 }
+function svgChart(list, series, { mode = 'line', height = 160, percent = false } = {}){
+  const w = 580, padL = 34, padR = 10, padT = 12, padB = 24
+  const innerW = w - padL - padR, innerH = height - padT - padB
+  const maxRaw = Math.max(1, ...list.flatMap(function(d){ return series.map(function(s){ return s.get(d) || 0 }) }))
+  const max = percent ? Math.max(100, Math.ceil(maxRaw / 10) * 10) : Math.ceil(maxRaw * 1.1)
+  const step = list.length > 1 ? innerW / (list.length - 1) : innerW
+  const x = function(i){ return padL + (list.length > 1 ? i * step : innerW / 2) }
+  const y = function(v){ return padT + innerH - (v / max) * innerH }
+  const grid = [0, 0.25, 0.5, 0.75, 1].map(function(r){
+    const yy = padT + innerH * (1 - r)
+    return '<line x1="' + padL + '" y1="' + yy + '" x2="' + (w - padR) + '" y2="' + yy + '" stroke="rgba(148,163,184,.18)" stroke-width="1"></line>' +
+      '<text x="' + (padL - 6) + '" y="' + (yy + 3) + '" font-size="10" text-anchor="end" fill="#9aabc0">' + Math.round(max * r) + (percent ? '%' : '') + '</text>'
+  }).join('')
+  const labelEvery = Math.max(1, Math.ceil(list.length / 7))
+  const labels = list.map(function(d, i){
+    if (i % labelEvery !== 0 && i !== list.length - 1) return ''
+    return '<text x="' + x(i) + '" y="' + (height - 6) + '" font-size="10" text-anchor="middle" fill="#9aabc0">' + esc(d.date.slice(5)) + '</text>'
+  }).join('')
+  const paths = series.map(function(s){
+    if (mode === 'bar') {
+      const bw = Math.max(4, Math.min(18, innerW / Math.max(1, list.length) / (series.length + 1)))
+      const idx = series.indexOf(s)
+      return list.map(function(d, i){
+        const v = s.get(d) || 0
+        const bx = x(i) - (series.length * bw) / 2 + idx * bw
+        return '<rect x="' + bx + '" y="' + y(v) + '" width="' + bw + '" height="' + Math.max(0, padT + innerH - y(v)) + '" fill="' + s.color + '" rx="2"><title>' + esc(d.date + ' ' + s.name + '：' + v) + '</title></rect>'
+      }).join('')
+    }
+    const points = list.map(function(d, i){ return x(i) + ',' + y(s.get(d) || 0) }).join(' ')
+    const area = list.length > 1 ? 'M' + x(0) + ',' + (padT + innerH) + ' L' + list.map(function(d, i){ return x(i) + ',' + y(s.get(d) || 0) }).join(' L') + ' L' + x(list.length - 1) + ',' + (padT + innerH) + ' Z' : ''
+    return (s.fill ? '<path d="' + area + '" fill="' + s.color + '" opacity="0.10"></path>' : '') +
+      '<polyline points="' + points + '" fill="none" stroke="' + s.color + '" stroke-width="2" stroke-linejoin="round"></polyline>'
+  }).join('')
+  const legend = series.map(function(s){ return '<span style="margin-right:14px"><i style="display:inline-block;width:10px;height:10px;border-radius:2px;background:' + s.color + ';margin-right:5px"></i>' + esc(s.name) + '</span>' }).join('')
+  return '<div class="mut" style="font-size:12px;margin-bottom:4px">' + legend + '</div><svg viewBox="0 0 ' + w + ' ' + height + '" style="width:100%;height:auto">' + grid + paths + labels + '</svg>'
+}
 function pageMetrics(){
-  return '<h1>运行概览</h1><div class="sub">最近 7 天的消息量与回复量，数据每 30 秒落盘一次。</div>' + metricsCard()
+  const list = metricsInfo || []
+  const sum = function(k){ return list.reduce(function(n, d){ return n + (Number(d[k]) || 0) }, 0) }
+  const received = sum('received'), replied = sum('replied'), errors = sum('errors')
+  const rate = received ? Math.round(replied / received * 100) : 0
+  const fail = received ? Math.round(errors / received * 100) : 0
+  const avg = sum('llmCount') ? (sum('llmMs') / sum('llmCount') / 1000).toFixed(1) : '—'
+  const rangeBtns = [[7, '7 天'], [14, '14 天'], [30, '30 天']].map(function(x){
+    return '<button class="btn sm' + (metricsRange === x[0] ? ' primary' : '') + '" data-mrange="' + x[0] + '">' + x[1] + '</button>'
+  }).join(' ')
+  return '<h1>运行概览</h1><div class="sub">按天统计，用来判断机器人是"在正常工作"还是"在空转"；数据每 30 秒落盘。</div>' +
+    '<div class="flexbar">' + rangeBtns + '</div>' +
+    '<div class="grid g3">' +
+      '<div class="card"><h3>收到消息</h3><div class="kpi">' + received + '</div><div class="note">' + list.length + ' 天合计</div></div>' +
+      '<div class="card"><h3>已回复</h3><div class="kpi">' + replied + '</div><div class="note">回复率 ' + rate + '%</div></div>' +
+      '<div class="card"><h3>错误</h3><div class="kpi">' + errors + '</div><div class="note">占收到的 ' + fail + '%</div></div>' +
+      '<div class="card"><h3>表情包</h3><div class="kpi">' + sum('stickers') + '</div><div class="note">发送次数</div></div>' +
+      '<div class="card"><h3>联网搜索</h3><div class="kpi">' + sum('searches') + '</div><div class="note">调用次数</div></div>' +
+      '<div class="card"><h3>平均生成耗时</h3><div class="kpi">' + avg + 's</div><div class="note">模型端到端</div></div>' +
+    '</div>' +
+    '<section class="card"><h2>消息与回复</h2>' + svgChart(list, [
+      { name: '收到', color: '#3b6ea5', get: function(d){ return d.received } },
+      { name: '已回复', color: '#4aa3a3', get: function(d){ return d.replied } }
+    ], { mode: 'bar' }) + '</section>' +
+    '<section class="card"><h2>回复率与错误率</h2>' + svgChart(list, [
+      { name: '回复率', color: '#4aa3a3', get: function(d){ return d.received ? d.replied / d.received * 100 : 0 }, fill: true },
+      { name: '错误率', color: '#d9534f', get: function(d){ return d.received ? d.errors / d.received * 100 : 0 } }
+    ], { mode: 'line', percent: true }) + '</section>' +
+    '<section class="card"><h2>表情包与搜索</h2>' + svgChart(list, [
+      { name: '表情包发送', color: '#b8860b', get: function(d){ return d.stickers } },
+      { name: '联网搜索', color: '#7a5cd6', get: function(d){ return d.searches } }
+    ], { mode: 'bar' }) + '</section>' +
+    '<section class="card"><h2>平均生成耗时（秒）</h2>' + svgChart(list, [
+      { name: '平均耗时', color: '#3b6ea5', get: function(d){ return d.llmCount ? d.llmMs / d.llmCount / 1000 : 0 }, fill: true }
+    ], { mode: 'line' }) + '</section>'
 }
 function pageSelfCheck(){
   return '<h1>自检</h1><div class="sub">检查机器人能不能正常跑：Key、连接、目录、磁盘、备份与记忆文件。</div>' + selfCheckCard()
@@ -828,7 +889,7 @@ function pageStickers(){
   }).join('')
   return [
     '<h1>表情包</h1><div class="flexbar" style="margin:8px 0"><button class="btn" id="retagAll">一键生成标签</button><span class="mut" id="retagHint"></span></div><p class="note">当前图库：' + esc(stickerPersona?.name || '默认人格') + ' · 图库、标签、使用记录和黑名单按人格分开；自动学习与配图跟随会话人格。切换后不会混用，原图库保留。</p><div class="sub">给每张图起名、打关键词和语境；机器人按语境挑图，模型也能用 [贴纸: 名称] 点名要。</div>',
-    '<section class="card"><h2>表情包设置</h2>',
+    '<details class="card" data-stkfold="rules"' + (stickerFold.rules ? ' open' : '') + '><summary><b class="api-card-title">发送规则</b> <span class="api-card-meta">概率 ' + Math.round(settings.autoRate ?? 35) + '% · 每次最多 ' + (settings.maxPerReply || 1) + ' 张</span></summary><div class="api-card-body">',
     '<label style="display:flex;align-items:center;gap:8px;font-size:14px"><input type="checkbox" id="stkEnabled"' + (settings.enabled !== false ? ' checked' : '') + '> 启用表情包（关闭后模型不会发图）</label>',
     '<div class="note">表情包必须跟随已成功发送的普通聊天文字回复。用户明确要求发表情包时直接尝试发送，不抽概率；普通聊天的自动配图（含模型主动选图）遵守下方概率；语境模式未选中合适图片时不随机补图。仍遵守开关、范围、黑名单及冷却；群总结、指令回执和 /Q 解题不自动配图。</div>',
     '<label style="display:block;margin:12px 0">文字回复配图概率 <input id="stkAutoRange" type="range" min="0" max="100" value="' + (settings.autoRate ?? 35) + '"> <input id="stkAutoRate" type="number" min="0" max="100" value="' + (settings.autoRate ?? 35) + '" style="width:90px"> %</label>',
@@ -839,7 +900,8 @@ function pageStickers(){
     '<div id="stkSendGroups"' + (settings.scope === 'selected' ? '' : ' hidden') + '>' + groups.map(g=>'<label style="display:block;margin:8px 0"><input type="checkbox" data-stk-send-group="'+esc(g.id)+'"'+((settings.groups || []).map(String).includes(String(g.id))?' checked':'')+'> '+esc(g.name)+' ('+esc(g.id)+')</label>').join('') + '<div class="mut">留空不配图；这些设置不会扩大机器人原本允许回复的范围。</div></div>',
     '<label style="display:block;margin:12px 0">同一会话配图间隔 <input id="stkCooldown" type="number" min="0" max="86400" value="' + (settings.cooldownSeconds || 0) + '" style="width:100px"> 秒（0不额外限制）</label>',
     '<button class="btn primary" id="stkRulesSave">保存发送规则</button>',
-    '<div style="height:1px;background:var(--line,#e5e5e5);margin:10px 0"></div>',
+    '</div></details>',
+    '<details class="card" data-stkfold="learn"' + (stickerFold.learn ? ' open' : '') + '><summary><b class="api-card-title">自动学习</b> <span class="api-card-meta">群 ' + ((learn.groups || []).length) + ' 个 · 私聊 ' + (learn.private ? '已开' : '未开') + '</span></summary><div class="api-card-body">',
     '<div class="mut" style="margin-top:6px">DeepSeek Flash 初筛，Qwen 复核并打标签；无法确认的图不收录。已学习 ' + (stickerLearned || 0) + ' 张 / 共 ' + items.length + ' 张。</div>',
     '<details class="learn-box"><summary><b>群聊学习</b> <span class="pill">' + ((learn.groups || []).length) + ' 个群</span></summary>',
     '<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:10px 0"><input type="checkbox" id="stkLearnToggle"' + (learn.enabled ? ' checked' : '') + '> 启用群聊表情包学习</label>',
@@ -854,20 +916,20 @@ function pageStickers(){
     '<div class="row" style="margin-top:8px;display:flex;gap:8px;align-items:center">',
     '<span class="mut">每小时最多</span><input id="stkLearnPerHour" type="number" min="0" max="60" value="' + (learn.perHour || 0) + '" style="width:90px"><span class="mut">张</span>',
     '<button class="btn" id="stkLearnSave">保存学习设置</button>',
-    '</div></section>',
+    '</div></details>',
     window.StickerUploadUI?.render(sceneList) || '',
-    '<section class="card"><h2>手动发送文字＋表情包</h2><div class="note">这里会真实发送到所选群；手动发送不抽取概率，但同样必须有伴随文字。</div>',
+    '<details class="card" data-stkfold="manual"' + (stickerFold.manual ? ' open' : '') + '><summary><b class="api-card-title">手动发送</b> <span class="api-card-meta">文字 + 表情包</span></summary><div class="api-card-body"><div class="note">这里会真实发送到所选群；手动发送不抽取概率，但同样必须有伴随文字。</div>',
     '<div class="row" style="display:flex;gap:8px;flex-wrap:wrap">',
     '<select id="stkSendGroup">' + (gopts || '<option value="">没有群可发</option>') + '</select>',
     '<input id="stkSendText" placeholder="必填：伴随文字" maxlength="1000" style="flex:1;min-width:160px">',
     '<input id="stkSendKw" placeholder="留空 = 随机一张" style="flex:1;min-width:160px">',
     '<button class="btn" id="stkSend">发送</button>',
-    '</div></section>',
-    '<section class="card"><h2>表情包黑名单 <span class="pill">' + stickerBlacklist.length + ' 张</span></h2><div class="note">这些图片不会被学习或发送。解除后允许重新学习或上传，不会自动放回表情包库。按原图哈希识别；重新压缩或裁剪后的图片不视为同一张。</div><input id="stkBlockedSearch" placeholder="搜索黑名单名称、标签、描述或哈希" aria-label="搜索表情包黑名单" style="width:100%;margin-bottom:16px">' + (stickerBlacklist.length ? '<div style="display:flex;flex-wrap:wrap;gap:12px">'+stickerBlacklist.map(s=>'<article data-stk-blocked-card="'+esc(s.hash)+'" style="border:1px solid var(--line,#ddd);border-radius:14px;padding:16px;flex:1 1 300px;min-width:260px;max-width:420px">'+
+    '</div></details>',
+    '<details class="card" data-stkfold="blacklist"' + (stickerFold.blacklist ? ' open' : '') + '><summary><b class="api-card-title">黑名单</b> <span class="api-card-meta">' + stickerBlacklist.length + ' 张</span></summary><div class="api-card-body"><div class="note">这些图片不会被学习或发送。解除后允许重新学习或上传，不会自动放回表情包库。按原图哈希识别；重新压缩或裁剪后的图片不视为同一张。</div><input id="stkBlockedSearch" placeholder="搜索黑名单名称、标签、描述或哈希" aria-label="搜索表情包黑名单" style="width:100%;margin-bottom:16px">' + (stickerBlacklist.length ? '<div style="display:flex;flex-wrap:wrap;gap:12px">'+stickerBlacklist.map(s=>'<article data-stk-blocked-card="'+esc(s.hash)+'" style="border:1px solid var(--line,#ddd);border-radius:14px;padding:16px;flex:1 1 300px;min-width:260px;max-width:420px">'+
       (s.hasPreview?'<button class="btn" data-stk-blocked-preview="'+esc(s.hash)+'" style="width:100%;padding:0" aria-label="预览黑名单 '+esc(s.name)+'"><img loading="lazy" src="/api/sticker-blacklist-file?hash='+encodeURIComponent(s.hash)+'&scope='+encodeURIComponent(stickerPersona?.token || '')+'" alt="'+esc(s.name)+'" style="width:100%;height:180px;object-fit:contain;border-radius:10px;background:#0002"></button>':'<div style="height:180px;display:grid;place-content:center;text-align:center;border-radius:10px;background:#0002"><strong>暂无图片预览</strong><span class="mut">旧版图片已删除，黑名单仍然有效</span></div>')+
       '<div style="margin:10px 0"><span class="pill">已屏蔽</span> <span class="mut">'+(s.blockedAt?esc(new Date(s.blockedAt).toLocaleString()):'记录时间未知')+'</span></div><h3>'+esc(s.name||'未命名表情包')+'</h3>'+
       ((s.keywords||[]).length?'<div class="mut">标签：'+esc(s.keywords.join(' · '))+'</div>':'')+(s.description?'<p>'+esc(s.description)+'</p>':'')+
-      '<details style="margin:12px 0"><summary>查看 SHA-256</summary><input readonly aria-label="黑名单哈希" value="'+esc(s.hash)+'" style="width:100%;font-family:monospace;font-size:12px;margin:8px 0"></details><div class="flexbar"><button class="btn primary" data-stk-unblock="'+esc(s.hash)+'">解除黑名单</button><button class="btn" data-stk-blocked-copy="'+esc(s.hash)+'">复制哈希</button></div></article>').join('')+'</div><div id="stkBlockedEmpty" class="mut" hidden>没有匹配的黑名单图片</div>' : '<div class="mut">暂无黑名单</div>') + '</section>',
+      '<details style="margin:12px 0"><summary>查看 SHA-256</summary><input readonly aria-label="黑名单哈希" value="'+esc(s.hash)+'" style="width:100%;font-family:monospace;font-size:12px;margin:8px 0"></details><div class="flexbar"><button class="btn primary" data-stk-unblock="'+esc(s.hash)+'">解除黑名单</button><button class="btn" data-stk-blocked-copy="'+esc(s.hash)+'">复制哈希</button></div></article>').join('')+'</div><div id="stkBlockedEmpty" class="mut" hidden>没有匹配的黑名单图片</div>' : '<div class="mut">暂无黑名单</div>') + '</div></details>',
     '<section class="card"><h2>表情包库 <span class="pill">' + items.length + ' 张</span></h2><input id="stkSearch" placeholder="搜索名称、标签、描述或哈希" style="width:100%;margin-bottom:16px">',
     items.length ? ('<div style="display:flex;flex-wrap:wrap;gap:12px">' + cards + '</div>') : '<div class="mut">还没有表情包，先上传几张，或者打开上面的群聊学习。</div>',
     '</section>',
@@ -901,6 +963,9 @@ async function bind(){
   const checkUpdate=document.getElementById('checkUpdate');if(checkUpdate)checkUpdate.onclick=()=>refreshUpdates(true)
   if(page==='stickers'){
     stickerControlsDirty=false
+    document.querySelectorAll('[data-stkfold]').forEach(function(el){
+      el.addEventListener('toggle', function(){ stickerFold[el.dataset.stkfold] = el.open })
+    })
     document.querySelectorAll('[data-stk-detail]').forEach(function(el){
       el.addEventListener('toggle', function(){
         if (el.open) stickerCardOpen.add(String(el.dataset.stkDetail))
@@ -999,6 +1064,13 @@ async function bind(){
     catch(e){ toast('自检失败：' + e.message, true) }
     finally { runSelfcheck.disabled = false }
   }
+  document.querySelectorAll('[data-mrange]').forEach(function(b){
+    b.onclick = async function(){
+      metricsRange = Number(b.dataset.mrange) || 7
+      metricsInfo = (await api('/api/metrics?days=' + metricsRange).catch(function(){ return { items: [] } })).items || []
+      render()
+    }
+  })
   document.querySelectorAll('[data-act]').forEach(b => b.onclick = async () => {
     const act = b.dataset.act
     if (act === 'summary') { await doSummary(); return }
@@ -1786,7 +1858,7 @@ async function load(){
     webSearchInfo = await api('/api/websearch').catch(function(){ return {} })
     backupInfo = await api('/api/backups').catch(function(){ return { items: [], root: '' } })
     selfCheckInfo = await api('/api/selfcheck').catch(function(){ return null })
-    metricsInfo = (await api('/api/metrics?days=7').catch(function(){ return { items: [] } })).items || []
+    metricsInfo = (await api('/api/metrics?days=' + metricsRange).catch(function(){ return { items: [] } })).items || []
     updateSideStatus(s.bot)
     // 预取人格内容与附加说明
     for (const item of personas) {

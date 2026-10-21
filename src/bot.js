@@ -564,6 +564,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         }
         try {
           const { summary } = await webSearch(query)
+          try { metrics?.search?.() } catch {}
           logger.info(`[联网搜索] ${query.slice(0, 60)}`)
           answers.push({ id: call.id, text: String(summary).slice(0, 3000) })
         } catch (err) {
@@ -1080,6 +1081,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         }
       }
       if (!decision.reply) {
+        try { metrics?.skipped?.() } catch {}
         runtimeStats?.noteSkip?.()
         logger.debug(`忽略消息（${decision.reason}）id=${evt.message_id}`)
         return
@@ -1360,6 +1362,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
               if (evt.message_type === 'private') await onebot.sendPrivate(evt.user_id, segments)
               else await onebot.sendGroup(evt.group_id, segments)
               logger.info(`[表情包] 发送「${item.name}」到 ${evt.message_type === 'private' ? '私聊' : '群 ' + evt.group_id}`)
+              try { metrics?.sticker?.() } catch {}
               if (record) { record += '\n[表情包]' } else { record = '[表情包]' }
               if (typeof replyStickers.noteUsage === 'function') replyStickers.noteUsage(item.id, sentText || parsed.text)
             } catch (err) {
@@ -1377,6 +1380,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         runtimeStats?.noteReply?.(key)
         const decoTag = /🍥/u.test(record) ? (hasDecoration(record.replace(/🍥/gu, '')) ? '（🍥+颜文字）' : '（🍥）') : hasDecoration(record) ? '（颜文字）' : '（纯文字）'
         logger.info(`[耗时] 模型生成 ${(thinkMs / 1000).toFixed(1)}s`)
+        try { metrics?.llm?.(thinkMs) } catch {}
         logger.info(`[已回复]${finalLines.length > 1 ? `（${finalLines.length} 行分条）` : ''}${decoTag} ${senderName}：${record.replace(/\n/g, ' ⏎ ').slice(0, 60)}`)
         try { metrics?.replied?.() } catch {}
       } catch (err) {

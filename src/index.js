@@ -257,6 +257,11 @@ const backupService = createBackup({ config, logger })
 const notifier = createNotifier({ config, onebot, logger, file: path.join(config.dataDir, 'notifications.json') })
 const selfCheck = createSelfCheck({ config, onebot, backup: backupService, logger })
 const metricsService = createMetrics({ file: path.join(config.dataDir, 'metrics.json'), logger })
+// 所有 logger.error 都计入当天错误数（用于失败率曲线）
+{
+  const rawError = logger.error.bind(logger)
+  logger.error = (...args) => { try { metricsService.error() } catch {} rawError(...args) }
+}
 const sharedImageCache = config.dataDir && config.visionCacheEnabled !== false ? createImageCache({
   dir: path.join(config.dataDir, 'image-cache'), maxBytes: config.visionCacheMaxBytes,
   maxEntries: config.visionCacheMaxEntries, maxImageBytes: config.visionMaxImageBytes,
