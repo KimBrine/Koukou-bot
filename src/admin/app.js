@@ -65,6 +65,7 @@ let stickerCardOpen = new Set()
 let apiCardsOpen = { model: false, vision: false, search: false }
 let backupInfo = { items: [], root: '' }
 let selfCheckInfo = null
+let metricsInfo = []
 let customCommands = []
 let commandBuiltins = []
 let pokeDiagnostics = {}
@@ -227,7 +228,7 @@ function pageOverview(){
     '<div class="mut" style="margin-top:8px">当前管理员：' + (admins.length ? admins.map(esc).join('、') : '未配置（群总结等沿用公开范围；清除记忆须显式配置管理员）') + '</div>',
     '</section>'
   ].join('')
-    return quickCard + adminCard + versionCard() + selfCheckCard() + `
+    return quickCard + adminCard + versionCard() + metricsCard() + selfCheckCard() + `
   <div class="hero"><span class="hero-status">${dot(b.online === true)} ${accountStatusText(b)}</span>
     <h1>机器人工作台</h1><div class="sub"><span id="updatedAt">${new Date().toLocaleTimeString('zh-CN',{hour12:false})}</span> 更新 · 集中管理运行状态与操作</div></div>
   <div class="grid g3">${cards.map(([k,v,s]) => `<div class="card"><h3>${k}</h3><div class="kpi">${v}</div><div class="note">${s||''}</div></div>`).join('')}</div>
@@ -750,6 +751,23 @@ function visionCard(){
     '</details>',
     '</div></details>'
   ].join('')
+}
+function metricsCard(){
+  const list = metricsInfo || []
+  const max = Math.max(1, ...list.map(function(d){ return Math.max(d.received || 0, d.replied || 0) }))
+  const w = 560, h = 150, bw = w / Math.max(1, list.length)
+  const bars = list.map(function(d, i){
+    const rh = (d.received || 0) / max * (h - 30)
+    const ph = (d.replied || 0) / max * (h - 30)
+    return '<g><rect x="' + (i * bw + bw * 0.12) + '" y="' + (h - 12 - rh) + '" width="' + (bw * 0.34) + '" height="' + rh + '" fill="#3b6ea5" rx="3"></rect>' +
+      '<rect x="' + (i * bw + bw * 0.52) + '" y="' + (h - 12 - ph) + '" width="' + (bw * 0.34) + '" height="' + ph + '" fill="#4aa3a3" rx="3"></rect>' +
+      '<text x="' + (i * bw + bw / 2) + '" y="' + (h + 2) + '" font-size="10" text-anchor="middle" fill="#9aabc0">' + esc(d.date.slice(5)) + '</text></g>'
+  }).join('')
+  const totalR = list.reduce(function(n, d){ return n + (d.received || 0) }, 0)
+  const totalP = list.reduce(function(n, d){ return n + (d.replied || 0) }, 0)
+  return '<section class="card"><h2>最近 ' + list.length + ' 天</h2><div class="note">蓝 = 收到消息，青 = 已回复</div>' +
+    '<svg viewBox="0 0 ' + w + ' ' + (h + 8) + '" style="width:100%;height:auto;margin-top:8px">' + bars + '</svg>' +
+    '<div class="mut">合计：收到 ' + totalR + ' 条 · 回复 ' + totalP + ' 条</div></section>'
 }
 function selfCheckCard(){
   const info = selfCheckInfo
@@ -1742,6 +1760,7 @@ async function load(){
     webSearchInfo = await api('/api/websearch').catch(function(){ return {} })
     backupInfo = await api('/api/backups').catch(function(){ return { items: [], root: '' } })
     selfCheckInfo = await api('/api/selfcheck').catch(function(){ return null })
+    metricsInfo = (await api('/api/metrics?days=7').catch(function(){ return { items: [] } })).items || []
     updateSideStatus(s.bot)
     // 预取人格内容与附加说明
     for (const item of personas) {

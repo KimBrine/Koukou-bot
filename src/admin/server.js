@@ -217,7 +217,7 @@ function validateGroupConfig(key, value) {
   }
 }
 
-export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, quietGreetings, personaGreetings, bot, customCommands, commandCenter, llm, stickers, stickerTagLLM, updateChecker=createUpdateChecker({currentVersion:APP_VERSION}), switchVision, visionProviders, restartBot, webSearch, switchWebSearch, backup, selfcheck }) {
+export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, quietGreetings, personaGreetings, bot, customCommands, commandCenter, llm, stickers, stickerTagLLM, updateChecker=createUpdateChecker({currentVersion:APP_VERSION}), switchVision, visionProviders, restartBot, webSearch, switchWebSearch, backup, selfcheck, metrics }) {
   // 本实例自己的 .env（并行跑两个实例时，写死 rootDir\.env 会改到另一个实例的配置上）
   const envFile = config.envFile || path.join(config.rootDir, '.env')
   const logFile = path.join(config.logDir || path.join(config.rootDir, 'logs'), 'bot.log')
@@ -518,6 +518,10 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         hasKey: Boolean(config.deepseekApiKey),
       },
     }),
+    'GET /api/metrics': async (query) => {
+      const days = Math.max(1, Math.min(30, Number(query && query.days) || 7))
+      return { days, items: metrics ? metrics.snapshot(days) : [] }
+    },
     'GET /api/backups': async () => ({ items: backup ? backup.list().map((x) => ({ name: x.name, size: x.size })) : [], root: backup ? backup.root : '' }),
     'GET /api/memory-export': async () => {
       const readJson = (file) => { try { return JSON.parse(readFileSync(file, 'utf8')) } catch { return {} } }

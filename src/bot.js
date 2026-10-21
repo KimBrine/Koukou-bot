@@ -298,7 +298,7 @@ const SEARCH_TOOLS = [{
   },
 }]
 
-export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, commandCenter, longMemory, stickers = null, stickerLearner = null, musicSearch = searchSong, rand = Math.random }) {
+export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, commandCenter, longMemory, stickers = null, stickerLearner = null, musicSearch = searchSong, rand = Math.random, metrics = null }) {
   const imageCache = sharedImageCache ?? (config.dataDir && config.visionCacheEnabled !== false ? createImageCache({
     dir: path.join(config.dataDir, 'image-cache'),
     maxBytes: config.visionCacheMaxBytes,
@@ -692,6 +692,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
     flush() { autoPlusOne.flush() },
 
     async handleMessage(evt) {
+      try { metrics?.received?.() } catch {}
       const personaRevision = config.personaRevision || 0
       const conversationKey = evt.message_type === 'private' ? `p${evt.user_id}` : `g${evt.group_id}`
       let memoryRevision = memory.version?.(conversationKey)
@@ -1377,6 +1378,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         const decoTag = /🍥/u.test(record) ? (hasDecoration(record.replace(/🍥/gu, '')) ? '（🍥+颜文字）' : '（🍥）') : hasDecoration(record) ? '（颜文字）' : '（纯文字）'
         logger.info(`[耗时] 模型生成 ${(thinkMs / 1000).toFixed(1)}s`)
         logger.info(`[已回复]${finalLines.length > 1 ? `（${finalLines.length} 行分条）` : ''}${decoTag} ${senderName}：${record.replace(/\n/g, ' ⏎ ').slice(0, 60)}`)
+        try { metrics?.replied?.() } catch {}
       } catch (err) {
         if (!samePersona()) return
         logger.error(`回复生成失败：${err.message}`)

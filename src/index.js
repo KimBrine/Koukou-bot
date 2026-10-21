@@ -18,6 +18,7 @@ import { createWebSearch } from './search.js'
 import { createBackup } from './backup.js'
 import { createSelfCheck } from './selfcheck.js'
 import { createNotifier } from './notify.js'
+import { createMetrics } from './metrics.js'
 import { loadPokeReplies, createPokeReplier } from './pokeReplies.js'
 import { createLongMemory } from './longMemory.js'
 import { createCustomCommands } from './customCommands.js'
@@ -255,6 +256,7 @@ const onebot = new OneBotClient({ url: wsUrl, logger, probeUserId: config.idChec
 const backupService = createBackup({ config, logger })
 const notifier = createNotifier({ config, onebot, logger, file: path.join(config.dataDir, 'notifications.json') })
 const selfCheck = createSelfCheck({ config, onebot, backup: backupService, logger })
+const metricsService = createMetrics({ file: path.join(config.dataDir, 'metrics.json'), logger })
 const sharedImageCache = config.dataDir && config.visionCacheEnabled !== false ? createImageCache({
   dir: path.join(config.dataDir, 'image-cache'), maxBytes: config.visionCacheMaxBytes,
   maxEntries: config.visionCacheMaxEntries, maxImageBytes: config.visionMaxImageBytes,
@@ -417,7 +419,8 @@ const runtimeStats = {
   },
 }
 
-const bot = createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt: systemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, commandCenter, longMemory, stickers, stickerLearner })
+const bot = createBot({
+    metrics: metricsService, config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt: systemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, commandCenter, longMemory, stickers, stickerLearner })
 
 // 固定语库调度不使用模型；语库与人格正文绑定，发送状态与迁移语库分开保存。
 const personaGreetings=createPersonaGreetingLibrary({file:path.join(config.dataDir,'persona-greetings.json'),logger})
@@ -449,6 +452,7 @@ if (config.adminEnabled) {
     webSearch,
     switchWebSearch: (patch) => webSearch.setOptions(patch),
     backup: backupService,
+    metrics: metricsService,
     selfcheck: selfCheck,
     visionProviders,
     restartBot: () => {
