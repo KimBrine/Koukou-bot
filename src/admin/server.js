@@ -1536,7 +1536,8 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       // 机器人常以最高权限运行，提权进程直接 spawn explorer 不会在用户桌面开窗。
       // 改走普通权限的计划任务 KoukouOpenPath：它读 data/open-path.txt 再打开。
       try {
-        writeFileSync(path.join(config.dataDir, 'open-path.txt'), target, 'utf8')
+        // UTF-16LE + BOM，VBS 用 TristateTrue 读，中文路径不会乱码
+        writeFileSync(path.join(config.dataDir, 'open-path.txt'), '\uFEFF' + target, 'utf16le')
       } catch (err) { logger?.warn?.('[控制台] 写入打开路径失败：' + err.message) }
       const viaTask = await new Promise((resolve) => {
         execFile('schtasks.exe', ['/Run', '/TN', 'KoukouOpenPath'], { windowsHide: true, timeout: 8000 }, (err, stdout, stderr) => {
