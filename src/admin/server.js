@@ -1463,7 +1463,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         '2. 文件开头写元数据注释：',
         '   # name: 中文名',
         '   # desc: 一句话说明',
-        '   # usage: /py 脚本名 参数',
+        '   # usage: /py 脚本名 参数（脚本名不带 .py）',
         '   # admin: true',
         '   # cmd: 用法 | 说明（每个子功能一行，按需要写若干行）',
         '3. 不读写系统目录、不执行 shell、不读环境变量里的密钥、不做与功能无关的网络请求。',
