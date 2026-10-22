@@ -77,6 +77,30 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
     const id = base.replace(/\.py$/i, '')
     return list().find((x) => x.id === id) || null
   }
+  const SETTINGS_FILE = path.join(dir, 'settings.json')
+  function getSettings() {
+    let data = {}
+    try { data = JSON.parse(readFileSync(SETTINGS_FILE, 'utf8')) || {} } catch {}
+    const n = Number(data.recallMinutes)
+    return { recallMinutes: Number.isFinite(n) ? Math.min(120, Math.max(1, Math.round(n))) : 5 }
+  }
+  function setSettings(patch) {
+    const next = getSettings()
+    if (patch && patch.recallMinutes !== undefined) {
+      const n = Number(patch.recallMinutes)
+      if (!Number.isFinite(n) || n < 1 || n > 120) throw new Error('撤回分钟数需在 1~120 之间')
+      next.recallMinutes = Math.round(n)
+    }
+    try { mkdirSync(dir, { recursive: true }); writeFileSync(SETTINGS_FILE, JSON.stringify(next, null, 1), 'utf8') } catch {}
+    return next
+  }
+  function readScript(id) {
+    const file = String(id || '').replace(/\.py$/i, '') + '.py'
+    if (!NAME_RE.test(file)) throw new Error('脚本名无效')
+    const full = path.join(dir, file)
+    if (!existsSync(full)) throw new Error('脚本不存在：' + file)
+    return readFileSync(full, 'utf8')
+  }
   const DISABLED_FILE = path.join(dir, 'disabled.json')
   function readDisabled() {
     try {
@@ -126,5 +150,5 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
     const text = lines.join('\n')
     return text.length > limit ? text.slice(0, limit - 12) + '\n…（已截断）' : text
   }
-  return { list, run, importScript, remove, helpText, isEnabled, setEnabled, dir }
+  return { list, run, importScript, remove, helpText, isEnabled, setEnabled, getSettings, setSettings, readScript, dir }
 }

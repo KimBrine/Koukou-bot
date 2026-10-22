@@ -538,7 +538,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     },
     'GET /api/errors': async () => ({ items: errors ? errors.list() : [] }),
     'GET /api/poke-replies': async () => ({ lines: pokeReplies && Array.isArray(pokeReplies.lines) ? [...pokeReplies.lines] : [] }),
-    'GET /api/python-scripts': async () => ({ dir: pythonPlugins ? pythonPlugins.dir : '', items: pythonPlugins ? pythonPlugins.list() : [] }),
+    'GET /api/python-scripts': async () => ({ dir: pythonPlugins ? pythonPlugins.dir : '', items: pythonPlugins ? pythonPlugins.list() : [], settings: pythonPlugins ? pythonPlugins.getSettings() : { recallMinutes: 5 } }),
     'GET /api/tasks': async () => ({
       backup: { last: backup ? backup.lastBackupAt() : 0, everyHours: 6 },
       summary: { enabled: Boolean(config.summaryEnabled), times: config.summaryTimes || '' },
@@ -1447,6 +1447,14 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         }} finally {job.running=false;logger?.info?.('[控制台] 表情包批量打标结束：'+job.done+' 张，跳过 '+job.skipped+' 张，失败 '+job.errors)}
       })().catch(err=>{job.running=false;job.error=err.message})
       return {ok:true,total:list.length}
+    },
+    async 'read-python-script'(payload) {
+      if (!pythonPlugins) throw new Error('Python 插件未启用')
+      return { content: pythonPlugins.readScript(payload && payload.id) }
+    },
+    async 'save-python-settings'(payload) {
+      if (!pythonPlugins) throw new Error('Python 插件未启用')
+      return { ok: true, settings: pythonPlugins.setSettings(payload || {}) }
     },
     async 'import-python-script'(payload) {
       if (!pythonPlugins) throw new Error('Python 插件未启用')

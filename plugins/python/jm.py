@@ -600,6 +600,16 @@ def cmd_card(raw, count_arg=''):
     return '@@CARD@@' + json.dumps(payload, ensure_ascii=False)
 
 
+def _plugin_settings():
+    """读控制台里配的默认值（plugins/python/settings.json），读不到就用 5 分钟。"""
+    try:
+        raw = json.loads((HERE / 'settings.json').read_text(encoding='utf-8'))
+        n = int(raw.get('recallMinutes', 5))
+        return max(1, min(120, n))
+    except Exception:
+        return 5
+
+
 def cmd_pack(raw='', minutes_arg=''):
     """把已下载的本子目录压成 zip，交给机器人以文件形式发送（可自动撤回）。"""
     import zipfile
@@ -624,10 +634,14 @@ def cmd_pack(raw='', minutes_arg=''):
             return '下载目录里还没有本子。'
         target = max(dirs, key=lambda p: p.stat().st_mtime)
 
-    try:
-        minutes = int(str(minutes_arg).strip() or 5)
-    except ValueError:
-        minutes = 5
+    arg = (minutes_arg or '').strip()
+    if arg:
+        try:
+            minutes = int(arg)
+        except ValueError:
+            minutes = _plugin_settings()
+    else:
+        minutes = _plugin_settings()
     minutes = max(1, min(minutes, 120))
 
     outdir = state_dir() / 'exports'
