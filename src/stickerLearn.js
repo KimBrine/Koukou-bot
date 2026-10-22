@@ -51,7 +51,7 @@ export function createStickerLearner({ config, logger, onebot, stickers, filterL
 
   async function learn({ images, chatKey, senderName, text }, selected) {
     const stickers = selected.store
-    const allowed = key => scopeAllowed(key) && selected.current()
+    const allowed = key => scopeAllowed(key) && selected.current() && stickers.learningAllowed?.() !== false
     if (!allowed(chatKey)) return null
     const tagClient=typeof tagLLM?.snapshot==='function'?tagLLM.snapshot():tagLLM
     if(typeof tagClient?.describeImages!=='function')return null
@@ -99,8 +99,9 @@ export function createStickerLearner({ config, logger, onebot, stickers, filterL
     if (!scopeAllowed(chatKey) || !stickers || !filterLLM?.describeImages || !tagLLM?.describeImages || !images?.length) return Promise.resolve(null)
     if (now() - windowStart >= 3600000) { windowStart = now(); used = 0 }
     if (used >= Math.max(0, config.stickerLearnPerHour || 0)) return Promise.resolve(null)
-    used++
     const selected = stickers.snapshot?.(chatKey) || { store: stickers, current: () => true }
+    if (selected.store.learningAllowed?.() === false) return Promise.resolve(null)
+    used++
     const task = queue.then(() => learn({ ...message, chatKey }, selected)).catch(err => {
       logger?.warn?.(`[表情包学习] 未收录：${err.message}`); return null
     })

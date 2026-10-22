@@ -28,7 +28,7 @@ const scripts = [
   'test-summary-unrestricted.mjs',
   'test-model-catalog.mjs', 'test-web-search.mjs', 'test-music.mjs', 'test-console-structure.mjs', 'test-memory-keys.mjs', 'test-private-whitelist.mjs',
   'test-persona-stickers.mjs', 'test-stickers.mjs', 'test-upload-updates.mjs',
-  'test-sticker-send.mjs',
+  'test-sticker-send.mjs', 'test-sticker-weight-cap.mjs',
   'test-sticker-learn.mjs',
   'test-summary-request-recovery.mjs',
   'test-quiet-greetings.mjs',
