@@ -14,10 +14,20 @@ if not "%BRANCH%"=="dev" (
   goto end
 )
 echo.
-echo [1/4] 当前改动：
+echo [1/4] 凭据与私密文件扫描...
+git config core.hooksPath .githooks >nul 2>&1
+call npm run check:repo
+if errorlevel 1 (
+  echo.
+  echo 扫描未通过：上面列出的文件不能提交，请先处理再发布。
+  goto fail
+)
+echo.
+echo [2/4] 当前改动：
 git status --short
 echo.
-git add -A
+rem 不用 git add -A：个人脚本（plugins/python）和运行数据绝不随发布进公开仓库
+git add -A -- . ":(exclude)plugins/python" ":(exclude)data" ":(exclude)logs"
 git diff --cached --quiet
 if not errorlevel 1 (
   echo 没有需要提交的改动。
@@ -29,7 +39,7 @@ set /p "msg=提交说明（直接回车用「更新」）: "
 if not defined msg set "msg=更新"
 
 echo.
-echo [2/4] 提交：%msg%
+echo [3/4] 提交：%msg%
 git commit -m "%msg%"
 if errorlevel 1 goto fail
 
@@ -38,7 +48,7 @@ echo.
 set "PUSH_REMOTE=origin"
 git remote get-url upstream >nul 2>&1
 if not errorlevel 1 set "PUSH_REMOTE=upstream"
-echo [3/4] 推送到 %PUSH_REMOTE%/dev（协作者渠道）...
+echo [4/4] 推送到 %PUSH_REMOTE%/dev（协作者渠道）...
 git push %PUSH_REMOTE% HEAD:dev
 if errorlevel 1 goto fail
 

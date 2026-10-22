@@ -255,6 +255,8 @@ const summaryLLM = new DeepSeekClient({
 const wsUrl = config.onebotAccessToken
   ? `${config.onebotWsUrl}${config.onebotWsUrl.includes('?') ? '&' : '?'}access_token=${encodeURIComponent(config.onebotAccessToken)}`
   : config.onebotWsUrl
+// 日志里不能出现完整 token
+const wsDisplay = wsUrl.replace(/([?&]access_token=)[^&]*/i, '$1***')
 
 const onebot = new OneBotClient({ url: wsUrl, logger, probeUserId: config.idCheckOperators?.[0] || config.dailyPingTarget })
 // 备份 / 自检 / 异常通知
@@ -654,7 +656,7 @@ logger.info(`总结转发资料：先筛选群内关联再展开嵌套记录，�
 logger.info(config.replyLengthMatch
   ? `回复长度自适应：跟着对方长度走｜最多 ${config.replyMaxLines} 行、单行 ≤${config.replyLineMaxChars} 字｜行间补句间隔 ${config.lineGapMinMs}-${config.lineGapMaxMs}ms｜多行时逐行分条发送`
   : '回复长度自适应已关闭（固定单行）')
-logger.info(`OneBot 地址：${wsUrl}`)
+logger.info(`OneBot 地址：${wsDisplay}`)
 logger.info(config.adminEnabled
   ? `机器人控制台：http://127.0.0.1:${config.adminPort}（双击桌面的「Koukou 控制台」即可打开）`
   : '机器人控制台未启用（ADMIN_ENABLED=0）')

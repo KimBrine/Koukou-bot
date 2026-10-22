@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { stripInternalReplyMetadata } from './replySanitizer.js'
-import { writeJsonAtomic } from './stateFile.js'
+import { writeJsonAtomic, quarantineCorrupt } from './stateFile.js'
 const validTime = value => Number.isFinite(value) && value > 0 && value <= 8.64e15
 const validReplyLength = value => Number.isFinite(value) && value >= 0
 // QQ 发送时间精度为秒；同一秒内按接收/插入顺序保持问答关系。
@@ -67,14 +67,27 @@ export class MemoryStore {
   }
 
   load() {
-    try {
-      if (existsSync(`${this.file}.reset.json`)) {
+    if (existsSync(`${this.file}.reset.json`)) {
+      try {
         const saved = JSON.parse(readFileSync(`${this.file}.reset.json`, 'utf8'))
         this.resetAt = Number(saved.resetAt) || 0
         this.keyResetAt = saved.keyResetAt || {}
+      } catch (err) {
+        const kept = quarantineCorrupt(`${this.file}.reset.json`)
+        this.logger.warn(`重置边界文件损坏${kept ? '，已另存为 ' + kept : ''}，按无边界继续：${err.message}`)
       }
-      if (!existsSync(this.file)) return
-      const data = JSON.parse(readFileSync(this.file, 'utf8'))
+    }
+    if (!existsSync(this.file)) return
+    let data
+    try {
+      data = JSON.parse(readFileSync(this.file, 'utf8'))
+    } catch (err) {
+      // 先留档再以空记忆开始：否则下一次 flush 会把损坏的原文件整个覆盖掉。
+      const kept = quarantineCorrupt(this.file)
+      this.logger.warn(`读取记忆文件失败${kept ? '，已另存为 ' + kept : ''}，将以空记忆开始：${err.message}`)
+      return
+    }
+    try {
       if (data && typeof data === 'object') {
         for (const [key, list] of Object.entries(data)) {
           if (Array.isArray(list)) {

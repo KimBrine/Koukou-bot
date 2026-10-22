@@ -100,9 +100,12 @@ const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&l
 const api = async (path, body) => {
   // 动作接口只接受 POST；没带 body 也自动按 POST + {} 发送，避免误发成 GET 变 404
   const action = typeof path === 'string' && path.startsWith('/api/action/')
-  const opt = body !== undefined || action ? { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body ?? {}) } : {}
+  const opt = body !== undefined || action
+    ? { method:'POST', headers:{'Content-Type':'application/json','X-Admin-Token':window.__ADMIN_TOKEN__||''}, body: JSON.stringify(body ?? {}) }
+    : {}
   const r = await fetch(path, opt)
   const j = await r.json().catch(() => ({}))
+  if (r.status === 401) throw new Error('控制台令牌已失效，请关闭页面重新打开控制台')
   if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status))
   return j
 }
@@ -862,8 +865,8 @@ function visionCard(){
     row('识图模型', '<div class="row" style="display:flex;gap:8px"><select id="vcModel" style="flex:1">' +
       '<option value="' + esc(currentModel) + '"' + (currentModel ? ' selected' : '') + '>' + esc(currentModel || '（先点自动检测）') + '</option>' +
       '</select><button class="btn" type="button" id="vcDetect">自动检测模型</button></div><div class="mut" id="vcDetectHint" style="font-size:12px;margin-top:4px">' + (isCustom ? '自定义：点检测拿型号列表' : '点「自动检测模型」拿型号列表') + '</div>'),
-    row('识图思考强度', '<select id="vcReasoning">' + [['none','关闭（默认）'],['low','低'],['high','高'],['max','最高']].map(function(x){ return '<option value="' + x[0] + '"' + (x[0] === (s.visionReasoning || 'none') ? ' selected' : '') + '>' + x[1] + '</option>' }).join('') + '</select><div class="mut">DeepSeek Flash 固定使用 max，识图预算至少2048（仍受总预算限制）；其他模型使用独立设置。</div>'),
-    row('识图 token 预算', '<input id="vcTokens" type="number" min="64" max="4000" value="' + (s.visionMaxTokens || 300) + '" style="width:120px"><div class="mut" style="font-size:12px;margin-top:3px">越大越能读复杂图，也越慢；默认 300</div>'),
+    row('识图思考强度', '<select id="vcReasoning">' + [['none','关闭（默认）'],['low','低'],['high','高'],['max','最高']].map(function(x){ return '<option value="' + x[0] + '"' + (x[0] === (s.rawVisionReasoning || s.visionReasoning || 'none') ? ' selected' : '') + '>' + x[1] + '</option>' }).join('') + '</select><div class="mut">DeepSeek Flash 固定使用 max，识图预算至少2048（仍受总预算限制）；其他模型使用独立设置。</div>'),
+    row('识图 token 预算', '<input id="vcTokens" type="number" min="64" max="4000" value="' + (s.rawVisionMaxTokens || s.visionMaxTokens || 300) + '" style="width:120px"><div class="mut" style="font-size:12px;margin-top:3px">越大越能读复杂图，也越慢；默认 300</div>'),
     row('表情包打标模型', '<select id="vcTag">' +
       '<option value="auto"' + sel('auto', tagProvider) + '>自动（有通义用通义，否则 DeepSeek）</option>' +
       '<option value="deepseek"' + sel('deepseek', tagProvider) + '>DeepSeek</option>' +

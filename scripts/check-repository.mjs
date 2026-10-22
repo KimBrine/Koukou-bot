@@ -34,7 +34,17 @@ const privateFiles = configPaths('koukou.privateContentFile').filter(file => exi
 const privateTexts = privateFiles.filter(file => /\.(txt|json|md)$/i.test(file)).map(file => readFileSync(file, 'utf8').trim()).filter(s => s.length >= 40)
 const privateHashes = new Set(privateFiles.map(file => createHash('sha256').update(readFileSync(file)).digest('hex')))
 const denied = /(?:^|\/)(?:data|logs|cache|node_modules|_removed|backups|work|private|vision-knowledge|training-data|reference-images)\/|^personas\/|(?:^|\/)\.env(?:$|\.(?!example$|napcat\.example$))|\.(?:log|jsonl|db|pem|key|lnk|bak)(?:$|[.-])|\.local\.(?:json|ps1|bat)$|\.old-account\./i
-const keyPatterns = [/\bsk-[A-Za-z0-9_-]{16,}\b/g, /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g, /-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----/g]
+const keyPatterns = [
+  /\bsk-[A-Za-z0-9_-]{16,}\b/g,
+  /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g,
+  /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g,
+  /-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----/g,
+  // 非 sk- 形态的国产服务商密钥
+  /\bbce-v3\/[A-Za-z0-9+/=]{16,}/g,
+  /\bALTAK-[A-Za-z0-9]{8,}/g,
+  // 个人机器上的绝对路径（会暴露用户名与目录结构）
+  /[A-Za-z]:\\Users\\[^\\\s"']+/g,
+]
 for (const file of new Set(paths)) {
   if (denied.test(file)) { issues.push({ file, reason: 'Private/runtime/backup file is not allowed in Git' }); continue }
   const binary = staged || head ? execFileSync('git', ['show', `${head ? 'HEAD' : ''}:${file}`], { maxBuffer: 32 * 1024 * 1024 }) : readFileSync(path.join(root, file))

@@ -47,7 +47,10 @@ function parseEnvFile(filePath) {
 const env = { ...parseEnvFile(envFile), ...process.env }
 
 const num = (key, fallback) => {
-  const v = Number(env[key])
+  // 空值（`.env` 里写了 KEY= 但没填数）不能当 0：那会把限流、预算静默归零/砍半。
+  const raw = env[key]
+  if (raw === undefined || raw === null || String(raw).trim() === '') return fallback
+  const v = Number(raw)
   return Number.isFinite(v) ? v : fallback
 }
 
