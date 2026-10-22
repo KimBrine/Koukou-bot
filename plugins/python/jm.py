@@ -47,6 +47,19 @@ CONFIG_NAME = 'option.yml'
 LOG_TAIL = 8
 IMG_EXT = ('.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.avif')
 
+
+def _force_utf8_stdio():
+    """机器人以管道方式调用 Python 时，Windows 默认用 GBK 输出，emoji 会直接抛
+    UnicodeEncodeError。这里强制 UTF-8，且用 replace 兜底，宁可显示问号也不要整条失败。"""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding='utf-8', errors='replace')
+        except Exception:
+            pass
+
+
+_force_utf8_stdio()
+
 TEMPLATE = '''# jmcomic 配置（由 jm.py 初始化生成，可自由修改）
 # 下载路径：图片会落在 base_dir 下，按 rule 分子目录
 log: true
@@ -559,9 +572,11 @@ def submit(raw_id):
     else:
         kwargs['start_new_session'] = True
 
+    env = {**os.environ, 'PYTHONIOENCODING': 'utf-8', 'PYTHONUTF8': '1'}
     with open(_log_file(job_id), 'ab') as log:
         subprocess.Popen(cmd, cwd=str(HERE), stdin=subprocess.DEVNULL,
-                         stdout=log, stderr=subprocess.STDOUT, close_fds=True, **kwargs)
+                         stdout=log, stderr=subprocess.STDOUT, close_fds=True,
+                         env=env, **kwargs)
 
     label = '章节' if kind == 'photo' else '本子'
     return (f'已提交：{label} {jm_id}\n任务 {job_id}\n'
