@@ -1,6 +1,6 @@
 // Isolated filesystem and model doubles only: no QQ messages or paid requests.
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync, mkdirSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { createLongMemory } from '../src/longMemory.js'
@@ -62,6 +62,23 @@ try {
   assert.throws(() => backup.queueRestore(second.name), /备份|找不到|人格|ENOENT/)
   config.activePersona = 'A'
 
+  // A process interruption during startup restoration rolls back before any service loads.
+  const interruptedDir=path.join(root,'interrupted');mkdirSync(interruptedDir)
+  const interruptedConfig={dataDir:interruptedDir,activePersona:'A'}
+  writeFileSync(path.join(interruptedDir,'memory.json'),'{"old":[]}')
+  const interruptedBackup=createBackup({config:interruptedConfig,logger,now:()=>time})
+  const interruptedSource=interruptedBackup.run()
+  writeFileSync(path.join(interruptedDir,'memory.json'),'{"current":[]}')
+  interruptedBackup.queueRestore(interruptedSource.name)
+  const pendingFile=path.join(interruptedDir,'restore-pending.json'),job=JSON.parse(readFileSync(pendingFile))
+  const rollbackDir=path.join(interruptedDir,'config-backups',job.stage,'rollback');mkdirSync(rollbackDir)
+  writeFileSync(path.join(rollbackDir,'memory.json'),'{"current":[]}')
+  writeFileSync(path.join(interruptedDir,'memory.json'),'{"partlyApplied":[]}')
+  job.phase='applying';job.present=['memory.json'];writeFileSync(pendingFile,JSON.stringify(job))
+  assert.throws(()=>applyPendingRestore({config:interruptedConfig,logger}),/中断/)
+  assert.deepEqual(JSON.parse(readFileSync(path.join(interruptedDir,'memory.json'))),{current:[]})
+  assert.equal(JSON.parse(readFileSync(pendingFile)).phase,'failed')
+
   // Retagging uses model-compatible image data and preserves edits made during the request.
   const libraries = createPersonaStickers({ dir: path.join(dir, 'stickers'), config })
   const item = libraries.add({ name: '原名称', dataUrl: PNG }).item
@@ -122,9 +139,10 @@ try {
   change('B'); memory.push('g2', 'user', 'B的消息'); memory.flush()
   change('A')
   assert.equal(memory.get('g2').length, 0)
+  const switchingAt=Math.floor(Date.now()/1000)*1000
   change('B')
   assert.equal(memory.get('g2')[0].content, 'B的消息')
-  assert.ok(memory.cutoff('g2') >= Math.floor(Date.now() / 1000) * 1000)
+  assert.ok(memory.cutoff('g2') >= switchingAt)
   console.log('dev合并安全检查通过：二次压缩手动保护、备份唯一命名/保留、启动前还原、打标格式/编辑保护、人格隔离与相似图在途取消。')
 } finally {
   for (const store of stores) if (store.timer) clearTimeout(store.timer)
