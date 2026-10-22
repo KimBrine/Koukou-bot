@@ -23,6 +23,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const stamp = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 const UI_FILE = path.join(__dirname, 'ui.html')
 const APP_VERSION=JSON.parse(readFileSync(path.join(__dirname,'../../package.json'),'utf8')).version
+const NO_LOGIN_BACKEND = '当前没有可用的登录后端（LLBot 需要 webui_token.txt；NapCat 需要 NAPCAT_DIR 或 NAPCAT_WEBUI_URL + NAPCAT_WEBUI_TOKEN）'
 
 /**
  * 机器人控制台：一个只监听 127.0.0.1 的本地服务，界面由 Edge/Chrome 的 app 模式窗口打开。
@@ -221,12 +222,14 @@ function validateGroupConfig(key, value) {
   }
 }
 
-export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, quietGreetings, personaGreetings, bot, customCommands, commandCenter, llm, stickers, stickerTagLLM, updateChecker=createUpdateChecker({currentVersion:APP_VERSION}), switchVision, visionProviders, restartBot, webSearch, switchWebSearch, backup, selfcheck, metrics, errors, pokeReplies, pythonPlugins, llbotWebui }) {
+export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, quietGreetings, personaGreetings, bot, customCommands, commandCenter, llm, stickers, stickerTagLLM, updateChecker=createUpdateChecker({currentVersion:APP_VERSION}), switchVision, visionProviders, restartBot, webSearch, switchWebSearch, backup, selfcheck, metrics, errors, pokeReplies, pythonPlugins, llbotWebui, loginProvider }) {
   // 本实例自己的 .env（并行跑两个实例时，写死 rootDir\.env 会改到另一个实例的配置上）
   const envFile = config.envFile || path.join(config.rootDir, '.env')
   const logFile = path.join(config.logDir || path.join(config.rootDir, 'logs'), 'bot.log')
   const personaDir = config.personaDir || path.join(config.dataDir, 'personas')
   const dailyDir = path.join(config.dataDir, 'daily')
+  // QQ 登录后端：LLBot 或 NapCat，接口一致；老调用方只传 llbotWebui 也能用。
+  const qqLogin = loginProvider || llbotWebui
   // 控制台令牌：只注入到本机页面，页面发出的写请求必须带这个头。
   // 只监听 127.0.0.1 不等于安全——同机任何进程、任何本地网页都能直接打这些接口。
   const adminToken = randomBytes(16).toString('hex')
@@ -1685,23 +1688,24 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       logger?.info?.(`[控制台] 已重启 NapCat（${dir} / 任务 ${task}，先结束旧实例再启动新实例）`)
       return { ok: true, killed: 'old-instances-then-start', dir, task }
     },
-    // ===== QQ 登录（换号/扫码）：真正登录的是 LLBot，这里只是转发 =====
+    // ===== QQ 登录（换号/扫码）：真正登录的是 LLBot / NapCat，这里只是转发 =====
     async 'qq-login-state'() {
-      const st = llbotWebui?.status?.() || { available: false }
-      if (!st.available) return { ok: true, available: false, current: null, accounts: [], tried: st.tried || [] }
+      const st = qqLogin?.status?.() || { available: false }
+      if (!st.available) return { ok: true, available: false, provider: qqLogin?.name || '', current: null, accounts: [], tried: st.tried || [] }
       const [current, accounts] = await Promise.all([
-        llbotWebui.info(),
-        llbotWebui.accounts().catch(() => ({ LocalLoginInfoList: [] })),
+        qqLogin.info().catch(() => null),
+        qqLogin.accounts().catch(() => ({ LocalLoginInfoList: [] })),
       ])
       const list = (accounts?.LocalLoginInfoList || []).map((a) => ({
         uin: String(a.uin || ''),
         nick: String(a.nickName || a.nick || ''),
-        face: String(a.faceUrl || ''),
+        face: String(a.faceUrl || a.face || ''),
         current: String(a.uin || '') === String(current?.uin || ''),
       }))
       return {
         ok: true,
         available: true,
+        provider: qqLogin?.name || '',
         current: current ? { uin: String(current.uin || ''), nick: String(current.nick || ''), online: current.online === true } : null,
         accounts: list,
         baseUrl: st.baseUrl,
@@ -1709,23 +1713,35 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       }
     },
     async 'qq-login-qrcode'() {
-      if (!llbotWebui?.status?.().available) throw new Error('没找到 LLBot 的 WebUI 密码文件，请配置 LLBOT_WEBUI_TOKEN_FILE')
-      // 已经登录时 LLBot 不给二维码；先退出再取（前端顺序：qq-logout → 这里）
-      const qr = await llbotWebui.qrcode()
+      if (!qqLogin?.status?.().available) throw new Error(NO_LOGIN_BACKEND)
+      // 已经登录时后端不给二维码；先退出再取（前端顺序：qq-logout → 这里）
+      const qr = await qqLogin.qrcode()
       return { ok: true, ...qr }
     },
     async 'qq-switch-account'(payload) {
       const uin = String(payload?.uin || '').trim()
       if (!/^\d{5,12}$/.test(uin)) throw new Error('QQ 号无效')
-      if (!llbotWebui?.status?.().available) throw new Error('没找到 LLBot 的 WebUI 密码文件，请配置 LLBOT_WEBUI_TOKEN_FILE')
-      await llbotWebui.logout().catch((err) => logger?.warn?.('[QQ登录] 退出当前账号失败（可能本来未登录）：' + err.message))
-      await llbotWebui.quickLogin(uin)
-      logger?.info?.(`[QQ登录] 已切换到 QQ ${uin}`)
-      return { ok: true, uin }
+      if (!qqLogin?.status?.().available) throw new Error(NO_LOGIN_BACKEND)
+      await qqLogin.logout().catch((err) => logger?.warn?.('[QQ登录] 退出当前账号失败（可能本来未登录）：' + err.message))
+      await qqLogin.quickLogin(uin)
+      // 快速登录依赖本地加密登录态：退出过一次之后经常拉不起来，只会退化成扫码。
+      // 这里等一小会儿确认是否真的上线，没上线就明确让用户扫码，而不是"看起来成功了其实没登"。
+      let online = null
+      for (let i = 0; i < 6; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 1500))
+        const info = await qqLogin.info().catch(() => null)
+        if (info?.online) { online = info; break }
+      }
+      if (!online) {
+        logger?.warn?.(`[QQ登录] 快速登录 QQ ${uin} 未成功（登录态可能已失效，需要扫码）`)
+        return { ok: false, needQr: true, message: '快速登录没有成功：LLBot 的登录态可能已失效，请用「显示登录二维码」扫码登录' }
+      }
+      logger?.info?.(`[QQ登录] 已切换到 QQ ${uin}（${online.nick || ''}）`)
+      return { ok: true, uin, nick: online.nick || '' }
     },
     async 'qq-logout'() {
-      if (!llbotWebui?.status?.().available) throw new Error('没找到 LLBot 的 WebUI 密码文件，请配置 LLBOT_WEBUI_TOKEN_FILE')
-      await llbotWebui.logout()
+      if (!qqLogin?.status?.().available) throw new Error(NO_LOGIN_BACKEND)
+      await qqLogin.logout()
       logger?.info?.('[QQ登录] 已退出当前 QQ 账号（重新登录前机器人收不到消息）')
       return { ok: true }
     },

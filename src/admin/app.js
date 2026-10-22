@@ -1198,14 +1198,16 @@ async function loadQqLogin(){
   try {
     const s = await api('/api/action/qq-login-state')
     if (!s.available) {
-      body.innerHTML = '<span class="bad">没找到 LLBot 的 WebUI 密码文件</span><div class="mut" style="margin-top:6px">请在 .env 配置 LLBOT_WEBUI_TOKEN_FILE（LLBot 数据目录下的 webui_token.txt）' + (s.tried && s.tried.length ? '；已尝试：' + esc(s.tried.join('、')) : '') + '</div>'
+      body.innerHTML = '<span class="bad">没有可用的登录后端</span><div class="mut" style="margin-top:6px">LLBot 需要 webui_token.txt（LLBOT_WEBUI_TOKEN_FILE）；NapCat 需要 NAPCAT_DIR 或 NAPCAT_WEBUI_URL + NAPCAT_WEBUI_TOKEN' + (s.tried && s.tried.length ? '；已尝试：' + esc(s.tried.join('、')) : '') + '</div>'
       acc.textContent = '—'
       return
     }
     const c = s.current
-    body.innerHTML = c
-      ? `<div><strong>${esc(c.nick || '')}</strong>（QQ ${qqMask(c.uin)}）· ${c.online ? '<span class="ok">在线</span>' : '<span class="bad">离线</span>'}</div><div class="mut" style="margin-top:4px">LLBot：${esc(s.baseUrl || '')}</div>`
-      : '<div class="bad">当前没有登录任何 QQ</div>'
+    const backend = s.provider === 'napcat' ? 'NapCat' : (s.provider === 'llbot' ? 'LLBot' : '未配置')
+    body.innerHTML = (c
+      ? `<div><strong>${esc(c.nick || '')}</strong>（QQ ${qqMask(c.uin)}）· ${c.online ? '<span class="ok">在线</span>' : '<span class="bad">离线</span>'}</div>`
+      : '<div class="bad">当前没有登录任何 QQ</div>')
+      + `<div class="mut" style="margin-top:4px">登录后端：${esc(backend)}${s.baseUrl ? '（' + esc(s.baseUrl) + '）' : ''}</div>`
     acc.innerHTML = (s.accounts || []).length
       ? s.accounts.map(a => `<div class="flexbar" style="justify-content:space-between;align-items:center;gap:8px;margin:6px 0"><div>${a.face ? `<img src="${esc(a.face)}" alt="" style="width:24px;height:24px;border-radius:50%;vertical-align:middle;margin-right:6px">` : ''}${esc(a.nick || '')}（QQ ${qqMask(a.uin)}）${a.current ? ' · 当前' : ''}</div>${a.current ? '<span class="mut">使用中</span>' : `<button class="btn" data-qq-uin="${esc(a.uin)}">切换到它</button>`}</div>`).join('')
       : '<span class="mut">LLBot 里还没有保存过其他账号</span>'
@@ -1213,17 +1215,51 @@ async function loadQqLogin(){
     body.innerHTML = '<span class="bad">读取失败：' + esc(err.message) + '</span>'
   }
 }
-function startQqPoll(){
+function startQqPoll(opts = {}) {
   stopQqPoll()
+  const startedAt = Date.now()
+  const warnAfterMs = Number(opts.warnAfterMs) || 0
   let ticks = 0
   qqPollTimer = setInterval(async () => {
     ticks++
     if (ticks > 60) { stopQqPoll(); return }
     try {
       const s = await api('/api/action/qq-login-state')
-      if (s.current && s.current.online) { stopQqPoll(); toast('已登录：' + (s.current.nick || s.current.uin)); loadQqLogin() }
+      if (s.current && s.current.online) { stopQqPoll(); toast('已登录：' + (s.current.nick || s.current.uin)); loadQqLogin(); return }
+      if (warnAfterMs && Date.now() - startedAt > warnAfterMs) {
+        stopQqPoll()
+        if (opts.warnMessage) toast(opts.warnMessage, true)
+        loadQqLogin()
+      }
     } catch {}
   }, 3000)
+}
+
+// 账号按钮是异步渲染的，必须在 document 上做事件委托，否则点击没有反应
+async function switchQqAccount(uin) {
+  if (!uin) return
+  if (!await ask('切换到 QQ ' + uin + '？', '会先退出当前账号，再快速登录这个账号，期间机器人短暂离线。')) return
+  try {
+    toast('正在切换…')
+    const res = await api('/api/action/qq-switch-account', { uin })
+    if (res && res.needQr) {
+      toast(res.message || '快速登录没有成功，请用「显示登录二维码」扫码登录', true)
+      loadQqLogin()
+      return
+    }
+    startQqPoll({ warnAfterMs: 20000, warnMessage: '快速登录没有成功，请用「显示登录二维码」扫码登录' })
+    setTimeout(loadQqLogin, 1500)
+  } catch (err) {
+    toast(err.message, true)
+  }
+}
+// 结构测试的 vm 沙箱里没有 addEventListener，要先判一下
+if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
+  document.addEventListener('click', (e) => {
+    const el = e.target && e.target.closest ? e.target.closest('[data-qq-uin]') : null
+    if (!el || page !== 'login') return
+    switchQqAccount(el.dataset.qqUin)
+  })
 }
 
 function render(){
@@ -1273,16 +1309,6 @@ async function bind(){
         startQqPoll()
       } catch (err) { toast(err.message, true) }
     }
-    document.querySelectorAll('[data-qq-uin]').forEach(el => el.onclick = async () => {
-      const uin = el.dataset.qqUin
-      if (!await ask('切换到 QQ ' + uin + '？', '会先退出当前账号，再快速登录这个账号，期间机器人短暂离线。')) return
-      try {
-        toast('正在切换…')
-        await api('/api/action/qq-switch-account', { uin })
-        startQqPoll()
-        setTimeout(loadQqLogin, 1500)
-      } catch (err) { toast(err.message, true) }
-    })
     const qr = document.getElementById('qqQr')
     if (qr) qr.onclick = async () => {
       if (!await ask('退出当前账号并显示二维码？', '扫码登录前必须先退出当前账号，期间机器人离线。')) return

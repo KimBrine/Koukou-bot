@@ -49,6 +49,7 @@ export function createLlbotWebui({ baseUrl = 'http://127.0.0.1:3080', tokenFile 
   }
 
   return {
+    name: 'llbot',
     status,
     /** 当前登录账号；未登录时 LLBot 会报错，这里按"未登录"返回 null 而不是抛错 */
     async info() {
