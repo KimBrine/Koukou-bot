@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { keyToGroupId, keyToUserId } from '../chatSettings.js'
 import { activatePersona } from '../personaSwitch.js'
 import { applyConversationSettings, resetConversationMemory } from '../conversationSessions.js'
+import { openPathOnHost } from '../openPath.js'
 import { writeTextAtomic } from '../stateFile.js'
 import { createWebSearch } from '../search.js'
 import { renderReply } from '../customCommands.js'
@@ -1061,8 +1062,17 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       const { name, content } = payload
       if (!name) throw new Error('缺少人格名')
       mkdirSync(personaDir, { recursive: true })
-      writeFileSync(personaPath(name), String(content ?? ''))
-      return { ok: true }
+      const text = String(content ?? '')
+      if (config.activePersona === name && !text.trim()) throw new Error('当前人格正文不能为空')
+      writeTextAtomic(personaPath(name), text)
+      // 保存的就是当前在用的人格时，必须同步更新运行中的提示词，否则改了不生效。
+      if (config.activePersona === name && text.trim()) {
+        const result = activatePersona({ name, content: text.trim(), config, memory, longMemory, targetWatch,
+          persist: () => {} /* 同名保存不改变ACTIVE_PERSONA，无需重写.env */ })
+        logger?.info?.(`[控制台] 已更新当前人格「${name}」（${text.trim().length} 字），即时生效`)
+        return { ok: true, applied: true, persona: result.persona }
+      }
+      return { ok: true, applied: false }
     },
     async 'create-persona'(payload) {
       const { name, content } = payload
@@ -1522,6 +1532,18 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       if (!pythonPlugins) throw new Error('Python 插件未启用')
       pythonPlugins.remove(payload && payload.id)
       return { ok: true }
+    },
+    async 'open-python-folder'(payload) {
+      if (!pythonPlugins) throw new Error('Python 插件未启用')
+      const dir = pythonPlugins.dir
+      const id = String((payload && payload.id) || '').replace(/\.py$/i, '')
+      let target = dir
+      if (id) {
+        if (!/^[a-z0-9_-]{1,40}$/i.test(id)) throw new Error('脚本名无效')
+        target = path.join(dir, id + '.py')
+        if (!existsSync(target)) throw new Error('脚本不存在：' + id + '.py')
+      }
+      return openPathOnHost({rootDir:config.rootDir,target,select:Boolean(id)})
     },
     async 'save-poke-replies'(payload) {
       const raw = String((payload && payload.text) || '')

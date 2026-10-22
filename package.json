@@ -1,6 +1,6 @@
 {
   "name": "deepseek-qq-bot",
-  "version": "2.24.0",
+  "version": "2.25.0",
   "license": "GPL-3.0-only",
   "private": true,
   "type": "module",

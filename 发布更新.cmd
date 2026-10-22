@@ -35,8 +35,11 @@ if errorlevel 1 goto fail
 
 :push
 echo.
-echo [3/4] 推送到自己的仓库 origin ...
-git push origin HEAD:dev
+set "PUSH_REMOTE=origin"
+git remote get-url upstream >nul 2>&1
+if not errorlevel 1 set "PUSH_REMOTE=upstream"
+echo [3/4] 推送到 %PUSH_REMOTE%/dev（协作者渠道）...
+git push %PUSH_REMOTE% HEAD:dev
 if errorlevel 1 goto fail
 
 :done

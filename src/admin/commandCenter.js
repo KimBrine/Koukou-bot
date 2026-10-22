@@ -69,7 +69,16 @@ window.CommandCenterUI=(()=>{
     if(g('ccNew'))g('ccNew').onclick=reset
     document.querySelectorAll('[data-cc-edit]').forEach(b=>b.onclick=()=>{draft=structuredClone(state.custom.find(c=>c.id===b.dataset.ccEdit));builtin=false;redraw()})
     document.querySelectorAll('[data-cc-builtin]').forEach(b=>b.onclick=()=>{draft=structuredClone(state.builtins.find(c=>c.id===b.dataset.ccBuiltin));builtin=true;redraw()})
-    for(const type of ['toggle','toggle-builtin'])document.querySelectorAll(`[data-cc-${type}]`).forEach(b=>b.onclick=safely(async()=>{const id=b.getAttribute('data-cc-'+type),isBuiltin=type==='toggle-builtin',c=(isBuiltin?state.builtins:state.custom).find(c=>c.id===id);await api('/api/action/'+(isBuiltin?'save-builtin-command':'save-custom-command'),{...c,enabled:!c.enabled});await load();toast('已更新开关')}))
+    for(const type of ['toggle','toggle-builtin'])document.querySelectorAll(`[data-cc-${type}]`).forEach(b=>b.onclick=safely(async()=>{
+      const id=b.getAttribute('data-cc-'+type),isBuiltin=type==='toggle-builtin',c=(isBuiltin?state.builtins:state.custom).find(x=>x.id===id)
+      if(!c)return
+      await api('/api/action/'+(isBuiltin?'save-builtin-command':'save-custom-command'),{...c,enabled:!c.enabled})
+      c.enabled=!c.enabled
+      const item=b.closest('.cc-item')
+      if(item){const pill=item.querySelector('.pill');if(pill)pill.textContent=c.enabled?'已启用':'已关闭'}
+      b.textContent=c.enabled?'关闭':'启用'
+      toast('已更新开关')
+    }))
     document.querySelectorAll('[data-cc-delete]').forEach(b=>b.onclick=safely(async()=>{if(!await ask('删除这条指令？','可以先导出保存一份。','删除'))return;await api('/api/action/delete-custom-command',{id:b.dataset.ccDelete});await load();toast('已删除')}))
     if(g('ccScope'))g('ccScope').onchange=()=>{g('ccGroupsBox').hidden=g('ccScope').value!=='group'}
     if(g('ccMode'))g('ccMode').onchange=()=>{const next=g('ccMode').value,previous=draft.responseMode||'fixed';g('ccMode').value=previous;draft=collect();draft.responseMode=next;redraw()}

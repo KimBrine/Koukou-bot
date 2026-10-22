@@ -72,6 +72,11 @@ let errorInfo = []
 let pokeReplies = []
 let pythonScripts = []
 let pythonSettings = { recallSeconds: 300 }
+let pythonDir = ''
+let pyOpen = { card: false, rows: [], editors: [] }
+const pyDrafts = Object.create(null)
+const detailOpenByPage = new Map()
+let renderedPage = null
 let tasksInfo = null
 let metricsInfo = []
 let metricsRange = 7
@@ -622,14 +627,15 @@ function pageLogs(){
   <div class="logbox mono" id="logBot" style="max-height:420px"></div>`
 }
 function pokeCorpusCard(){
-  return '<section class="card"><h2>拍一拍语库 <span class="pill">' + pokeReplies.length + ' 条</span></h2>' +
+  return '<details class="card"><summary><b>拍一拍语库</b> <span class="pill">' + pokeReplies.length + ' 条</span> <span class="mut">点开编辑语料</span></summary>' +
     '<div class="note">一行一条；<code>#</code> 开头的行不生效；<code>{name}</code> 会替换成拍你的人。保存后立即生效，随机抽取且不会连续重复。</div>' +
     '<textarea id="pokeText" rows="10" style="width:100%;margin-top:8px">' + esc(pokeReplies.join('\n')) + '</textarea>' +
-    '<div class="flexbar"><button class="btn primary" id="pokeSave">保存语库</button><span class="mut" id="pokeHint"></span></div></section>'
+    '<div class="flexbar"><button class="btn primary" id="pokeSave">保存语库</button><span class="mut" id="pokeHint"></span></div></details>'
 }
 async function loadPythonScripts(){
   const r = await api('/api/python-scripts').catch(function(){ return { items: [] } })
   pythonScripts = r.items || []
+  pythonDir = r.dir || pythonDir
   if (r.settings) pythonSettings = r.settings
 }
 function pythonCard(){
@@ -637,7 +643,7 @@ function pythonCard(){
   const recall = (pythonSettings && pythonSettings.recallSeconds) || 300
   const rows = items.map(function(s){
     const id = esc(s.id)
-    return '<details class="frow"><summary><b>' + esc(s.name) + '</b> <span class="mut">/' + id + '</span>' +
+    return '<details class="frow" data-pyrow="' + id + '"' + (pyOpen.rows.indexOf(s.id) >= 0 ? ' open' : '') + '><summary><b>' + esc(s.name) + '</b> <span class="mut">/' + id + '</span>' +
       (s.enabled === false ? ' <span class="pill">已停用</span>' : '') + '</summary>' +
       '<div class="mut" style="margin:6px 0 4px">' + esc(s.description || '') + '</div>' +
       '<div class="mut" style="font-size:12px">用法：' + esc(s.usage || ('/py ' + s.id)) + '</div>' +
@@ -645,18 +651,20 @@ function pythonCard(){
         '<input data-pycmd="' + id + '" value="' + esc(s.command || s.id) + '" style="width:120px" maxlength="20">' +
         '<button class="btn sm" data-pycmdsave="' + id + '">保存调用名</button>' +
         '<span class="mut" style="font-size:12px">文件名 ' + id + '.py</span></div>' +
+      '<div class="flexbar" style="margin-top:6px;gap:6px;flex-wrap:wrap"><span class="mut" style="font-size:12px;word-break:break-all">' + esc(s.path || '') + '</span><button class="btn sm" data-pycopy="' + esc(s.path || '') + '">复制</button><button class="btn sm" data-pyopen="' + id + '">定位文件</button></div>' +
       '<div class="flexbar" style="margin-top:8px">' +
         '<button class="btn sm" data-pyedit="' + id + '">编辑内容</button>' +
         '<button class="btn sm" data-pytoggle="' + id + '" data-next="' + (s.enabled === false ? '1' : '0') + '">' + (s.enabled === false ? '启用' : '停用') + '</button>' +
         '<button class="btn sm" data-pydel="' + id + '">删除</button>' +
       '</div>' +
-      '<div id="pyEditor-' + id + '" style="display:none;margin-top:8px">' +
-        '<textarea data-pysrc="' + id + '" spellcheck="false" style="width:100%;min-height:240px;font-family:Consolas,monospace;font-size:12px"></textarea>' +
+      '<div id="pyEditor-' + id + '" style="display:' + (pyOpen.editors.indexOf(s.id) >= 0 ? '' : 'none') + ';margin-top:8px">' +
+        '<textarea data-pysrc="' + id + '" spellcheck="false" style="width:100%;min-height:240px;font-family:Consolas,monospace;font-size:12px">' + esc(pyDrafts[s.id] ?? '') + '</textarea>' +
         '<div class="flexbar" style="margin-top:6px"><button class="btn primary sm" data-pysave="' + id + '">保存</button><button class="btn sm" data-pycancel="' + id + '">取消</button><span class="mut" id="pyMsg-' + id + '"></span></div>' +
       '</div></details>'
   }).join('')
-  return '<details class="card"><summary><b>Python 脚本</b> <span class="pill">' + items.length + ' 个</span> <span class="mut">点开管理、编辑内容</span></summary>' +
+  return '<details class="card"' + (pyOpen.card ? ' open' : '') + ' data-pycard><summary><b>Python 脚本</b> <span class="pill">' + items.length + ' 个</span> <span class="mut">点开管理、编辑内容</span></summary>' +
     '<div class="note">放在 plugins/python 下的白名单脚本，用 <code>/py 脚本名 参数</code> 运行，默认仅管理员。脚本以机器人权限执行，只导入可信文件。保存会留一份 .bak。</div>' +
+    '<div class="flexbar" style="margin:8px 0;gap:8px;flex-wrap:wrap"><span class="mut">脚本目录</span><code style="font-size:12px;word-break:break-all">' + esc(pythonDir || 'plugins/python') + '</code><button class="btn sm" data-pycopy="' + esc(pythonDir || '') + '">复制路径</button><button class="btn sm" data-pyopen="">打开文件夹</button></div>' +
     '<div class="flexbar" style="margin:10px 0"><label class="mut">打包默认撤回（秒）</label><input id="pyRecall" type="number" min="5" max="7200" step="5" value="' + recall + '" style="width:90px"><button class="btn sm" id="pyRecallSave">保存</button><span class="mut" id="pyRecallHint"></span></div>' +
     (rows || '<div class="mut">还没有脚本</div>') +
     '<details class="frow" style="margin-top:10px"><summary><b>＋ 新建脚本</b> <span class="mut">自己写，或让 AI 起草</span></summary>' +
@@ -667,6 +675,18 @@ function pythonCard(){
       '<div class="flexbar" style="margin-top:6px"><button class="btn primary sm" id="pyNewSave">保存脚本</button><button class="btn sm" id="pyNewClear">清空</button><span class="mut" id="pyNewHint"></span></div>' +
     '</details>' +
     '<div class="flexbar" style="margin-top:10px"><label class="btn" style="cursor:pointer">导入 .py<input type="file" id="pyImport" accept=".py" style="display:none"></label><span class="mut" id="pyHint"></span></div></details>'
+}
+function syncPyOpen(){
+  const card = document.querySelector('details[data-pycard]')
+  if (!card) return
+  pyOpen.card = card.open
+  const rows = []
+  document.querySelectorAll('details[data-pyrow]').forEach(function(d){ if (d.open) rows.push(d.dataset.pyrow) })
+  pyOpen.rows = rows
+  const eds = []
+  document.querySelectorAll('[id^="pyEditor-"]').forEach(function(el){ if (el.style.display !== 'none') eds.push(el.id.replace('pyEditor-', '')) })
+  pyOpen.editors = eds
+  document.querySelectorAll('[data-pysrc]').forEach(el=>{const box=el.closest('[id^="pyEditor-"]');if(box?.style.display !== 'none' && (pyDrafts[el.dataset.pysrc] !== undefined || el.value))pyDrafts[el.dataset.pysrc]=el.value})
 }
 function pageCommands(){ return CommandCenterUI.render({custom:customCommands,builtins:commandBuiltins,poke:pokeDiagnostics,groups:joinedGroups}) + commandTestCard() + pokeCorpusCard() + pythonCard() }
 // ── 渲染 ───────────────────────────────────────────────
@@ -946,6 +966,8 @@ function pageMetrics(){
   const list = metricsInfo || []
   const sum = function(k){ return list.reduce(function(n, d){ return n + (Number(d[k]) || 0) }, 0) }
   const received = sum('received'), replied = sum('replied'), errors = sum('errors')
+  const skippedSum = sum('skipped')
+  const other = received - replied - skippedSum
   const rate = received ? Math.round(replied / received * 100) : 0
   const fail = received ? Math.round(errors / received * 100) : 0
   const avg = sum('llmCount') ? (sum('llmMs') / sum('llmCount') / 1000).toFixed(1) : '—'
@@ -961,10 +983,12 @@ function pageMetrics(){
       '<div class="card"><h3>错误</h3><div class="kpi">' + errors + '</div><div class="note">占收到的 ' + fail + '%</div></div>' +
       '<div class="card"><h3>表情包</h3><div class="kpi">' + sum('stickers') + '</div><div class="note">发送次数</div></div>' +
       '<div class="card"><h3>联网搜索</h3><div class="kpi">' + sum('searches') + '</div><div class="note">调用次数</div></div>' +
-      '<div class="card"><h3>跳过未回复</h3><div class="kpi">' + sum('skipped') + '</div><div class="note">跳过率 ' + (received ? Math.round(sum('skipped') / received * 100) : 0) + '%</div></div>' +
+      '<div class="card"><h3>跳过未回复</h3><div class="kpi">' + skippedSum + '</div><div class="note">跳过率 ' + (received ? Math.round(skippedSum / received * 100) : 0) + '%</div></div>' +
+      '<div class="card"><h3>统计差额</h3><div class="kpi">' + other + '</div><div class="note">收到 − 回复 − 跳过，可为负值</div></div>' +
       '<div class="card"><h3>模型调用</h3><div class="kpi">' + sum('llmCount') + '</div><div class="note">生成次数</div></div>' +
       '<div class="card"><h3>平均生成耗时</h3><div class="kpi">' + avg + 's</div><div class="note">模型端到端</div></div>' +
     '</div>' +
+    '<div class="note" style="margin:-4px 0 14px">口径：收到、回复和跳过统计的事件范围不同。统计差额 = 收到 − 回复 − 跳过，只是算术差额，不代表已经逐条归类的“其他消息”；主动推送、拍一拍和跨日处理等会使差额为负值，回复/收到的比值也可能超过100%。</div>' +
     chartCard('消息与回复', svgChart(list, [
       { name: '收到', color: '#3b6ea5', get: function(d){ return d.received } },
       { name: '已回复', color: '#4aa3a3', get: function(d){ return d.replied } }
@@ -1110,8 +1134,42 @@ function pageStickers(){
     '<dialog id="stkPreviewDialog" style="max-width:90vw;max-height:90vh;background:var(--card,#15243a);color:inherit;border:1px solid #567;border-radius:16px;padding:20px"><h2 id="stkPreviewTitle"></h2><img id="stkPreviewImage" style="display:block;max-width:80vw;max-height:65vh;object-fit:contain" alt="表情包预览"><button class="btn" id="stkPreviewClose">关闭预览</button></dialog>'
   ].join('')
 }
+function detailKey(d){
+  for(const attr of ['id','data-pyrow','data-stk-detail','data-stkfold','data-apicard']){
+    const value=d.getAttribute(attr)
+    if(value)return attr+':'+value
+  }
+  const summary=d.querySelector('summary')
+  if(!summary)return ''
+  const title=summary.cloneNode(true)
+  title.querySelectorAll('.pill,.api-card-meta').forEach(el=>el.remove())
+  const trail=[];let node=d
+  while(node.parentElement){const parent=node.parentElement;trail.unshift(Array.prototype.indexOf.call(parent.children,node));node=parent;if(node.id==='main')break}
+  return String(title.textContent||'').replace(/\s+/g,'')+'@'+trail.join('.')
+}
+function captureOpenDetails(){
+  const out = []
+  document.querySelectorAll('#main details').forEach(function(d){
+    if (!d.open) return
+    const k = detailKey(d)
+    if (k) out.push(k)
+  })
+  return out
+}
+function restoreOpenDetails(list){
+  if (!list || !list.length) return
+  const want = new Set(list)
+  document.querySelectorAll('#main details').forEach(function(d){
+    const k = detailKey(d)
+    if (k && want.has(k)) d.open = true
+  })
+}
 function render(){
   const main = document.getElementById('main')
+  syncPyOpen()
+  if(renderedPage !== null)detailOpenByPage.set(renderedPage,captureOpenDetails())
+  const keepOpen = detailOpenByPage.get(page) || []
+  renderedPage = page
   let html = ''
   if (page === 'overview') html = pageOverview()
   else if (page === 'chats') html = pageChats()
@@ -1128,6 +1186,7 @@ function render(){
   else if (page === 'logs') html = pageLogs()
   else html = pageMemory()
   main.innerHTML = html
+  restoreOpenDetails(keepOpen)
   bind().catch(e => toast('界面初始化失败：' + e.message, true))
   if (page === 'logs') refreshLogs()
   if (page === 'report' || page === 'memory') loadDaily()
@@ -1321,6 +1380,7 @@ async function bind(){
   }
   const pyImport = document.getElementById('pyImport')
   if (pyImport) pyImport.onchange = async function(){
+    syncPyOpen()
     const file = pyImport.files && pyImport.files[0]
     if (!file) return
     try {
@@ -1334,18 +1394,36 @@ async function bind(){
   document.querySelectorAll('[data-pydel]').forEach(function(b){
     b.onclick = async function(){
       if (!await ask('删除脚本 ' + b.dataset.pydel + '？', '会同时删除备份文件 .bak。', '删除')) return
-      try { await api('/api/action/delete-python-script', { id: b.dataset.pydel }); toast('已删除'); await load(); render() }
+      syncPyOpen()
+      const did = b.dataset.pydel
+      pyOpen.rows = pyOpen.rows.filter(function(x){ return x !== did })
+      pyOpen.editors = pyOpen.editors.filter(function(x){ return x !== did })
+      try { await api('/api/action/delete-python-script', { id: did }); b.closest('details')?.remove();delete pyDrafts[did];toast('已删除'); await load(); render() }
       catch(e){ toast('删除失败：' + e.message, true) }
     }
   })
   document.querySelectorAll('[data-pytoggle]').forEach(function(b){
     b.onclick = async function(){
+      const id = b.dataset.pytoggle
       const on = b.dataset.next === '1'
+      b.disabled = true
       try {
-        await api('/api/action/toggle-python-script', { id: b.dataset.pytoggle, enabled: on })
-        toast((on ? '已启用 ' : '已停用 ') + b.dataset.pytoggle)
-        await load(); render()
+        await api('/api/action/toggle-python-script', { id: id, enabled: on })
+        // 就地更新，不触发整页重绘，展开状态自然不会丢
+        b.dataset.next = on ? '0' : '1'
+        b.textContent = on ? '停用' : '启用'
+        const row = b.closest('details')
+        const sum = row ? row.querySelector('summary') : null
+        if (sum) {
+          let pill = sum.querySelector('.pill')
+          if (on) { if (pill) pill.remove() }
+          else if (!pill) { pill = document.createElement('span'); pill.className = 'pill'; pill.textContent = '已停用'; sum.appendChild(pill) }
+        }
+        const it = (pythonScripts || []).find(function(x){ return x.id === id })
+        if (it) it.enabled = on
+        toast((on ? '已启用 ' : '已停用 ') + id)
       } catch(e){ toast('操作失败：' + e.message, true) }
+      finally { b.disabled = false }
     }
   })
   document.querySelectorAll('[data-pyedit]').forEach(function(b){
@@ -1353,11 +1431,12 @@ async function bind(){
       const id = b.dataset.pyedit
       const box = document.getElementById('pyEditor-' + id)
       if (!box) return
-      if (box.style.display !== 'none') { box.style.display = 'none'; return }
+      if (box.style.display !== 'none') { box.style.display = 'none'; pyOpen.editors = pyOpen.editors.filter(function(x){ return x !== id }); return }
+      if (pyOpen.editors.indexOf(id) < 0) pyOpen.editors.push(id)
       try {
-        const r = await api('/api/action/read-python-script', { id })
-        box.querySelector('[data-pysrc]').value = r.content || ''
-        box.style.display = ''
+        const ta=box.querySelector('[data-pysrc]')
+        if(pyDrafts[id] === undefined){const r=await api('/api/action/read-python-script',{id});if(box.isConnected === false)return;if(pyDrafts[id] === undefined){pyDrafts[id]=r.content || ''}}
+        ta.value=pyDrafts[id];box.style.display = ''
       } catch(e){ toast('读取失败：' + e.message, true) }
     }
   })
@@ -1366,18 +1445,22 @@ async function bind(){
       const id = b.dataset.pysave
       const box = document.getElementById('pyEditor-' + id)
       const msg = document.getElementById('pyMsg-' + id)
+      b.disabled = true
       try {
         await api('/api/action/import-python-script', { filename: id + '.py', content: box.querySelector('[data-pysrc]').value })
         if (msg) msg.textContent = '已保存'
         toast('已保存 ' + id + '.py')
-        await load(); render()
       } catch(e){ if (msg) msg.textContent = '保存失败：' + e.message; toast('保存失败：' + e.message, true) }
+      finally { b.disabled = false }
     }
   })
   document.querySelectorAll('[data-pycancel]').forEach(function(b){
     b.onclick = function(){
-      const box = document.getElementById('pyEditor-' + b.dataset.pycancel)
-      if (box) box.style.display = 'none'
+      const cid = b.dataset.pycancel
+      const box = document.getElementById('pyEditor-' + cid)
+      if (box) {box.style.display = 'none';box.querySelector('[data-pysrc]').value=''}
+      delete pyDrafts[cid]
+      pyOpen.editors = pyOpen.editors.filter(function(x){ return x !== cid })
     }
   })
   const pyRecallSave = document.getElementById('pyRecallSave')
@@ -1436,6 +1519,7 @@ async function bind(){
   }
   const pyNewSave = document.getElementById('pyNewSave')
   if (pyNewSave) pyNewSave.onclick = async function(){
+    syncPyOpen()
     const hint = document.getElementById('pyNewHint')
     const name = document.getElementById('pyNewName').value.trim()
     const code = document.getElementById('pyNewCode').value
@@ -1455,8 +1539,45 @@ async function bind(){
       await load(); render()
     } catch(e){ if (hint) hint.textContent = '保存失败：' + e.message; toast('保存失败：' + e.message, true) }
   }
+  document.querySelectorAll('[data-pyopen]').forEach(function(b){
+    b.onclick = async function(){
+      const id = b.dataset.pyopen || ''
+      try {
+        const r = await api('/api/action/open-python-folder', id ? { id } : {})
+        if (r && r.ok === false) toast('打不开资源管理器：' + (r.error || '未知原因') + '；可点前面「复制路径」再 Win+R 粘贴', true)
+        else if (r && r.warning) toast(r.warning + '：' + r.path)
+        else toast('已打开：' + (r.path || ''))
+      } catch(e){ toast('打开失败：' + e.message, true) }
+    }
+  })
+  document.querySelectorAll('[data-pycopy]').forEach(function(b){
+    b.onclick = async function(){
+      const text = b.dataset.pycopy || ''
+      if (!text) { toast('没有可复制的路径', true); return }
+      try { await navigator.clipboard.writeText(text); toast('已复制：' + text) }
+      catch(e){ toast('复制失败，请手动选择路径', true) }
+    }
+  })
+  document.querySelectorAll('[data-pysrc]').forEach(el=>el.addEventListener('input',()=>{pyDrafts[el.dataset.pysrc]=el.value}))
+  const pyCardEl = document.querySelector('details[data-pycard]')
+  if (pyCardEl) pyCardEl.addEventListener('toggle', function(){ pyOpen.card = pyCardEl.open })
+  document.querySelectorAll('details[data-pyrow]').forEach(function(d){
+    d.addEventListener('toggle', function(){
+      const rid = d.dataset.pyrow
+      if (d.open) { if (pyOpen.rows.indexOf(rid) < 0) pyOpen.rows.push(rid) }
+      else { pyOpen.rows = pyOpen.rows.filter(function(x){ return x !== rid }); pyOpen.editors = pyOpen.editors.filter(function(x){ return x !== rid }) }
+    })
+  })
+  pyOpen.editors.slice().forEach(function(eid){
+    const box = document.getElementById('pyEditor-' + eid)
+    if (!box) return
+    const ta = box.querySelector('[data-pysrc]')
+    box.style.display = ''
+    if (ta && pyDrafts[eid] === undefined) api('/api/action/read-python-script', { id: eid }).then(function(r){ if(ta.isConnected !== false && pyDrafts[eid] === undefined && !ta.value){ta.value = r.content || '';pyDrafts[eid]=ta.value} }).catch(function(){})
+  })
   document.querySelectorAll('[data-pycmdsave]').forEach(function(b){
     b.onclick = async function(){
+      syncPyOpen()
       const id = b.dataset.pycmdsave
       const input = document.querySelector('[data-pycmd="' + id + '"]')
       try {
@@ -2154,7 +2275,7 @@ async function bind(){
   const sp = document.getElementById('savePersona')
   if (sp) sp.onclick = async () => {
     const name = document.getElementById('personaSel').value
-    try { await api('/api/action/save-persona', { name, content: document.getElementById('personaText').value }); personaCache[name] = document.getElementById('personaText').value; toast('人格已保存；点击“切换使用”应用此版本') }
+    try { const r = await api('/api/action/save-persona', { name, content: document.getElementById('personaText').value }); personaCache[name] = document.getElementById('personaText').value; toast(r.applied ? '人格已保存并立即生效' : '人格已保存；点击“切换使用”应用此版本') }
     catch(e){ toast(e.message, true) }
   }
   const act = document.getElementById('activate')

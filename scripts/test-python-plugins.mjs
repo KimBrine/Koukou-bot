@@ -20,6 +20,16 @@ try {
     assert.equal(plugins.list().length, 1)
   })
 
+  await test('列表带绝对路径，且可以同时存在多个脚本', () => {
+    plugins.importScript('two.py', 'print(2)')
+    const items = plugins.list()
+    assert.equal(items.length, 2)
+    const one = items.find((x) => x.id === 'hello')
+    assert.equal(one.path, path.join(plugins.dir, 'hello.py'))
+    assert.equal(items.some((x) => x.id === 'two' && x.path.endsWith('two.py')), true)
+    plugins.remove('two')
+  })
+
   await test('拒绝非法文件名与空内容', () => {
     assert.throws(() => plugins.importScript('../evil.py', 'print(1)'), /文件名/)
     assert.throws(() => plugins.importScript('a b.py', 'print(1)'), /文件名/)

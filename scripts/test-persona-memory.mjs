@@ -154,15 +154,23 @@ try {
     activatePersona({ ...t, name: '乙', content: '乙', targetWatch: watch, persist() {} }); d.resolve('甲的回复'); await task
     assert.equal(watch.pendingCount(), 0); assert.deepEqual(c.sent, []); assert.equal(t.memory.get('g200000002').length, 0)
   })
-  await test('控制台保存草稿不改变正在使用的人格；激活走备份重置流程', async () => {
+  await test('控制台保存当前人格立即生效且不动记忆；保存其他人格只写文件', async () => {
     const t = fixture(); t.config.envFile = path.join(t.dir, '.env'); writeFileSync(t.config.envFile, 'ACTIVE_PERSONA=甲\nUNRELATED=keep\n')
     const admin = createAdminServer({ ...t, logger })
     try {
       t.memory.push('g1', 'user', '旧消息')
-      await admin.actions['save-persona']({ name: '甲', content: '修改的甲' })
-      assert.equal(t.config.persona, '你是严肃的甲。'); assert.equal(t.memory.get('g1').length, 1)
+      const saved = await admin.actions['save-persona']({ name: '甲', content: '修改的甲' })
+      assert.equal(saved.applied, true)
+      await assert.rejects(admin.actions['save-persona']({name:'甲',content:'   '}),/不能为空/)
+      assert.equal(readFileSync(path.join(t.dir,'personas','甲.txt'),'utf8'),'修改的甲')
+      assert.equal(t.config.persona, '修改的甲')
+      assert.equal(t.memory.get('g1').length, 1)
       const r = await admin.actions['activate-persona']({ name: '甲' }); assert.equal(r.changed, false)
       assert.equal(t.config.persona, '修改的甲'); assert.equal(t.memory.get('g1').length, 1)
+      await admin.actions['create-persona']({ name: '乙', content: '乙的草稿' })
+      const draft = await admin.actions['save-persona']({ name: '乙', content: '乙改过' })
+      assert.equal(draft.applied, false)
+      assert.equal(t.config.persona, '修改的甲')
       assert.match(readFileSync(t.config.envFile, 'utf8'), /UNRELATED=keep/)
       await assert.rejects(admin.actions['activate-persona']({ name: '不存在' }), /不存在/)
     } finally { admin.server.close() }
