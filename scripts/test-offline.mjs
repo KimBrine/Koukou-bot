@@ -37,6 +37,7 @@ const scripts = [
   'test-reply-budget.mjs',
   'test-vision-providers.mjs',
   'test-python-plugins.mjs', 'test-dev-console-merge.mjs',
+  'test-id-check-kick.mjs',
 ]
 for (const file of scripts) {
   const result = spawnSync(process.execPath, [path.join(root, 'scripts', file)], { cwd: root, stdio: 'inherit', windowsHide: true })

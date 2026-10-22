@@ -499,6 +499,22 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
     return running.has(Number(groupId))
   }
 
+  /**
+   * 等正在生成的报告收尾（关停时用）。
+   * 只等 running 集合清空，不阻止已开始的发送；超时返回 false，交给调用方决定是否强退。
+   */
+  function whenIdle({ timeoutMs = 4000, pollMs = 200 } = {}) {
+    if (running.size === 0) return Promise.resolve(true)
+    return new Promise((resolve) => {
+      const startedAt = Date.now()
+      const timer = setInterval(() => {
+        if (running.size === 0) { clearInterval(timer); resolve(true); return }
+        if (Date.now() - startedAt >= timeoutMs) { clearInterval(timer); resolve(false) }
+      }, pollMs)
+      timer.unref?.()
+    })
+  }
+
   /** 只算统计、不调模型（自检/排查用）：返回 { records, stats } */
   async function previewStats(groupId, days = 1) {
     const dayCount = Math.max(1, Math.min(30, Math.floor(Number(days) || 1)))
@@ -723,5 +739,5 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
   }
 
   return { capture, runSummary, runAll, trigger, progress, schedule, stop: summarySchedule.stop,
-    summaryGroups, previewStats, countCaptured, isRunning, checkScheduled: summarySchedule.runSlot }
+    summaryGroups, previewStats, countCaptured, isRunning, whenIdle, checkScheduled: summarySchedule.runSlot }
 }
