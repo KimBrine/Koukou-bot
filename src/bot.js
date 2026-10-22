@@ -864,9 +864,70 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
           return
         }
         if (!pythonPlugins) { await sendTo(evt, 'Python 插件未启用。'); return }
+        const pyName = String(pyMatch[1] || '').trim()
+        if (!pyName || /^(列表|list|帮助|help|指令|命令)$/i.test(pyName)) {
+          try { await sendTo(evt, pythonPlugins.helpText()) }
+          catch (err) { await sendTo(evt, '读取脚本列表失败：' + err.message) }
+          return
+        }
+        if (typeof pythonPlugins.isEnabled === 'function' && !pythonPlugins.isEnabled(pyName)) {
+          await sendTo(evt, `脚本「${pyName}」已停用，管理员可在控制台「指令中心 → Python 脚本」开启。`)
+          return
+        }
         try {
-          const r = await pythonPlugins.run(pyMatch[1], pyMatch[2] || '')
-          const body = (r.stdout || r.stderr || '（没有输出）').slice(0, 1500)
+          const r = await pythonPlugins.run(pyName, pyMatch[2] || '')
+          const out = String(r.stdout || r.stderr || '（没有输出）').trim()
+          if (r.ok && out.startsWith('@@CARD@@')) {
+            try {
+              const card = JSON.parse(out.slice('@@CARD@@'.length))
+              const nodes = (Array.isArray(card.nodes) ? card.nodes : []).map((n) => {
+                const content = []
+                if (n.text) content.push({ type: 'text', data: { text: String(n.text) } })
+                for (const file of (Array.isArray(n.images) ? n.images : [])) {
+                  if (file) content.push({ type: 'image', data: { file: String(file) } })
+                }
+                return content.length ? { content } : null
+              }).filter(Boolean)
+              if (!nodes.length) throw new Error('内容为空')
+              // 整话几十张图时上传较慢，单条合并转发给足 120 秒
+              if (evt.message_type === 'private') await onebot.sendPrivateForward(evt.user_id, nodes, 120000)
+              else await onebot.sendGroupForward(evt.group_id, nodes, 120000)
+              if (card.summary) await sendTo(evt, '✅ ' + card.summary)
+            } catch (err) { await sendTo(evt, '聊天记录发送失败：' + err.message) }
+            return
+          }
+          if (r.ok && out.startsWith('@@FILE@@')) {
+            try {
+              const spec = JSON.parse(out.slice('@@FILE@@'.length))
+              const filePath = path.resolve(String(spec.path || ''))
+              if (!existsSync(filePath) || !statSync(filePath).isFile()) throw new Error('文件不存在：' + filePath)
+              if (statSync(filePath).size > 200 * 1024 * 1024) throw new Error('文件超过 200MB')
+              const name = String(spec.name || path.basename(filePath))
+              // 单位秒，兼容旧脚本仍在用的 recall_minutes
+              const seconds = Math.min(7200, Math.max(0, Number(
+                spec.recall_seconds ?? (spec.recall_minutes ? Number(spec.recall_minutes) * 60 : 300)) || 0))
+              const recallLabel = seconds >= 60 ? `${Math.round(seconds / 60)} 分钟` : `${seconds} 秒`
+              let receipt = null
+              try {
+                const segment = [{ type: 'file', data: { file: 'file:///' + filePath.replace(/\\/g, '/'), name } }]
+                receipt = evt.message_type === 'private'
+                  ? await onebot.sendPrivate(evt.user_id, segment)
+                  : await onebot.sendGroup(evt.group_id, segment)
+              } catch (segErr) {
+                // 文件段不被支持时退回群文件/私聊文件上传（这种形式没有消息号，无法自动撤回）
+                if (evt.message_type === 'private') await onebot.api('upload_private_file', { user_id: evt.user_id, file: filePath, name })
+                else await onebot.api('upload_group_file', { group_id: evt.group_id, file: filePath, name })
+              }
+              const mid = receipt && receipt.message_id
+              if (mid && seconds > 0) {
+                const t = setTimeout(() => { onebot.deleteMessage(mid).catch(() => {}) }, seconds * 1000)
+                if (typeof t.unref === 'function') t.unref()
+              }
+              await sendTo(evt, (spec.text || ('已发送文件：' + name)) + (mid && seconds > 0 ? `\n（${recallLabel}后自动撤回）` : ''))
+            } catch (err) { await sendTo(evt, '文件发送失败：' + err.message) }
+            return
+          }
+          const body = out.slice(0, 1500)
           await sendTo(evt, (r.ok ? '✅ ' : '⚠️ ') + body + (r.killed ? '\n（超时已终止）' : ''))
         } catch (err) { await sendTo(evt, '脚本执行失败：' + err.message) }
         return
@@ -1239,7 +1300,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       // 会话专属要求（控制台里设的），跟在人设后面、机械规则前面
       // 表情包：把可用清单告诉模型，让它用 [贴纸: 名称] 指定（程序负责发图）
       let stickerHint = !questionMode && stickerSend.allowed(evt)
-        ? `\n\n【表情包发送规则】可用表情包：${replyStickers.summary(60)}。普通轻松聊天时，主动从清单中选一张情绪或互动意图大致相符的图；开心、赞同、疑惑、害羞、无语、打招呼等宽泛情绪接近即可，不必画面、角色、动作或配字与话题逐项对应，也不必等对方明确要图。通用反应图只要不歪曲本轮意思就可以用，不要求最佳或唯一匹配；确实没有意思相近的图才省略。始终先写自然文字回复，选中后另起一行写 [贴纸: 名称]，不能只输出图片标记。程序会取走标记并发出真实图片，不会把它作为聊天正文展示。该标记是“禁止内部方括号标记”的明确例外；表情包发送与文字里的颜文字、emoji装饰限制分别处理，文字要求纯文字并不禁止选图。先理解整段对话和你本轮回复的态度，再按整体情绪选图；不要只因出现一个情绪词就配图，也不要选含相反态度或冒犯意味的图。认真安慰、讨论生死或群友冲突时仍须谨慎，不配嘲笑、吃瓜、夸张惊吓或撒娇的图，拿不准就省略。配图概率由程序在整轮回复中抽取一次，你只负责判断是否大致合适并给出候选，不要自行再按概率少选一次。不要根据以前发过什么推断这次也适合。只能逐字使用清单中的完整名称，每轮最多${config.stickerMaxPerReply || 1}张；是否实际发送由程序按配置概率决定，不能绕过。不编造库外名称，不选含义冲突的图片。`
+        ? `\n\n【表情包发送规则】可用表情包：${replyStickers.summary(60)}。普通轻松聊天时，主动从清单中选一张情绪或互动意图大致相符的图；开心、赞同、疑惑、害羞、无语、打招呼等宽泛情绪接近即可，不必画面、角色、动作或配字与话题逐项对应，也不必等对方明确要图。通用反应图只要不歪曲本轮意思就可以用，不要求最佳或唯一匹配；确实没有意思相近的图才省略。始终先写自然文字回复，选中后另起一行写 [贴纸: 名称]，不能只输出图片标记。程序会取走标记并发出真实图片，不会把它作为聊天正文展示。该标记是“禁止内部方括号标记”的明确例外；表情包发送与文字里的颜文字、emoji装饰限制分别处理，文字要求纯文字并不禁止选图。先理解整段对话和你本轮回复的态度，再按整体情绪选图；不要只因出现一个情绪词就配图，也不要选含相反态度或冒犯意味的图。认真安慰、讨论生死或群友冲突时仍须谨慎，不配嘲笑、吃瓜、夸张惊吓或撒娇的图，拿不准就省略。配图概率由程序在整轮回复中抽取一次，你只负责判断是否大致合适并给出候选，不要自行再按概率少选一次。不要根据以前发过什么推断这次也适合。优先使用清单中的完整名称，也可以给出相近的标签或名称；程序会从符合条件的图中按匹配程度加权抽取，同名图同等参与，每轮最多${config.stickerMaxPerReply || 1}张；是否实际发送由程序按配置概率决定，不能绕过。不编造库外名称，不选含义冲突的图片。`
         : ''
       const stickerRequestPolicy=JSON.stringify(commandCenter?.get('request-sticker'))
       const stickerRequestAllowed=()=>directReply&&featureAllowed('request-sticker')&&JSON.stringify(commandCenter?.get('request-sticker'))===stickerRequestPolicy

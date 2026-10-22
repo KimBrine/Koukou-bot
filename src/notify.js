@@ -13,7 +13,7 @@ export function createNotifier({ config, onebot, logger, file, now = () => Date.
     state[key] = now(); save()
     try {
       await onebot.sendPrivate(admin, '[提醒] ' + text)
-      logger?.warn?.('[通知] ' + text)
+      logger?.info?.('[通知] ' + text)
       return true
     } catch (err) {
       logger?.warn?.('[通知] 发送失败：' + err.message)

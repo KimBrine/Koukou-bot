@@ -15,7 +15,7 @@ import { createVisionProviders } from './visionProviders.js'
 import { createSummaryVisionClient } from './summaryReferences.js'
 import { createDailySummary, buildSummaryPrompt } from './dailySummary.js'
 import { createWebSearch } from './search.js'
-import { createBackup } from './backup.js'
+import { createBackup, applyPendingRestore } from './backup.js'
 import { createSelfCheck } from './selfcheck.js'
 import { createNotifier } from './notify.js'
 import { createMetrics } from './metrics.js'
@@ -121,6 +121,8 @@ try {
 } catch {
   /* 锁文件写入失败不影响运行 */
 }
+
+if (applyPendingRestore({config,logger})) Object.assign(config,loadConfig())
 
 const memory = new MemoryStore({ file: config.memoryFile, limit: config.historyLimit, logger })
 memory.load()
@@ -347,7 +349,8 @@ const stickerTagLLM = new Proxy({}, {
   has(_t, prop) { return Boolean(tagActive && prop in tagActive) },
 })
 const stickerLearner = createStickerLearner({ config, logger, onebot, stickers,
-  similar: async (dataUrl) => {
+  similar: async (dataUrl, {store:library=stickers,current=()=>true}={}) => {
+    if (!stickerHasher.supported || !current()) return false
     const m = /^data:([^;]+);base64,(.*)$/.exec(String(dataUrl || ''))
     if (!m) return false
     const buf = Buffer.from(m[2], 'base64')
@@ -355,15 +358,16 @@ const stickerLearner = createStickerLearner({ config, logger, onebot, stickers,
     try {
       writeFileSync(tmp, buf)
       await stickerHasher.hashFiles([tmp])
-      const h = stickerHasher.hashOf({ file: path.basename(tmp) })
+      const h = stickerHasher.hashOf({ file: tmp })
       if (!h) return false
-      const files = (stickers.list() || []).map((x) => path.join(stickers.dir, x.file)).filter((f) => existsSync(f))
+      const files = (library.list() || []).map((x) => path.join(library.dir, x.file)).filter((f) => existsSync(f))
       await stickerHasher.hashFiles(files)
-      return (stickers.list() || []).some((item) => {
-        const other = stickerHasher.hashOf(item)
+      if (!current()) return false
+      return (library.list() || []).some((item) => {
+        const other = stickerHasher.hashOf(item, library.dir)
         return other && stickerHasher.distance(h, other) <= 8
       })
-    } catch { return false } finally { try { rmSync(tmp, { force: true }) } catch {} }
+    } catch { return false } finally { stickerHasher.forget(tmp); try { rmSync(tmp, { force: true }) } catch {} }
   },
   filterLLM: stickerFilterLLM, tagLLM: stickerTagLLM, imageCache: sharedImageCache })
 const commandCenter = createCommandCenter({file:path.join(config.dataDir,'command-center.json'),customCommands,config,logger,llm})
@@ -535,6 +539,7 @@ if (config.adminEnabled) {
 function maybeBackup(reason) {
   try {
     if (Date.now() - backupService.lastBackupAt() < 20 * 3600 * 1000) return
+    memory.flush(); longMemory.save({strict:true})
     const result = backupService.run({ reason })
     notifier.notify('backup-ok', '已自动备份记忆与表情包：' + result.name, { minIntervalMs: 20 * 3600 * 1000 }).catch(() => {})
   } catch (err) { logger.warn('自动备份失败：' + err.message) }
@@ -587,6 +592,7 @@ function shutdown() {
   shuttingDown = true
   logger.info('正在关闭，保存记忆…')
   memory.flush()
+  metricsService.flush()
   bot.flush()
   quietGreetings.stop()
   customSchedule.stop()

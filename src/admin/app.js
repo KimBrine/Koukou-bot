@@ -71,6 +71,7 @@ let selfCheckInfo = null
 let errorInfo = []
 let pokeReplies = []
 let pythonScripts = []
+let pythonSettings = { recallSeconds: 300 }
 let tasksInfo = null
 let metricsInfo = []
 let metricsRange = 7
@@ -626,15 +627,46 @@ function pokeCorpusCard(){
     '<textarea id="pokeText" rows="10" style="width:100%;margin-top:8px">' + esc(pokeReplies.join('\n')) + '</textarea>' +
     '<div class="flexbar"><button class="btn primary" id="pokeSave">保存语库</button><span class="mut" id="pokeHint"></span></div></section>'
 }
+async function loadPythonScripts(){
+  const r = await api('/api/python-scripts').catch(function(){ return { items: [] } })
+  pythonScripts = r.items || []
+  if (r.settings) pythonSettings = r.settings
+}
 function pythonCard(){
   const items = pythonScripts || []
+  const recall = (pythonSettings && pythonSettings.recallSeconds) || 300
   const rows = items.map(function(s){
-    return '<div class="frow"><label>' + esc(s.name) + ' <span class="mut">/' + esc(s.id) + '</span></label><div><span class="mut">' + esc(s.description || '') + '</span> <span class="mut" style="font-size:12px">' + esc(s.usage || '') + '</span> <button class="btn sm" data-pydel="' + esc(s.id) + '">删除</button></div></div>'
+    const id = esc(s.id)
+    return '<details class="frow"><summary><b>' + esc(s.name) + '</b> <span class="mut">/' + id + '</span>' +
+      (s.enabled === false ? ' <span class="pill">已停用</span>' : '') + '</summary>' +
+      '<div class="mut" style="margin:6px 0 4px">' + esc(s.description || '') + '</div>' +
+      '<div class="mut" style="font-size:12px">用法：' + esc(s.usage || ('/py ' + s.id)) + '</div>' +
+      '<div class="flexbar" style="margin-top:8px"><label class="mut">调用名 /py</label>' +
+        '<input data-pycmd="' + id + '" value="' + esc(s.command || s.id) + '" style="width:120px" maxlength="20">' +
+        '<button class="btn sm" data-pycmdsave="' + id + '">保存调用名</button>' +
+        '<span class="mut" style="font-size:12px">文件名 ' + id + '.py</span></div>' +
+      '<div class="flexbar" style="margin-top:8px">' +
+        '<button class="btn sm" data-pyedit="' + id + '">编辑内容</button>' +
+        '<button class="btn sm" data-pytoggle="' + id + '" data-next="' + (s.enabled === false ? '1' : '0') + '">' + (s.enabled === false ? '启用' : '停用') + '</button>' +
+        '<button class="btn sm" data-pydel="' + id + '">删除</button>' +
+      '</div>' +
+      '<div id="pyEditor-' + id + '" style="display:none;margin-top:8px">' +
+        '<textarea data-pysrc="' + id + '" spellcheck="false" style="width:100%;min-height:240px;font-family:Consolas,monospace;font-size:12px"></textarea>' +
+        '<div class="flexbar" style="margin-top:6px"><button class="btn primary sm" data-pysave="' + id + '">保存</button><button class="btn sm" data-pycancel="' + id + '">取消</button><span class="mut" id="pyMsg-' + id + '"></span></div>' +
+      '</div></details>'
   }).join('')
-  return '<section class="card"><h2>Python 脚本 <span class="pill">' + items.length + ' 个</span></h2>' +
-    '<div class="note">放在 plugins/python 下的白名单脚本，用 <code>/py 脚本名 参数</code> 运行，默认仅管理员。脚本以机器人权限执行，只导入可信文件。</div>' +
+  return '<details class="card"><summary><b>Python 脚本</b> <span class="pill">' + items.length + ' 个</span> <span class="mut">点开管理、编辑内容</span></summary>' +
+    '<div class="note">放在 plugins/python 下的白名单脚本，用 <code>/py 脚本名 参数</code> 运行，默认仅管理员。脚本以机器人权限执行，只导入可信文件。保存会留一份 .bak。</div>' +
+    '<div class="flexbar" style="margin:10px 0"><label class="mut">打包默认撤回（秒）</label><input id="pyRecall" type="number" min="5" max="7200" step="5" value="' + recall + '" style="width:90px"><button class="btn sm" id="pyRecallSave">保存</button><span class="mut" id="pyRecallHint"></span></div>' +
     (rows || '<div class="mut">还没有脚本</div>') +
-    '<div class="flexbar" style="margin-top:10px"><label class="btn" style="cursor:pointer">导入 .py<input type="file" id="pyImport" accept=".py" style="display:none"></label><span class="mut" id="pyHint"></span></div></section>'
+    '<details class="frow" style="margin-top:10px"><summary><b>＋ 新建脚本</b> <span class="mut">自己写，或让 AI 起草</span></summary>' +
+      '<div class="mut" style="margin:8px 0 6px">描述你要的功能，AI 只生成草稿，代码会放在下面，确认后再保存。保存后即可用 <code>/py 文件名</code> 调用。</div>' +
+      '<textarea id="pyPrompt" placeholder="例如：把一段文字倒序输出，并统计字符数；参数为空时提示用法" style="width:100%;min-height:70px"></textarea>' +
+      '<div class="flexbar" style="margin:8px 0"><input id="pyNewName" placeholder="文件名，如 wc.py" style="width:170px"><input id="pyNewCmd" placeholder="调用名（可选）" style="width:140px" maxlength="20"><button class="btn sm" id="pyDraftBtn">AI 生成草稿</button><button class="btn sm" id="pyTplBtn">插入模板</button><span class="mut" id="pyDraftHint"></span></div>' +
+      '<textarea id="pyNewCode" spellcheck="false" placeholder="代码会出现在这里，也可以自己直接写" style="width:100%;min-height:240px;font-family:Consolas,monospace;font-size:12px"></textarea>' +
+      '<div class="flexbar" style="margin-top:6px"><button class="btn primary sm" id="pyNewSave">保存脚本</button><button class="btn sm" id="pyNewClear">清空</button><span class="mut" id="pyNewHint"></span></div>' +
+    '</details>' +
+    '<div class="flexbar" style="margin-top:10px"><label class="btn" style="cursor:pointer">导入 .py<input type="file" id="pyImport" accept=".py" style="display:none"></label><span class="mut" id="pyHint"></span></div></details>'
 }
 function pageCommands(){ return CommandCenterUI.render({custom:customCommands,builtins:commandBuiltins,poke:pokeDiagnostics,groups:joinedGroups}) + commandTestCard() + pokeCorpusCard() + pythonCard() }
 // ── 渲染 ───────────────────────────────────────────────
@@ -967,7 +999,7 @@ function pageErrors(){
       esc(new Date(e.time).toLocaleString()) + ' · ' + esc(e.scope || 'bot') + '</div>' +
       '<pre class="mono" style="white-space:pre-wrap;word-break:break-all;margin:6px 0;font-size:12px;color:' + (warn ? 'var(--text)' : color) + '">' + esc(e.message || '') + '</pre></div>'
   }).join('')
-  return '<h1>错误中心</h1><div class="sub">最近 ' + items.length + ' 条错误；只记录，不影响运行。</div>' +
+  return '<h1>错误中心</h1><div class="sub">最近 ' + items.length + ' 条错误或警告；后台任务可能延迟或暂停，请查看具体原因。</div>' +
     '<div class="flexbar"><button class="btn" id="errorsRefresh">刷新</button><button class="btn" id="errorsClear">清空</button></div>' +
     (rows || '<div class="card mut">还没有错误记录</div>')
 }
@@ -1027,32 +1059,34 @@ function pageStickers(){
     '<h1>表情包</h1><div class="flexbar" style="margin:8px 0"><button class="btn" id="retagAll">一键生成标签</button><button class="btn" id="retagMissing">只补缺失标签</button><span class="mut" id="retagHint"></span></div><p class="note">当前图库：' + esc(stickerPersona?.name || '默认人格') + ' · 图库、标签、使用记录和黑名单按人格分开；自动学习与配图跟随会话人格。切换后不会混用，原图库保留。</p><div class="sub">给每张图起名、打关键词和语境；机器人按语境挑图，模型也能用 [贴纸: 名称] 点名要。</div>',
     '<details class="card" data-stkfold="rules"' + (stickerFold.rules ? ' open' : '') + '><summary><b class="api-card-title">发送规则</b> <span class="api-card-meta">概率 ' + Math.round(settings.autoRate ?? 35) + '% · 每次最多 ' + (settings.maxPerReply || 1) + ' 张</span></summary><div class="api-card-body">',
     '<label style="display:flex;align-items:center;gap:8px;font-size:14px"><input type="checkbox" id="stkEnabled"' + (settings.enabled !== false ? ' checked' : '') + '> 启用表情包（关闭后模型不会发图）</label>',
-    '<div class="note">表情包必须跟随已成功发送的普通聊天文字回复。用户明确要求发表情包时直接尝试发送，不抽概率；普通聊天的自动配图（含模型主动选图）遵守下方概率；语境模式未选中合适图片时不随机补图。仍遵守开关、范围、黑名单及冷却；群总结、指令回执和 /Q 解题不自动配图。</div>',
+    '<div class="note">表情包必须跟随已成功发送的普通聊天文字回复。用户明确要求发表情包时直接尝试发送，不抽概率；普通聊天的自动配图（含模型主动选图）遵守下方概率；名称或标签按匹配程度加权抽图，同名同分机会相等；没有匹配候选时不随机补图。仍遵守开关、范围、黑名单及冷却；群总结、指令回执和 /Q 解题不自动配图。</div>',
     '<label style="display:block;margin:12px 0">文字回复配图概率 <input id="stkAutoRange" type="range" min="0" max="100" value="' + (settings.autoRate ?? 35) + '"> <input id="stkAutoRate" type="number" min="0" max="100" value="' + (settings.autoRate ?? 35) + '" style="width:90px"> %</label>',
     '<div class="mut">自动配图默认35%；0关闭自动配图，100每次尝试。明确索图不受此概率限制；彻底禁用请关闭总开关。按整轮文字回复判断一次，不是每一行。</div>',
     '<label style="display:block;margin:12px 0">每次最多 <input id="stkMax" type="number" min="1" max="3" value="' + (settings.maxPerReply || 1) + '" style="width:90px"> 张</label>',
-    '<label style="display:block;margin:12px 0">选图方式 <select id="stkPickMode">' + [['context','模型按语境选图，情绪接近即可'],['model','仅使用模型点名的图'],['random','随机选图']].map(x=>'<option value="'+x[0]+'"'+((settings.pickMode || 'context')===x[0]?' selected':'')+'>'+x[1]+'</option>').join('') + '</select></label>',
+    '<label style="display:block;margin:12px 0">选图方式 <select id="stkPickMode">' + [['context','模型按语境选图，情绪接近即可'],['model','模型候选按匹配程度加权选图'],['random','随机选图']].map(x=>'<option value="'+x[0]+'"'+((settings.pickMode || 'context')===x[0]?' selected':'')+'>'+x[1]+'</option>').join('') + '</select></label>',
     '<label style="display:block;margin:12px 0">发送范围 <select id="stkSendScope">' + [['all','所有已允许回复的会话'],['whitelist','仅白名单群'],['selected','仅指定群'],['private','仅私聊']].map(x=>'<option value="'+x[0]+'"'+((settings.scope || 'all')===x[0]?' selected':'')+'>'+x[1]+'</option>').join('') + '</select></label>',
     '<div id="stkSendGroups"' + (settings.scope === 'selected' ? '' : ' hidden') + '>' + groups.map(g=>'<label style="display:block;margin:8px 0"><input type="checkbox" data-stk-send-group="'+esc(g.id)+'"'+((settings.groups || []).map(String).includes(String(g.id))?' checked':'')+'> '+esc(g.name)+' ('+esc(g.id)+')</label>').join('') + '<div class="mut">留空不配图；这些设置不会扩大机器人原本允许回复的范围。</div></div>',
     '<label style="display:block;margin:12px 0">同一会话配图间隔 <input id="stkCooldown" type="number" min="0" max="86400" value="' + (settings.cooldownSeconds || 0) + '" style="width:100px"> 秒（0不额外限制）</label>',
     '<button class="btn primary" id="stkRulesSave">保存发送规则</button>',
     '</div></details>',
     '<details class="card" data-stkfold="learn"' + (stickerFold.learn ? ' open' : '') + '><summary><b class="api-card-title">自动学习</b> <span class="api-card-meta">群 ' + ((learn.groups || []).length) + ' 个 · 私聊 ' + (learn.private ? '已开' : '未开') + '</span></summary><div class="api-card-body">',
-    '<div class="mut" style="margin-top:6px">DeepSeek Flash 初筛，Qwen 复核并打标签；无法确认的图不收录。已学习 ' + (stickerLearned || 0) + ' 张 / 共 ' + items.length + ' 张。</div>',
+    '<div class="mut" style="margin-top:6px">DeepSeek Flash 初筛，Qwen 复核并打标签；无法确认的图不收录。已学习 ' + (stickerLearned || 0) + ' 张 / 共 ' + items.length + ' / ' + (learn.limit || 60) + ' 张。</div>',
+    '<div class="note">每个人格图库最多60张（含手动上传）；满库自动停止学习，清理到60张以下后需手动重新开启。' + (learn.pausedByCapacity ? '当前已因容量停止学习。' : '') + '</div>',
     '<details class="learn-box"><summary><b>群聊学习</b> <span class="pill">' + ((learn.groups || []).length) + ' 个群</span></summary>',
-    '<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:10px 0"><input type="checkbox" id="stkLearnToggle"' + (learn.enabled ? ' checked' : '') + '> 启用群聊表情包学习</label>',
+    '<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:10px 0"><input type="checkbox" id="stkLearnToggle"' + (learn.enabled ? ' checked' : '') + (learn.full ? ' disabled' : '') + '> 启用群聊表情包学习</label>',
     '<div class="note">只学习下面勾选的群，可选非白名单群；不改变聊天回复范围。</div>',
     '<input id="stkLearnSearch" placeholder="搜索群名或群号" style="width:100%;margin:8px 0">',
     '<div id="stkLearnGroupList" style="max-height:220px;overflow:auto">' + (groups || []).map(function(g) { return '<label style="display:block;margin:6px 0"><input type="checkbox" data-stk-learn-group="' + esc(g.id) + '"' + ((learn.groups || []).map(String).includes(String(g.id)) ? ' checked' : '') + '> ' + esc(g.name || g.id) + ' (' + esc(g.id) + ')</label>' }).join('') + '</div>',
     '</details>',
     '<details class="learn-box"><summary><b>私聊学习</b> <span class="pill">' + (learn.private ? '已开启' : '未开启') + '</span></summary>',
-    '<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:10px 0"><input type="checkbox" id="stkLearnPrivate"' + (learn.private ? ' checked' : '') + '> 私聊里发来的图片也收藏</label>',
+    '<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:10px 0"><input type="checkbox" id="stkLearnPrivate"' + (learn.private && learn.enabled ? ' checked' : '') + (learn.full ? ' disabled' : '') + '> 私聊里发来的图片也收藏</label>',
     '<div class="note">开启后，所有和机器人私聊的人发来的图片都会尝试收藏；仍受每小时上限约束。群聊与私聊可以单独开关。</div>',
     '</details>',
     '<div class="row" style="margin-top:8px;display:flex;gap:8px;align-items:center">',
     '<span class="mut">每小时最多</span><input id="stkLearnPerHour" type="number" min="0" max="60" value="' + (learn.perHour || 0) + '" style="width:90px"><span class="mut">张</span>',
     '<button class="btn" id="stkLearnSave">保存学习设置</button>',
     '</div></details>',
+    '<p class="note">活动图库容量：' + items.length + ' / 60 张；手动导入也占名额。满库后请先删除或拉黑不需要的图片。</p>',
     window.StickerUploadUI?.render(sceneList) || '',
     '<details class="card" data-stkfold="manual"' + (stickerFold.manual ? ' open' : '') + '><summary><b class="api-card-title">手动发送</b> <span class="api-card-meta">文字 + 表情包</span></summary><div class="api-card-body"><div class="note">这里会真实发送到所选群；手动发送不抽取概率，但同样必须有伴随文字。</div>',
     '<div class="row" style="display:flex;gap:8px;flex-wrap:wrap">',
@@ -1188,7 +1222,7 @@ async function bind(){
   if (errorsRefresh) errorsRefresh.onclick = async function(){
     errorInfo = (await api('/api/errors').catch(function(){ return { items: [] } })).items || []
     pokeReplies = (await api('/api/poke-replies').catch(function(){ return { lines: [] } })).lines || []
-    pythonScripts = (await api('/api/python-scripts').catch(function(){ return { items: [] } })).items || []
+    await loadPythonScripts()
     render()
   }
   const errorsClear = document.getElementById('errorsClear')
@@ -1233,12 +1267,12 @@ async function bind(){
     const hint = document.getElementById('retagHint')
     retagMissing.disabled = true
     try {
-      const r = await api('/api/action/retag-stickers', { onlyMissing: true })
+      const r = await stickerApi('/api/action/retag-stickers', { onlyMissing: true })
       if (hint) hint.textContent = '待补 ' + r.total + ' 张…'
       const timer = setInterval(async function(){
         try {
-          const st = await api('/api/stickers/retag-status')
-          if (hint) hint.textContent = st.running ? ('补标中 ' + st.done + '/' + st.total) : ('完成 ' + st.done + '/' + st.total + '，失败 ' + st.errors)
+          const st = await api('/api/stickers/retag-status?scope='+encodeURIComponent(boundStickerScope || ''))
+          if (hint) hint.textContent = st.running ? ('补标中 ' + st.done + '/' + st.total) : ('完成 ' + st.done + '/' + st.total + '，跳过 ' + (st.skipped || 0) + '，失败 ' + st.errors + (st.cancelled ? '（人格切换已取消）' : ''))
           if (!st.running) { clearInterval(timer); retagMissing.disabled = false; await load() }
         } catch(e){ clearInterval(timer); retagMissing.disabled = false }
       }, 2000)
@@ -1263,7 +1297,7 @@ async function bind(){
     simRun.disabled = true
     if (box) box.innerHTML = '<div class="mut">正在计算图片指纹…</div>'
     try {
-      const r = await api('/api/action/detect-similar', {})
+      const r = await stickerApi('/api/action/detect-similar', {})
       if (!box) return
       if (!r.groups.length) { box.innerHTML = '<div class="mut">检查了 ' + r.checked + ' 张，没有发现相似图</div>'; return }
       box.innerHTML = '<div class="mut" style="margin:8px 0">检查 ' + r.checked + ' 张，发现 ' + r.groups.length + ' 组相似</div>' + r.groups.map(function(g){
@@ -1301,6 +1335,134 @@ async function bind(){
       catch(e){ toast('删除失败：' + e.message, true) }
     }
   })
+  document.querySelectorAll('[data-pytoggle]').forEach(function(b){
+    b.onclick = async function(){
+      const on = b.dataset.next === '1'
+      try {
+        await api('/api/action/toggle-python-script', { id: b.dataset.pytoggle, enabled: on })
+        toast((on ? '已启用 ' : '已停用 ') + b.dataset.pytoggle)
+        await load(); render()
+      } catch(e){ toast('操作失败：' + e.message, true) }
+    }
+  })
+  document.querySelectorAll('[data-pyedit]').forEach(function(b){
+    b.onclick = async function(){
+      const id = b.dataset.pyedit
+      const box = document.getElementById('pyEditor-' + id)
+      if (!box) return
+      if (box.style.display !== 'none') { box.style.display = 'none'; return }
+      try {
+        const r = await api('/api/action/read-python-script', { id })
+        box.querySelector('[data-pysrc]').value = r.content || ''
+        box.style.display = ''
+      } catch(e){ toast('读取失败：' + e.message, true) }
+    }
+  })
+  document.querySelectorAll('[data-pysave]').forEach(function(b){
+    b.onclick = async function(){
+      const id = b.dataset.pysave
+      const box = document.getElementById('pyEditor-' + id)
+      const msg = document.getElementById('pyMsg-' + id)
+      try {
+        await api('/api/action/import-python-script', { filename: id + '.py', content: box.querySelector('[data-pysrc]').value })
+        if (msg) msg.textContent = '已保存'
+        toast('已保存 ' + id + '.py')
+        await load(); render()
+      } catch(e){ if (msg) msg.textContent = '保存失败：' + e.message; toast('保存失败：' + e.message, true) }
+    }
+  })
+  document.querySelectorAll('[data-pycancel]').forEach(function(b){
+    b.onclick = function(){
+      const box = document.getElementById('pyEditor-' + b.dataset.pycancel)
+      if (box) box.style.display = 'none'
+    }
+  })
+  const pyRecallSave = document.getElementById('pyRecallSave')
+  if (pyRecallSave) pyRecallSave.onclick = async function(){
+    const hint = document.getElementById('pyRecallHint')
+    try {
+      const r = await api('/api/action/save-python-settings', { recallSeconds: Number(document.getElementById('pyRecall').value) })
+      pythonSettings = r.settings || pythonSettings
+      if (hint) hint.textContent = '已保存：' + pythonSettings.recallSeconds + ' 秒'
+      toast('默认撤回已设为 ' + pythonSettings.recallSeconds + ' 秒')
+    } catch(e){ if (hint) hint.textContent = e.message; toast('保存失败：' + e.message, true) }
+  }
+  const pyDraftBtn = document.getElementById('pyDraftBtn')
+  if (pyDraftBtn) pyDraftBtn.onclick = async function(){
+    const hint = document.getElementById('pyDraftHint')
+    const prompt = document.getElementById('pyPrompt').value.trim()
+    if (!prompt) { if (hint) hint.textContent = '先写一句需求'; return }
+    if (hint) hint.textContent = '生成中…'
+    try {
+      const r = await api('/api/action/draft-python-script', { prompt })
+      document.getElementById('pyNewCode').value = r.content || ''
+      const nameInput = document.getElementById('pyNewName')
+      if (!nameInput.value.trim()) nameInput.value = r.filename || 'new.py'
+      const who = r.model ? ('由 ' + r.model + ' 生成') : '草稿已生成'
+      if (hint) hint.textContent = who + (r.warnings && r.warnings.length ? ('；注意：' + r.warnings.join('；')) : '；确认后保存')
+    } catch(e){ if (hint) hint.textContent = '生成失败：' + e.message }
+  }
+  const pyTplBtn = document.getElementById('pyTplBtn')
+  if (pyTplBtn) pyTplBtn.onclick = function(){
+    document.getElementById('pyNewCode').value = [
+      '# name: 新脚本',
+      '# desc: 一句话说明这个脚本做什么',
+      '# usage: /py 新脚本 参数',
+      '# admin: true',
+      '# cmd: 参数 | 说明',
+      'import sys',
+      '',
+      'args = sys.argv[1:]',
+      "if not args:",
+      "    print('用法：/py 新脚本 参数')",
+      '    sys.exit(1)',
+      '',
+      "print('收到：' + ' '.join(args))",
+      ''
+    ].join('\n')
+    const nameInput = document.getElementById('pyNewName')
+    if (!nameInput.value.trim()) nameInput.value = 'new.py'
+  }
+  const pyNewClear = document.getElementById('pyNewClear')
+  if (pyNewClear) pyNewClear.onclick = function(){
+    document.getElementById('pyPrompt').value = ''
+    document.getElementById('pyNewCode').value = ''
+    document.getElementById('pyNewName').value = ''
+    document.getElementById('pyDraftHint').textContent = ''
+    document.getElementById('pyNewHint').textContent = ''
+  }
+  const pyNewSave = document.getElementById('pyNewSave')
+  if (pyNewSave) pyNewSave.onclick = async function(){
+    const hint = document.getElementById('pyNewHint')
+    const name = document.getElementById('pyNewName').value.trim()
+    const code = document.getElementById('pyNewCode').value
+    if (!name) { if (hint) hint.textContent = '请填文件名，例如 wc.py'; return }
+    if (!code.trim()) { if (hint) hint.textContent = '代码是空的'; return }
+    try {
+      await api('/api/action/import-python-script', { filename: name, content: code })
+      const cmdInput = document.getElementById('pyNewCmd')
+      const id = name.replace(/\.py$/i, '')
+      let cmd = id
+      if (cmdInput && cmdInput.value.trim()) {
+        const r = await api('/api/action/set-python-command', { id, command: cmdInput.value.trim() })
+        cmd = r.command
+      }
+      if (hint) hint.textContent = '已保存：' + name + '（调用名 /py ' + cmd + '）'
+      toast('已保存 ' + name + '，用 /py ' + cmd + ' 调用')
+      await load(); render()
+    } catch(e){ if (hint) hint.textContent = '保存失败：' + e.message; toast('保存失败：' + e.message, true) }
+  }
+  document.querySelectorAll('[data-pycmdsave]').forEach(function(b){
+    b.onclick = async function(){
+      const id = b.dataset.pycmdsave
+      const input = document.querySelector('[data-pycmd="' + id + '"]')
+      try {
+        const r = await api('/api/action/set-python-command', { id, command: input ? input.value : '' })
+        toast('调用名已改为 /py ' + r.command)
+        await load(); render()
+      } catch(e){ toast('保存失败：' + e.message, true) }
+    }
+  })
   const pokeSave = document.getElementById('pokeSave')
   if (pokeSave) pokeSave.onclick = async function(){
     const box = document.getElementById('pokeText')
@@ -1319,12 +1481,12 @@ async function bind(){
     const hint = document.getElementById('retagHint')
     retagAll.disabled = true
     try {
-      const r = await api('/api/action/retag-stickers', {})
+      const r = await stickerApi('/api/action/retag-stickers', {})
       if (hint) hint.textContent = '开始处理 ' + r.total + ' 张…'
       const timer = setInterval(async function(){
         try {
-          const st = await api('/api/stickers/retag-status')
-          if (hint) hint.textContent = st.running ? ('处理中 ' + st.done + '/' + st.total + '，失败 ' + st.errors) : ('完成 ' + st.done + '/' + st.total + '，失败 ' + st.errors)
+          const st = await api('/api/stickers/retag-status?scope='+encodeURIComponent(boundStickerScope || ''))
+          if (hint) hint.textContent = st.running ? ('处理中 ' + st.done + '/' + st.total + '，跳过 ' + (st.skipped || 0) + '，失败 ' + st.errors + (st.cancelled ? '（人格切换已取消）' : '')) : ('完成 ' + st.done + '/' + st.total + '，跳过 ' + (st.skipped || 0) + '，失败 ' + st.errors + (st.cancelled ? '（人格切换已取消）' : ''))
           if (!st.running) { clearInterval(timer); retagAll.disabled = false; await load() }
         } catch(e) { clearInterval(timer); retagAll.disabled = false }
       }, 2000)
@@ -1332,11 +1494,11 @@ async function bind(){
   }
   document.querySelectorAll('[data-restore]').forEach(function(b){
     b.onclick = async function(){
-      if (!await ask('还原到 ' + b.dataset.restore + '？', '会先自动备份当前数据，再覆盖记忆、表情包和配置；还原后需要重启。', '还原')) return
+      if (!await ask('还原到 ' + b.dataset.restore + '？', '会先备份当前数据，并固定选中的备份副本；重启后在读取记忆前应用还原。必须与备份使用同一人格。', '还原')) return
       b.disabled = true
       try {
         const r = await api('/api/action/restore-backup', { name: b.dataset.restore })
-        toast('已还原 ' + r.restored + '，正在重启…')
+        toast('还原任务已准备：' + r.restored + '，正在重启后应用…')
         await api('/api/action/restart-bot', {})
       } catch(e){ toast('还原失败：' + e.message, true); b.disabled = false }
     }
@@ -2168,7 +2330,7 @@ async function load(){
     selfCheckInfo = await api('/api/selfcheck').catch(function(){ return null })
     errorInfo = (await api('/api/errors').catch(function(){ return { items: [] } })).items || []
     pokeReplies = (await api('/api/poke-replies').catch(function(){ return { lines: [] } })).lines || []
-    pythonScripts = (await api('/api/python-scripts').catch(function(){ return { items: [] } })).items || []
+    await loadPythonScripts()
     tasksInfo = await api('/api/tasks').catch(function(){ return null })
     metricsInfo = (await api('/api/metrics?days=' + metricsRange).catch(function(){ return { items: [] } })).items || []
     updateSideStatus(s.bot)

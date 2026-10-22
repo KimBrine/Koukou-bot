@@ -520,7 +520,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         hasKey: Boolean(config.deepseekApiKey),
       },
     }),
-    'GET /api/stickers/retag-status': async () => (retagJob || { running: false, done: 0, total: 0, errors: 0 }),
+    'GET /api/stickers/retag-status': async (query) => (!stickers?.scope || (query?.scope===stickers.scope().token && retagJob?.scope===query.scope)) ? (retagJob || {running:false,done:0,total:0,errors:0}) : {running:false,done:0,total:0,errors:0},
     'GET /api/metrics': async (query) => {
       const days = Math.max(1, Math.min(30, Number(query && query.days) || 7))
       return { days, items: metrics ? metrics.snapshot(days) : [] }
@@ -531,13 +531,14 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       return {
         version: 1,
         exportedAt: Date.now(),
+        persona: String(config.activePersona || ''),
         memory: readJson(config.memoryFile),
         longMemory: readJson(path.join(config.dataDir, 'long-memory.json')),
       }
     },
     'GET /api/errors': async () => ({ items: errors ? errors.list() : [] }),
     'GET /api/poke-replies': async () => ({ lines: pokeReplies && Array.isArray(pokeReplies.lines) ? [...pokeReplies.lines] : [] }),
-    'GET /api/python-scripts': async () => ({ dir: pythonPlugins ? pythonPlugins.dir : '', items: pythonPlugins ? pythonPlugins.list() : [] }),
+    'GET /api/python-scripts': async () => ({ dir: pythonPlugins ? pythonPlugins.dir : '', items: pythonPlugins ? pythonPlugins.list() : [], settings: pythonPlugins ? pythonPlugins.getSettings() : { recallMinutes: 5 } }),
     'GET /api/tasks': async () => ({
       backup: { last: backup ? backup.lastBackupAt() : 0, everyHours: 6 },
       summary: { enabled: Boolean(config.summaryEnabled), times: config.summaryTimes || '' },
@@ -562,7 +563,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       enabled: Boolean(config.stickersEnabled),
       learned: stickers && typeof stickers.learned === 'function' ? stickers.learned() : 0,
       scenes: STICKER_SCENES,
-      learn: { enabled: Boolean(config.stickerLearnEnabled), private: Boolean(config.stickerLearnPrivate), perHour: config.stickerLearnPerHour, groups: [...(config.stickerLearnGroups || [])] },
+      learn: { ...stickers?.learningStatus?.(), enabled: Boolean(config.stickerLearnEnabled) && stickers?.learningAllowed?.() !== false, private: Boolean(config.stickerLearnPrivate), perHour: config.stickerLearnPerHour, groups: [...(config.stickerLearnGroups || [])] },
       settings: { enabled: Boolean(config.stickersEnabled), autoRate: Math.round((config.stickerAutoRate ?? .35) * 100), maxPerReply: config.stickerMaxPerReply || 1, scope: config.stickerSendScope || 'all', groups: [...(config.stickerSendGroups || [])], pickMode: config.stickerPickMode || 'context', cooldownSeconds: config.stickerCooldownSeconds || 0 },
     }),
     'GET /api/config': async () => {
@@ -629,6 +630,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     if (key === 'DEEPSEEK_REASONING_EFFORT') return config.deepseekReasoningEffort ?? ''
     const cur = readEnvFile(envFile)[key]
     const map = {
+      STICKER_LEARN_ENABLED: () => config.stickerLearnEnabled && stickers?.learningAllowed?.() !== false ? '1' : '0',
       STICKER_MAX_PER_REPLY: () => String(config.stickerMaxPerReply || 1),
       STICKER_SEND_SCOPE: () => config.stickerSendScope || 'all',
       STICKER_SEND_GROUPS: () => [...(config.stickerSendGroups || [])].join(','),
@@ -780,6 +782,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         config.stickerLearnPrivate = bool(value)
         break
       case 'STICKER_LEARN_ENABLED':
+        if (bool(value)) stickers?.resumeLearning?.()
         config.stickerLearnEnabled = ['1', 'true'].includes(String(value ?? '').trim().toLowerCase())
         break
       case 'STICKER_LEARN_GROUPS':
@@ -918,6 +921,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         const value = String(raw ?? '')
         if (/[\r\n]/.test(value)) throw new Error(`${field.label} 不能包含换行`)
         validateGroupConfig(key, value)
+        if (key === 'STICKER_LEARN_ENABLED' && /^(1|true)$/i.test(String(value).trim()) && stickers?.learningStatus?.().full) throw new Error('当前人格图库已满60张，请先人工清理后再开启学习')
         if (key === 'DEEPSEEK_REASONING_EFFORT' && !['','none','low','high','max'].includes(value)) throw new Error('DeepSeek 思考强度应为默认、关闭、low、high或max')
         if (field.type === 'rate' && (!Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 1)) {
           throw new Error(`${field.label} 应在 0～1 之间`)
@@ -956,6 +960,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       const field = EDITABLE.find((f) => f.key === key)
       if (!field) throw new Error(`不认识的配置项：${key}`)
       validateGroupConfig(key, String(value ?? ''))
+      if (key === 'STICKER_LEARN_ENABLED' && /^(1|true)$/i.test(String(value).trim()) && stickers?.learningStatus?.().full) throw new Error('当前人格图库已满60张，请先人工清理后再开启学习')
       validateVisionPatch({[key]:String(value??'')})
       writeEnvFile(envFile, { [key]: String(value ?? '') })
       const live = applyLive(key, value)
@@ -1370,30 +1375,39 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       return { length: text.length, lines: lines.length, warnings }
     },
     async 'memory-import'(payload) {
-      const data = payload && payload.data
-      if (!data || typeof data !== 'object') throw new Error('导入内容无效')
-      const mem = data.memory && typeof data.memory === 'object' ? data.memory : null
-      const long = data.longMemory && typeof data.longMemory === 'object' ? data.longMemory : null
-      if (!mem && !long) throw new Error('文件里没有记忆数据')
-      if (backup) backup.run({ reason: '导入前备份' })
-      if (mem) memory.restore({ chats: mem, resetAt: 0, keyResetAt: {} })
-      if (long) {
-        const snap = typeof longMemory.snapshot === 'function' ? longMemory.snapshot() : null
-        longMemory.restore({ chats: long, epoch: snap && snap.epoch, keyEpochs: (snap && snap.keyEpochs) || {} })
-      }
+      const data=payload?.data
+      if(!data || typeof data!=='object' || Array.isArray(data))throw Error('导入内容无效')
+      if(data.persona!==undefined && data.persona!==String(config.activePersona||''))throw Error('请先切换到导出文件所用人格，再导入记忆')
+      const mem=data.memory,long=data.longMemory
+      const object=v=>v && typeof v==='object' && !Array.isArray(v)
+      if(!object(mem)&&!object(long))throw Error('文件里没有记忆数据')
+      for(const [key,items] of Object.entries(mem||{}))if(!/^[gp]\d{1,15}$/.test(key)||!Array.isArray(items)||items.some(x=>!object(x)||!['user','assistant','system'].includes(x.role)||typeof x.content!=='string'))throw Error('近期记忆格式错误')
+      for(const [key,item] of Object.entries(long||{}))if(!/^[gp]\d{1,15}$/.test(key)||!object(item)||typeof item.summary!=='string'||!Array.isArray(item.pending)||item.pending.some(x=>!object(x)||typeof x.text!=='string'))throw Error('长期记忆格式错误')
+      memory?.flush?.();longMemory?.save?.({strict:true})
+      const old=memory.snapshot(),oldLong=longMemory.snapshot()
+      if(!backup)throw Error('备份不可用，未开始导入')
+      backup.run({reason:'导入前备份'})
+      try {
+        if(mem)memory.restore({chats:mem,resetAt:Math.floor(Date.now()/1000)*1000,keyResetAt:{}})
+        if(long)longMemory.restore({chats:long,epoch:randomUUID(),keyEpochs:{}})
+      } catch(err){memory.restore(old);longMemory.restore(oldLong);throw err}
       logger?.info?.('[控制台] 已导入记忆')
-      return { ok: true, recentKeys: Object.keys(mem || {}).length, longKeys: Object.keys(long || {}).length }
+      return {ok:true,recentKeys:Object.keys(mem||{}).length,longKeys:Object.keys(long||{}).length}
     },
-    async 'detect-similar'() {
-      const list = stickers.list() || []
-      const files = list.map((x) => path.join(stickers.dir, x.file)).filter((f) => existsSync(f))
+    async 'detect-similar'(payload) {
+      if (stickers?.scope && payload?.stickerScope!==stickers.scope().token) throw Error('人格已变化，请刷新后再操作')
+      if (!imageHasher.supported) throw Error('当前系统暂不支持相似图检测，仍保留文件哈希去重')
+      const selected=stickers.snapshot?.(),library=selected?.store||stickers
+      const list = library.list() || []
+      const files = list.map((x) => path.join(library.dir, x.file)).filter((f) => existsSync(f))
       await imageHasher.hashFiles(files)
+      if (selected && !selected.current()) throw Error('人格已变化，已取消相似图结果')
       const groups = []
       for (let i = 0; i < list.length; i += 1) {
-        const a = imageHasher.hashOf(list[i])
+        const a = imageHasher.hashOf(list[i],library.dir)
         if (!a) continue
         for (let j = i + 1; j < list.length; j += 1) {
-          const b = imageHasher.hashOf(list[j])
+          const b = imageHasher.hashOf(list[j],library.dir)
           if (!b) continue
           const d = imageHasher.distance(a, b)
           if (d <= 8) groups.push({ distance: d, a: { id: list[i].id, name: list[i].name }, b: { id: list[j].id, name: list[j].name } })
@@ -1404,37 +1418,105 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       return { checked: list.length, groups: groups.slice(0, 200) }
     },
     async 'retag-stickers'(payload) {
-      if (!stickerTagLLM || typeof stickerTagLLM.describeImages !== 'function') throw new Error('打标模型未配置')
-      if (retagJob && retagJob.running) throw new Error('正在生成中，请稍候')
-      const only = Array.isArray(payload && payload.ids) ? payload.ids : null
-      const missingOnly = payload && payload.onlyMissing === true
-      let list = (stickers.list() || []).filter((x) => !only || only.includes(x.id))
-      if (missingOnly) list = list.filter((x) => !String(x.description || '').trim() || !(x.keywords || []).length || !String(x.name || '').trim())
-      retagJob = { running: true, done: 0, total: list.length, errors: 0, startedAt: Date.now() }
-      ;(async () => {
-        for (const item of list) {
+      if (stickers?.scope && payload?.stickerScope!==stickers.scope().token) throw Error('人格已变化，请刷新后再操作')
+      if (!stickerTagLLM || typeof stickerTagLLM.describeImages !== 'function') throw Error('打标模型未配置')
+      if (retagJob?.running) throw Error('正在生成中，请稍候')
+      const selected=stickers.snapshot?.(),library=selected?.store||stickers
+      const current=()=>!selected || selected.current()
+      const tagClient=stickerTagLLM.snapshot?.()||stickerTagLLM
+      const fields=item=>item && {id:item.id,hash:item.hash,name:item.name,keywords:item.keywords,scenes:item.scenes,description:item.description}
+      const only=Array.isArray(payload?.ids)?payload.ids:null,missingOnly=payload?.onlyMissing===true
+      const list=library.list().filter(x=>(!only||only.includes(x.id)) && (!missingOnly||!x.description?.trim()||!x.keywords?.length||!x.name?.trim())).map(item=>({item,revision:stamp(fields(item))}))
+      const job={running:true,done:0,total:list.length,errors:0,skipped:0,startedAt:Date.now(),scope:stickers.scope?.().token}
+      retagJob=job
+      ;(async()=>{
+        try { for(const {item,revision} of list){
+          if(!current()){job.cancelled=true;break}
           try {
-            const dataUrl = typeof stickers.dataUrlOf === 'function' ? stickers.dataUrlOf(item) : null
-            if (!dataUrl) { retagJob.errors += 1; continue }
-            const raw = await stickerTagLLM.describeImages(
-              '你是表情包标注器。只输出 JSON：{"name":"简短名称","keywords":["关键词"],"scenes":["场景id"],"description":"一两句使用场景"}。画面不确定就返回空数组，不要编。',
-              '标注这张表情包', [{ type: 'image_url', image_url: { url: dataUrl } }], { maxTokens: 500 })
-            const m = String(raw || '').match(/\{[\s\S]*\}/)
-            const j = m ? JSON.parse(m[0]) : null
-            if (j && j.name) stickers.update(item.id, { name: j.name, keywords: (j.keywords || []).join(' '), scenes: Array.isArray(j.scenes) ? j.scenes : [], description: j.description || '' })
-          } catch { retagJob.errors += 1 }
-          retagJob.done += 1
-          await new Promise((r) => setTimeout(r, 900))
-        }
-        retagJob.running = false
-        logger?.info?.('[控制台] 表情包批量打标完成：' + retagJob.done + ' 张，失败 ' + retagJob.errors)
-      })().catch((err) => { retagJob.running = false; retagJob.error = err.message })
-      return { ok: true, total: list.length }
+            if(stamp(fields(library.get(item.id)))!==revision){job.skipped++;continue}
+            const file=library.dataUrlOf(item)
+            if(!file)throw Error('图片已删除或拉黑')
+            const dataUrl=file.startsWith('base64://')?'data:'+item.mime+';base64,'+file.slice('base64://'.length):file
+            const draft=await suggestStickerMetadata({dataUrl,tagLLM:tagClient})
+            if(!current()){job.cancelled=true;break}
+            if(stamp(fields(library.get(item.id)))!==revision){job.skipped++;continue}
+            const patch={}
+            if(!missingOnly||!item.name?.trim())patch.name=draft.name
+            if(!missingOnly||!item.keywords?.length)patch.keywords=draft.keywords.join(' ')
+            if(!missingOnly||!item.scenes?.length)patch.scenes=draft.scenes
+            if(!missingOnly||!item.description?.trim())patch.description=draft.description
+            library.update(item.id,patch)
+          } catch(err){job.errors++;job.lastError=err.message}
+          finally {job.done++}
+        }} finally {job.running=false;logger?.info?.('[控制台] 表情包批量打标结束：'+job.done+' 张，跳过 '+job.skipped+' 张，失败 '+job.errors)}
+      })().catch(err=>{job.running=false;job.error=err.message})
+      return {ok:true,total:list.length}
+    },
+    async 'draft-python-script'(payload) {
+      if (!pythonPlugins) throw new Error('Python 插件未启用')
+      if (typeof llm?.chat !== 'function') throw new Error('AI 接口尚未配置')
+      const prompt = String((payload && payload.prompt) || '').trim()
+      if (!prompt) throw new Error('请先描述这个脚本要做什么')
+      if (prompt.length > 3000) throw new Error('描述请控制在 3000 字内')
+
+      const system = [
+        '你在为 Koukou 机器人的 Python 插件系统写单个 .py 脚本，只输出一个 ```python 代码块，不要解释。',
+        '运行方式：python 脚本名.py 参数……；结果用 print 写到 stdout，机器人把 stdout 当回复（最多 1500 字）。',
+        '必须遵守：',
+        '1. 只用 Python 标准库；需要第三方库时，检测不到就打印一行 pip 安装提示并 sys.exit(1)，不要自动安装。',
+        '2. 文件开头写元数据注释：',
+        '   # name: 中文名',
+        '   # desc: 一句话说明',
+        '   # usage: /py 脚本名 参数（脚本名不带 .py）',
+        '   # admin: true',
+        '   # cmd: 用法 | 说明（每个子功能一行，按需要写若干行）',
+        '3. 不读写系统目录、不执行 shell、不读环境变量里的密钥、不做与功能无关的网络请求。',
+        '4. 不写 QQ/OneBot 调用；如果需要发文件或发卡片，只能用 @@FILE@@ / @@CARD@@ 前缀输出 JSON。',
+        '5. 中文提示，60 行以内，参数缺失要给出用法。',
+      ].join('\n')
+
+      // 不传 maxTokens：输出上限跟随全局模型预算（控制台「模型与接口」可调），
+      // 模型、温度、思考强度都与对话共用同一个 llm 客户端。
+      const raw = await llm.chat(system, [{ role: 'user', content: prompt }],
+        { signal: AbortSignal.timeout(600000), rejectTruncated: true, unlimited: true })
+      const text = String(raw || '')
+      const block = /```(?:python|py)?\s*([\s\S]*?)```/i.exec(text)
+      const content = (block ? block[1] : text).trim()
+      if (!content) throw new Error('AI 没有返回代码')
+
+      const warnings = []
+      const risky = [
+        [/os\.system|subprocess|shutil\.rmtree|os\.remove|os\.rmdir/, '会执行命令或删除文件'],
+        [/eval\(|exec\(|__import__/, '使用了 eval/exec 动态执行'],
+        [/socket\.|requests\.|urllib\.request|http\.client/, '会发起网络请求'],
+        [/os\.environ|getenv/, '会读取环境变量'],
+      ]
+      for (const [re, msg] of risky) if (re.test(content)) warnings.push(msg)
+
+      const stamp = new Date().toISOString().slice(5, 16).replace(/[-:T]/g, '')
+      return { ok: true, content, filename: `new_${stamp}.py`, warnings, model: String(llm.model || ''), effort: String(llm.reasoningEffort || 'default') }
+    },
+    async 'set-python-command'(payload) {
+      if (!pythonPlugins) throw new Error('Python 插件未启用')
+      const command = pythonPlugins.setCommandName(payload && payload.id, payload && payload.command)
+      return { ok: true, command }
+    },
+    async 'read-python-script'(payload) {
+      if (!pythonPlugins) throw new Error('Python 插件未启用')
+      return { content: pythonPlugins.readScript(payload && payload.id) }
+    },
+    async 'save-python-settings'(payload) {
+      if (!pythonPlugins) throw new Error('Python 插件未启用')
+      return { ok: true, settings: pythonPlugins.setSettings(payload || {}) }
     },
     async 'import-python-script'(payload) {
       if (!pythonPlugins) throw new Error('Python 插件未启用')
       const item = pythonPlugins.importScript(payload && payload.filename, payload && payload.content)
       return { ok: true, item }
+    },
+    async 'toggle-python-script'(payload) {
+      if (!pythonPlugins) throw new Error('Python 插件未启用')
+      return { enabled: pythonPlugins.setEnabled(payload && payload.id, Boolean(payload && payload.enabled)) }
     },
     async 'delete-python-script'(payload) {
       if (!pythonPlugins) throw new Error('Python 插件未启用')
@@ -1469,28 +1551,12 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       const dir = path.resolve(config.dataDir, 'backups', name)
       if (path.dirname(dir) !== path.resolve(config.dataDir, 'backups') || !existsSync(dir)) throw new Error('找不到这份备份')
       if (!backup) throw new Error('备份服务未启用')
-      const snapshotStats = () => ({
-        memory: typeof memory.keys === 'function' ? memory.keys().reduce((n, k) => n + memory.count(k), 0) : 0,
-        longMemory: (() => { try { return JSON.stringify(longMemory.snapshot().chats || {}).length } catch { return 0 } })(),
-        stickers: stickers.list().length,
-        commands: customCommands.all().length,
-      })
-      const statsBefore = snapshotStats()
-      const before = backup.run({ reason: '还原前自动备份' })
-      const items = ['memory.json', 'memory.json.reset.json', 'long-memory.json', 'long-memory.json.state.json', 'chat-settings.json', 'custom-commands.json', 'vision-providers.json', 'personas', 'stickers']
-      for (const item of items) {
-        const src = path.join(dir, item)
-        if (!existsSync(src)) continue
-        const dest = path.join(config.dataDir, item)
-        try { rmSync(dest, { recursive: true, force: true }); cpSync(src, dest, { recursive: true }) }
-        catch (err) { throw new Error('还原 ' + item + ' 失败：' + err.message) }
-      }
-      logger?.info?.('[控制台] 已从备份还原：' + name + '（还原前已备份为 ' + before.name + '）')
-      const statsAfter = snapshotStats()
-      return { ok: true, restored: name, before: before.name, stats: { before: statsBefore, after: statsAfter } }
+      memory?.flush?.(); longMemory?.save?.({strict:true})
+      return backup.queueRestore(name)
     },
     async 'backup'() {
       if (!backup) throw new Error('备份不可用')
+      memory?.flush?.(); longMemory?.save?.({strict:true})
       const result = backup.run({ reason: 'manual' })
       logger?.info?.('[控制台] 手动备份完成：' + result.name)
       return { ok: true, ...result }

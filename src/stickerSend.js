@@ -19,9 +19,9 @@ export function createStickerSendPolicy({config,stickers,rand=Math.random,now=Da
     if(now()-(last.get(key)??-Infinity)<(config.stickerCooldownSeconds||0)*1000)return {items:[],reason:'会话配图冷却'}
     if(!requested&&(rate<=0||rand()>=rate))return {items:[],reason:'未命中配图概率'}
     const limit=Math.max(1,Math.min(3,config.stickerMaxPerReply||1)),mode=config.stickerPickMode||'context'
-    let source=mode==='random'?'用户配置随机模式':'模型按完整名称选图'
-    let items=mode==='random'?[]:queries.map(q=>store.find(q,{exact:!requested})).filter(Boolean)
-    // 普通自动配图不以关键词、历史使用或随机结果替模型补选。
+    let source=mode==='random'?'用户配置随机模式':'模型候选按匹配程度加权抽取'
+    let items=mode==='random'?[]:store.choose?store.choose(queries,{limit,rand}):queries.map(q=>store.find(q)).filter(Boolean)
+    // 普通配图只对模型候选做模糊加权匹配，不另用整段历史或全库随机补选。
     // 明确索图仍可按语境/随机兜底，用户主动选择随机模式也保留原行为。
     if(!items.length&&(mode==='random'||requested)){
       const item=mode==='random'?store.random():store.pick(context+' '+text)

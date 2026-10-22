@@ -343,6 +343,25 @@ export class OneBotClient extends EventEmitter {
     return this.api('send_group_forward_msg', { group_id: Number(groupId), messages }, timeoutMs)
   }
 
+  /** 发送私聊合并转发（"聊天记录"卡片），节点结构同 sendGroupForward。 */
+  sendPrivateForward(userId, nodes, timeoutMs = 30000) {
+    const list = (Array.isArray(nodes) ? nodes : []).filter(Boolean)
+    if (list.length === 0) return Promise.reject(new Error('合并转发内容为空'))
+    const uin = String(this.selfId ?? '')
+    const messages = list.map((n) => {
+      const name = String(n.name ?? this.nickname ?? '')
+      const from = String(n.uin ?? uin)
+      const content = Array.isArray(n.content)
+        ? n.content
+        : [{ type: 'text', data: { text: String(n.content ?? n.text ?? '') } }]
+      return {
+        type: 'node',
+        data: { uin: from, name, user_id: from, nickname: name, content },
+      }
+    })
+    return this.api('send_private_forward_msg', { user_id: Number(userId), messages }, timeoutMs)
+  }
+
   /** 撤回指定原生消息；群范围与作者由本人互动模块核实。 */
   deleteMessage(messageId,timeoutMs=10000){
     if(!/^-?\d{1,16}$/.test(String(messageId))||!Number.isSafeInteger(Number(messageId))||Number(messageId)===0)throw Error('撤回消息编号无效')
