@@ -71,7 +71,7 @@ let selfCheckInfo = null
 let errorInfo = []
 let pokeReplies = []
 let pythonScripts = []
-let pythonSettings = { recallSeconds: 300 }
+let pythonSettings = { recallSeconds: 300, recallEnabled: true }
 let pythonDir = ''
 let pyOpen = { card: false, rows: [], editors: [] }
 let tasksInfo = null
@@ -638,6 +638,7 @@ async function loadPythonScripts(){
 function pythonCard(){
   const items = pythonScripts || []
   const recall = (pythonSettings && pythonSettings.recallSeconds) || 300
+  const recallOn = !pythonSettings || pythonSettings.recallEnabled !== false
   const rows = items.map(function(s){
     const id = esc(s.id)
     return '<details class="frow"' + (pyOpen.rows.indexOf(s.id) >= 0 ? ' open' : '') + '><summary><b>' + esc(s.name) + '</b> <span class="mut">/' + id + '</span>' +
@@ -663,7 +664,7 @@ function pythonCard(){
   return '<details class="card"' + (pyOpen.card ? ' open' : '') + ' data-pycard><summary><b>Python 脚本</b> <span class="pill">' + items.length + ' 个</span> <span class="mut">点开管理、编辑内容</span></summary>' +
     '<div class="note">放在 plugins/python 下的白名单脚本，用 <code>/py 脚本名 参数</code> 运行，默认仅管理员。脚本以机器人权限执行，只导入可信文件。保存会留一份 .bak。</div>' +
     '<div class="flexbar" style="margin:8px 0;gap:8px;flex-wrap:wrap"><span class="mut">脚本目录</span><code style="font-size:12px;word-break:break-all">' + esc(pythonDir || 'plugins/python') + '</code><button class="btn sm" data-pycopy="' + esc(pythonDir || '') + '">复制路径</button><button class="btn sm" data-pyopen="">打开文件夹</button></div>' +
-    '<div class="flexbar" style="margin:10px 0"><label class="mut">打包默认撤回（秒）</label><input id="pyRecall" type="number" min="5" max="7200" step="5" value="' + recall + '" style="width:90px"><button class="btn sm" id="pyRecallSave">保存</button><span class="mut" id="pyRecallHint"></span></div>' +
+    '<div class="flexbar" style="margin:10px 0"><label class="chk"><input type="checkbox" id="pyRecallOn"' + (recallOn ? ' checked' : '') + '> 发送后自动撤回</label><label class="mut" style="margin-left:10px">保留时长（秒）</label><input id="pyRecall" type="number" min="5" max="7200" step="5" value="' + recall + '" style="width:90px"><button class="btn sm" id="pyRecallSave">保存</button><span class="mut" id="pyRecallHint"></span></div>' +
     (rows || '<div class="mut">还没有脚本</div>') +
     '<details class="frow" style="margin-top:10px"><summary><b>＋ 新建脚本</b> <span class="mut">自己写，或让 AI 起草</span></summary>' +
       '<div class="mut" style="margin:8px 0 6px">三种填法，效果一样：① 点「插入模板」拿骨架自己改；② 写一句需求让「AI 生成草稿」；③ 直接把完整代码粘进来。保存后会写成 plugins/python/文件名.py，不用重启，立刻能用 <code>/py 文件名</code> 调用。</div>' +
@@ -1453,10 +1454,11 @@ async function bind(){
   if (pyRecallSave) pyRecallSave.onclick = async function(){
     const hint = document.getElementById('pyRecallHint')
     try {
-      const r = await api('/api/action/save-python-settings', { recallSeconds: Number(document.getElementById('pyRecall').value) })
+      const r = await api('/api/action/save-python-settings', { recallSeconds: Number(document.getElementById('pyRecall').value), recallEnabled: document.getElementById('pyRecallOn').checked })
       pythonSettings = r.settings || pythonSettings
-      if (hint) hint.textContent = '已保存：' + pythonSettings.recallSeconds + ' 秒'
-      toast('默认撤回已设为 ' + pythonSettings.recallSeconds + ' 秒')
+      const on = pythonSettings.recallEnabled !== false
+      if (hint) hint.textContent = '已保存：' + (on ? '自动撤回 ' + pythonSettings.recallSeconds + ' 秒' : '不自动撤回')
+      toast(on ? ('默认撤回已设为 ' + pythonSettings.recallSeconds + ' 秒') : '已关闭自动撤回')
     } catch(e){ if (hint) hint.textContent = e.message; toast('保存失败：' + e.message, true) }
   }
   const pyDraftBtn = document.getElementById('pyDraftBtn')

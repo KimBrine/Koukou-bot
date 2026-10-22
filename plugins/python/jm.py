@@ -34,7 +34,7 @@ jm.py —— 机器人用的后台下载插件 + 详情查询
     查/查询/jmv 350234   查本子详情（不发图，纯文本）
     发图 350234 [张数]    直接把第一话前几张图发到聊天（默认3，最多6）
     记录 350234 [张数]    详情+整话图片打包成一条聊天记录卡片（不填张数=整话全部）
-    打包 350234 [秒]    把已下载的本子压成 zip 以文件发送，默认按控制台设置（300 秒）撤回
+    打包 350234 [秒]    压成 zip 以文件发送；默认按控制台开关（开=300 秒后撤回），给了秒数则一定撤回
     123456          下载本子(album)
     p345678         下载单个章节(photo)
     状态/status     当前任务进度
@@ -651,18 +651,19 @@ def cmd_card(raw, count_arg=''):
 
 
 def _plugin_settings():
-    """读控制台里配的默认值（plugins/python/settings.json），单位秒，读不到就用 300 秒。"""
+    """读控制台配置（plugins/python/settings.json）：返回 (默认撤回秒数, 是否自动撤回)。"""
     try:
-        raw = json.loads((HERE / 'settings.json').read_text(encoding='utf-8'))
+        raw = json.loads((HERE / 'settings.json').read_text(encoding='utf-8-sig'))
         if 'recallSeconds' in raw:
             n = int(raw['recallSeconds'])
         elif 'recallMinutes' in raw:          # 兼容旧配置
             n = int(raw['recallMinutes']) * 60
         else:
             n = 300
-        return max(5, min(7200, n))
+        enabled = True if 'recallEnabled' not in raw else bool(raw['recallEnabled'])
+        return max(5, min(7200, n)), enabled
     except Exception:
-        return 300
+        return 300, True
 
 
 def cmd_pack(raw='', minutes_arg=''):
@@ -690,13 +691,15 @@ def cmd_pack(raw='', minutes_arg=''):
         target = max(dirs, key=lambda p: p.stat().st_mtime)
 
     arg = (minutes_arg or '').strip()
+    default_seconds, recall_enabled = _plugin_settings()
     if arg:
         try:
             seconds = int(arg)
+            recall_enabled = True          # 显式给了秒数，就按用户要求撤回
         except ValueError:
-            seconds = _plugin_settings()
+            seconds = default_seconds
     else:
-        seconds = _plugin_settings()
+        seconds = default_seconds
     seconds = max(5, min(seconds, 7200))
 
     outdir = state_dir() / 'exports'
@@ -715,7 +718,7 @@ def cmd_pack(raw='', minutes_arg=''):
     payload = {
         'path': zip_path.as_posix(),
         'name': zip_path.name,
-        'recall_seconds': seconds,
+        'recall_seconds': seconds if recall_enabled else 0,
         'text': f'打包完成：{zip_path.name}（{size_mb:.1f} MB）',
     }
     return '@@FILE@@' + json.dumps(payload, ensure_ascii=False)
