@@ -655,6 +655,13 @@ function pythonCard(){
     '<div class="note">放在 plugins/python 下的白名单脚本，用 <code>/py 脚本名 参数</code> 运行，默认仅管理员。脚本以机器人权限执行，只导入可信文件。保存会留一份 .bak。</div>' +
     '<div class="flexbar" style="margin:10px 0"><label class="mut">打包默认撤回（秒）</label><input id="pyRecall" type="number" min="5" max="7200" step="5" value="' + recall + '" style="width:90px"><button class="btn sm" id="pyRecallSave">保存</button><span class="mut" id="pyRecallHint"></span></div>' +
     (rows || '<div class="mut">还没有脚本</div>') +
+    '<details class="frow" style="margin-top:10px"><summary><b>＋ 新建脚本</b> <span class="mut">自己写，或让 AI 起草</span></summary>' +
+      '<div class="mut" style="margin:8px 0 6px">描述你要的功能，AI 只生成草稿，代码会放在下面，确认后再保存。保存后即可用 <code>/py 文件名</code> 调用。</div>' +
+      '<textarea id="pyPrompt" placeholder="例如：把一段文字倒序输出，并统计字符数；参数为空时提示用法" style="width:100%;min-height:70px"></textarea>' +
+      '<div class="flexbar" style="margin:8px 0"><input id="pyNewName" placeholder="文件名，如 wc.py" style="width:180px"><button class="btn sm" id="pyDraftBtn">AI 生成草稿</button><button class="btn sm" id="pyTplBtn">插入模板</button><span class="mut" id="pyDraftHint"></span></div>' +
+      '<textarea id="pyNewCode" spellcheck="false" placeholder="代码会出现在这里，也可以自己直接写" style="width:100%;min-height:240px;font-family:Consolas,monospace;font-size:12px"></textarea>' +
+      '<div class="flexbar" style="margin-top:6px"><button class="btn primary sm" id="pyNewSave">保存脚本</button><button class="btn sm" id="pyNewClear">清空</button><span class="mut" id="pyNewHint"></span></div>' +
+    '</details>' +
     '<div class="flexbar" style="margin-top:10px"><label class="btn" style="cursor:pointer">导入 .py<input type="file" id="pyImport" accept=".py" style="display:none"></label><span class="mut" id="pyHint"></span></div></details>'
 }
 function pageCommands(){ return CommandCenterUI.render({custom:customCommands,builtins:commandBuiltins,poke:pokeDiagnostics,groups:joinedGroups}) + commandTestCard() + pokeCorpusCard() + pythonCard() }
@@ -1373,6 +1380,63 @@ async function bind(){
       if (hint) hint.textContent = '已保存：' + pythonSettings.recallSeconds + ' 秒'
       toast('默认撤回已设为 ' + pythonSettings.recallSeconds + ' 秒')
     } catch(e){ if (hint) hint.textContent = e.message; toast('保存失败：' + e.message, true) }
+  }
+  const pyDraftBtn = document.getElementById('pyDraftBtn')
+  if (pyDraftBtn) pyDraftBtn.onclick = async function(){
+    const hint = document.getElementById('pyDraftHint')
+    const prompt = document.getElementById('pyPrompt').value.trim()
+    if (!prompt) { if (hint) hint.textContent = '先写一句需求'; return }
+    if (hint) hint.textContent = '生成中…'
+    try {
+      const r = await api('/api/action/draft-python-script', { prompt })
+      document.getElementById('pyNewCode').value = r.content || ''
+      const nameInput = document.getElementById('pyNewName')
+      if (!nameInput.value.trim()) nameInput.value = r.filename || 'new.py'
+      if (hint) hint.textContent = (r.warnings && r.warnings.length) ? ('注意：' + r.warnings.join('；')) : '草稿已生成，确认后保存'
+    } catch(e){ if (hint) hint.textContent = '生成失败：' + e.message }
+  }
+  const pyTplBtn = document.getElementById('pyTplBtn')
+  if (pyTplBtn) pyTplBtn.onclick = function(){
+    document.getElementById('pyNewCode').value = [
+      '# name: 新脚本',
+      '# desc: 一句话说明这个脚本做什么',
+      '# usage: /py 新脚本 参数',
+      '# admin: true',
+      '# cmd: 参数 | 说明',
+      'import sys',
+      '',
+      'args = sys.argv[1:]',
+      "if not args:",
+      "    print('用法：/py 新脚本 参数')",
+      '    sys.exit(1)',
+      '',
+      "print('收到：' + ' '.join(args))",
+      ''
+    ].join('\n')
+    const nameInput = document.getElementById('pyNewName')
+    if (!nameInput.value.trim()) nameInput.value = 'new.py'
+  }
+  const pyNewClear = document.getElementById('pyNewClear')
+  if (pyNewClear) pyNewClear.onclick = function(){
+    document.getElementById('pyPrompt').value = ''
+    document.getElementById('pyNewCode').value = ''
+    document.getElementById('pyNewName').value = ''
+    document.getElementById('pyDraftHint').textContent = ''
+    document.getElementById('pyNewHint').textContent = ''
+  }
+  const pyNewSave = document.getElementById('pyNewSave')
+  if (pyNewSave) pyNewSave.onclick = async function(){
+    const hint = document.getElementById('pyNewHint')
+    const name = document.getElementById('pyNewName').value.trim()
+    const code = document.getElementById('pyNewCode').value
+    if (!name) { if (hint) hint.textContent = '请填文件名，例如 wc.py'; return }
+    if (!code.trim()) { if (hint) hint.textContent = '代码是空的'; return }
+    try {
+      await api('/api/action/import-python-script', { filename: name, content: code })
+      if (hint) hint.textContent = '已保存：' + name
+      toast('已保存 ' + name + '，用 /py ' + name.replace(/\.py$/i, '') + ' 调用')
+      await load(); render()
+    } catch(e){ if (hint) hint.textContent = '保存失败：' + e.message; toast('保存失败：' + e.message, true) }
   }
   const pokeSave = document.getElementById('pokeSave')
   if (pokeSave) pokeSave.onclick = async function(){
