@@ -1233,12 +1233,12 @@ async function bind(){
     const hint = document.getElementById('retagHint')
     retagMissing.disabled = true
     try {
-      const r = await api('/api/action/retag-stickers', { onlyMissing: true })
+      const r = await stickerApi('/api/action/retag-stickers', { onlyMissing: true })
       if (hint) hint.textContent = '待补 ' + r.total + ' 张…'
       const timer = setInterval(async function(){
         try {
-          const st = await api('/api/stickers/retag-status')
-          if (hint) hint.textContent = st.running ? ('补标中 ' + st.done + '/' + st.total) : ('完成 ' + st.done + '/' + st.total + '，失败 ' + st.errors)
+          const st = await api('/api/stickers/retag-status?scope='+encodeURIComponent(boundStickerScope || ''))
+          if (hint) hint.textContent = st.running ? ('补标中 ' + st.done + '/' + st.total) : ('完成 ' + st.done + '/' + st.total + '，跳过 ' + (st.skipped || 0) + '，失败 ' + st.errors + (st.cancelled ? '（人格切换已取消）' : ''))
           if (!st.running) { clearInterval(timer); retagMissing.disabled = false; await load() }
         } catch(e){ clearInterval(timer); retagMissing.disabled = false }
       }, 2000)
@@ -1263,7 +1263,7 @@ async function bind(){
     simRun.disabled = true
     if (box) box.innerHTML = '<div class="mut">正在计算图片指纹…</div>'
     try {
-      const r = await api('/api/action/detect-similar', {})
+      const r = await stickerApi('/api/action/detect-similar', {})
       if (!box) return
       if (!r.groups.length) { box.innerHTML = '<div class="mut">检查了 ' + r.checked + ' 张，没有发现相似图</div>'; return }
       box.innerHTML = '<div class="mut" style="margin:8px 0">检查 ' + r.checked + ' 张，发现 ' + r.groups.length + ' 组相似</div>' + r.groups.map(function(g){
@@ -1329,12 +1329,12 @@ async function bind(){
     const hint = document.getElementById('retagHint')
     retagAll.disabled = true
     try {
-      const r = await api('/api/action/retag-stickers', {})
+      const r = await stickerApi('/api/action/retag-stickers', {})
       if (hint) hint.textContent = '开始处理 ' + r.total + ' 张…'
       const timer = setInterval(async function(){
         try {
-          const st = await api('/api/stickers/retag-status')
-          if (hint) hint.textContent = st.running ? ('处理中 ' + st.done + '/' + st.total + '，失败 ' + st.errors) : ('完成 ' + st.done + '/' + st.total + '，失败 ' + st.errors)
+          const st = await api('/api/stickers/retag-status?scope='+encodeURIComponent(boundStickerScope || ''))
+          if (hint) hint.textContent = st.running ? ('处理中 ' + st.done + '/' + st.total + '，跳过 ' + (st.skipped || 0) + '，失败 ' + st.errors + (st.cancelled ? '（人格切换已取消）' : '')) : ('完成 ' + st.done + '/' + st.total + '，跳过 ' + (st.skipped || 0) + '，失败 ' + st.errors + (st.cancelled ? '（人格切换已取消）' : ''))
           if (!st.running) { clearInterval(timer); retagAll.disabled = false; await load() }
         } catch(e) { clearInterval(timer); retagAll.disabled = false }
       }, 2000)
@@ -1342,11 +1342,11 @@ async function bind(){
   }
   document.querySelectorAll('[data-restore]').forEach(function(b){
     b.onclick = async function(){
-      if (!await ask('还原到 ' + b.dataset.restore + '？', '会先自动备份当前数据，再覆盖记忆、表情包和配置；还原后需要重启。', '还原')) return
+      if (!await ask('还原到 ' + b.dataset.restore + '？', '会先备份当前数据，并固定选中的备份副本；重启后在读取记忆前应用还原。必须与备份使用同一人格。', '还原')) return
       b.disabled = true
       try {
         const r = await api('/api/action/restore-backup', { name: b.dataset.restore })
-        toast('已还原 ' + r.restored + '，正在重启…')
+        toast('还原任务已准备：' + r.restored + '，正在重启后应用…')
         await api('/api/action/restart-bot', {})
       } catch(e){ toast('还原失败：' + e.message, true); b.disabled = false }
     }

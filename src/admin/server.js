@@ -520,7 +520,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         hasKey: Boolean(config.deepseekApiKey),
       },
     }),
-    'GET /api/stickers/retag-status': async () => (retagJob || { running: false, done: 0, total: 0, errors: 0 }),
+    'GET /api/stickers/retag-status': async (query) => (!stickers?.scope || (query?.scope===stickers.scope().token && retagJob?.scope===query.scope)) ? (retagJob || {running:false,done:0,total:0,errors:0}) : {running:false,done:0,total:0,errors:0},
     'GET /api/metrics': async (query) => {
       const days = Math.max(1, Math.min(30, Number(query && query.days) || 7))
       return { days, items: metrics ? metrics.snapshot(days) : [] }
@@ -531,6 +531,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       return {
         version: 1,
         exportedAt: Date.now(),
+        persona: String(config.activePersona || ''),
         memory: readJson(config.memoryFile),
         longMemory: readJson(path.join(config.dataDir, 'long-memory.json')),
       }
@@ -1370,30 +1371,39 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       return { length: text.length, lines: lines.length, warnings }
     },
     async 'memory-import'(payload) {
-      const data = payload && payload.data
-      if (!data || typeof data !== 'object') throw new Error('导入内容无效')
-      const mem = data.memory && typeof data.memory === 'object' ? data.memory : null
-      const long = data.longMemory && typeof data.longMemory === 'object' ? data.longMemory : null
-      if (!mem && !long) throw new Error('文件里没有记忆数据')
-      if (backup) backup.run({ reason: '导入前备份' })
-      if (mem) memory.restore({ chats: mem, resetAt: 0, keyResetAt: {} })
-      if (long) {
-        const snap = typeof longMemory.snapshot === 'function' ? longMemory.snapshot() : null
-        longMemory.restore({ chats: long, epoch: snap && snap.epoch, keyEpochs: (snap && snap.keyEpochs) || {} })
-      }
+      const data=payload?.data
+      if(!data || typeof data!=='object' || Array.isArray(data))throw Error('导入内容无效')
+      if(data.persona!==undefined && data.persona!==String(config.activePersona||''))throw Error('请先切换到导出文件所用人格，再导入记忆')
+      const mem=data.memory,long=data.longMemory
+      const object=v=>v && typeof v==='object' && !Array.isArray(v)
+      if(!object(mem)&&!object(long))throw Error('文件里没有记忆数据')
+      for(const [key,items] of Object.entries(mem||{}))if(!/^[gp]\d{1,15}$/.test(key)||!Array.isArray(items)||items.some(x=>!object(x)||!['user','assistant','system'].includes(x.role)||typeof x.content!=='string'))throw Error('近期记忆格式错误')
+      for(const [key,item] of Object.entries(long||{}))if(!/^[gp]\d{1,15}$/.test(key)||!object(item)||typeof item.summary!=='string'||!Array.isArray(item.pending)||item.pending.some(x=>!object(x)||typeof x.text!=='string'))throw Error('长期记忆格式错误')
+      memory?.flush?.();longMemory?.save?.({strict:true})
+      const old=memory.snapshot(),oldLong=longMemory.snapshot()
+      if(!backup)throw Error('备份不可用，未开始导入')
+      backup.run({reason:'导入前备份'})
+      try {
+        if(mem)memory.restore({chats:mem,resetAt:Math.floor(Date.now()/1000)*1000,keyResetAt:{}})
+        if(long)longMemory.restore({chats:long,epoch:randomUUID(),keyEpochs:{}})
+      } catch(err){memory.restore(old);longMemory.restore(oldLong);throw err}
       logger?.info?.('[控制台] 已导入记忆')
-      return { ok: true, recentKeys: Object.keys(mem || {}).length, longKeys: Object.keys(long || {}).length }
+      return {ok:true,recentKeys:Object.keys(mem||{}).length,longKeys:Object.keys(long||{}).length}
     },
-    async 'detect-similar'() {
-      const list = stickers.list() || []
-      const files = list.map((x) => path.join(stickers.dir, x.file)).filter((f) => existsSync(f))
+    async 'detect-similar'(payload) {
+      if (stickers?.scope && payload?.stickerScope!==stickers.scope().token) throw Error('人格已变化，请刷新后再操作')
+      if (!imageHasher.supported) throw Error('当前系统暂不支持相似图检测，仍保留文件哈希去重')
+      const selected=stickers.snapshot?.(),library=selected?.store||stickers
+      const list = library.list() || []
+      const files = list.map((x) => path.join(library.dir, x.file)).filter((f) => existsSync(f))
       await imageHasher.hashFiles(files)
+      if (selected && !selected.current()) throw Error('人格已变化，已取消相似图结果')
       const groups = []
       for (let i = 0; i < list.length; i += 1) {
-        const a = imageHasher.hashOf(list[i])
+        const a = imageHasher.hashOf(list[i],library.dir)
         if (!a) continue
         for (let j = i + 1; j < list.length; j += 1) {
-          const b = imageHasher.hashOf(list[j])
+          const b = imageHasher.hashOf(list[j],library.dir)
           if (!b) continue
           const d = imageHasher.distance(a, b)
           if (d <= 8) groups.push({ distance: d, a: { id: list[i].id, name: list[i].name }, b: { id: list[j].id, name: list[j].name } })
@@ -1404,32 +1414,39 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       return { checked: list.length, groups: groups.slice(0, 200) }
     },
     async 'retag-stickers'(payload) {
-      if (!stickerTagLLM || typeof stickerTagLLM.describeImages !== 'function') throw new Error('打标模型未配置')
-      if (retagJob && retagJob.running) throw new Error('正在生成中，请稍候')
-      const only = Array.isArray(payload && payload.ids) ? payload.ids : null
-      const missingOnly = payload && payload.onlyMissing === true
-      let list = (stickers.list() || []).filter((x) => !only || only.includes(x.id))
-      if (missingOnly) list = list.filter((x) => !String(x.description || '').trim() || !(x.keywords || []).length || !String(x.name || '').trim())
-      retagJob = { running: true, done: 0, total: list.length, errors: 0, startedAt: Date.now() }
-      ;(async () => {
-        for (const item of list) {
+      if (stickers?.scope && payload?.stickerScope!==stickers.scope().token) throw Error('人格已变化，请刷新后再操作')
+      if (!stickerTagLLM || typeof stickerTagLLM.describeImages !== 'function') throw Error('打标模型未配置')
+      if (retagJob?.running) throw Error('正在生成中，请稍候')
+      const selected=stickers.snapshot?.(),library=selected?.store||stickers
+      const current=()=>!selected || selected.current()
+      const tagClient=stickerTagLLM.snapshot?.()||stickerTagLLM
+      const fields=item=>item && {id:item.id,hash:item.hash,name:item.name,keywords:item.keywords,scenes:item.scenes,description:item.description}
+      const only=Array.isArray(payload?.ids)?payload.ids:null,missingOnly=payload?.onlyMissing===true
+      const list=library.list().filter(x=>(!only||only.includes(x.id)) && (!missingOnly||!x.description?.trim()||!x.keywords?.length||!x.name?.trim())).map(item=>({item,revision:stamp(fields(item))}))
+      const job={running:true,done:0,total:list.length,errors:0,skipped:0,startedAt:Date.now(),scope:stickers.scope?.().token}
+      retagJob=job
+      ;(async()=>{
+        try { for(const {item,revision} of list){
+          if(!current()){job.cancelled=true;break}
           try {
-            const dataUrl = typeof stickers.dataUrlOf === 'function' ? stickers.dataUrlOf(item) : null
-            if (!dataUrl) { retagJob.errors += 1; continue }
-            const raw = await stickerTagLLM.describeImages(
-              '你是表情包标注器。只输出 JSON：{"name":"简短名称","keywords":["关键词"],"scenes":["场景id"],"description":"一两句使用场景"}。画面不确定就返回空数组，不要编。',
-              '标注这张表情包', [{ type: 'image_url', image_url: { url: dataUrl } }], { maxTokens: 500 })
-            const m = String(raw || '').match(/\{[\s\S]*\}/)
-            const j = m ? JSON.parse(m[0]) : null
-            if (j && j.name) stickers.update(item.id, { name: j.name, keywords: (j.keywords || []).join(' '), scenes: Array.isArray(j.scenes) ? j.scenes : [], description: j.description || '' })
-          } catch { retagJob.errors += 1 }
-          retagJob.done += 1
-          await new Promise((r) => setTimeout(r, 900))
-        }
-        retagJob.running = false
-        logger?.info?.('[控制台] 表情包批量打标完成：' + retagJob.done + ' 张，失败 ' + retagJob.errors)
-      })().catch((err) => { retagJob.running = false; retagJob.error = err.message })
-      return { ok: true, total: list.length }
+            if(stamp(fields(library.get(item.id)))!==revision){job.skipped++;continue}
+            const file=library.dataUrlOf(item)
+            if(!file)throw Error('图片已删除或拉黑')
+            const dataUrl=file.startsWith('base64://')?'data:'+item.mime+';base64,'+file.slice('base64://'.length):file
+            const draft=await suggestStickerMetadata({dataUrl,tagLLM:tagClient})
+            if(!current()){job.cancelled=true;break}
+            if(stamp(fields(library.get(item.id)))!==revision){job.skipped++;continue}
+            const patch={}
+            if(!missingOnly||!item.name?.trim())patch.name=draft.name
+            if(!missingOnly||!item.keywords?.length)patch.keywords=draft.keywords.join(' ')
+            if(!missingOnly||!item.scenes?.length)patch.scenes=draft.scenes
+            if(!missingOnly||!item.description?.trim())patch.description=draft.description
+            library.update(item.id,patch)
+          } catch(err){job.errors++;job.lastError=err.message}
+          finally {job.done++}
+        }} finally {job.running=false;logger?.info?.('[控制台] 表情包批量打标结束：'+job.done+' 张，跳过 '+job.skipped+' 张，失败 '+job.errors)}
+      })().catch(err=>{job.running=false;job.error=err.message})
+      return {ok:true,total:list.length}
     },
     async 'import-python-script'(payload) {
       if (!pythonPlugins) throw new Error('Python 插件未启用')
@@ -1473,28 +1490,12 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       const dir = path.resolve(config.dataDir, 'backups', name)
       if (path.dirname(dir) !== path.resolve(config.dataDir, 'backups') || !existsSync(dir)) throw new Error('找不到这份备份')
       if (!backup) throw new Error('备份服务未启用')
-      const snapshotStats = () => ({
-        memory: typeof memory.keys === 'function' ? memory.keys().reduce((n, k) => n + memory.count(k), 0) : 0,
-        longMemory: (() => { try { return JSON.stringify(longMemory.snapshot().chats || {}).length } catch { return 0 } })(),
-        stickers: stickers.list().length,
-        commands: customCommands.all().length,
-      })
-      const statsBefore = snapshotStats()
-      const before = backup.run({ reason: '还原前自动备份' })
-      const items = ['memory.json', 'memory.json.reset.json', 'long-memory.json', 'long-memory.json.state.json', 'chat-settings.json', 'custom-commands.json', 'vision-providers.json', 'personas', 'stickers']
-      for (const item of items) {
-        const src = path.join(dir, item)
-        if (!existsSync(src)) continue
-        const dest = path.join(config.dataDir, item)
-        try { rmSync(dest, { recursive: true, force: true }); cpSync(src, dest, { recursive: true }) }
-        catch (err) { throw new Error('还原 ' + item + ' 失败：' + err.message) }
-      }
-      logger?.info?.('[控制台] 已从备份还原：' + name + '（还原前已备份为 ' + before.name + '）')
-      const statsAfter = snapshotStats()
-      return { ok: true, restored: name, before: before.name, stats: { before: statsBefore, after: statsAfter } }
+      memory?.flush?.(); longMemory?.save?.({strict:true})
+      return backup.queueRestore(name)
     },
     async 'backup'() {
       if (!backup) throw new Error('备份不可用')
+      memory?.flush?.(); longMemory?.save?.({strict:true})
       const result = backup.run({ reason: 'manual' })
       logger?.info?.('[控制台] 手动备份完成：' + result.name)
       return { ok: true, ...result }

@@ -80,8 +80,9 @@ export function createStickerLearner({ config, logger, onebot, stickers, filterL
       const tag = json(imageCache && loaded.hash ? await imageCache.describe([loaded.hash], scope, describe) : await describe())
       if (!allowed(chatKey) || stickers.isBlocked?.(hash) || tag?.isSticker !== true) continue
       if (similar) {
-        try { if (await similar(dataUrl)) { logger?.info?.('[表情包学习] 与已有表情包高度相似，跳过收录'); continue } } catch {}
+        try { if (await similar(dataUrl, selected)) { logger?.info?.('[表情包学习] 与已有表情包高度相似，跳过收录'); continue } } catch {}
       }
+      if (!allowed(chatKey) || stickers.isBlocked?.(hash)) continue
       const out = stickers.add({ name: String(tag.name).slice(0, 20),
         keywords: Array.isArray(tag.keywords) ? tag.keywords.join(' ') : String(tag.keywords || ''),
         scenes: Array.isArray(tag.scenes) ? tag.scenes : [], dataUrl, origin: 'learned',

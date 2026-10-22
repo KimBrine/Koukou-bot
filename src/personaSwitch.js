@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { writeJsonAtomic } from './stateFile.js'
@@ -10,6 +10,7 @@ export function activatePersona({ name, content, config, memory, longMemory, tar
   // 同名人格只是修改正文：只更新提示词，绝不动记忆。
   // 记忆跟着「名字」走，名字不变记忆就不变；换名字才切到另一份记忆。
   if (config.activePersona === name) {
+    persist()
     config.persona = content
     config.personaRevision = (config.personaRevision || 0) + 1
     return { ok: true, changed: false, persona: content }
@@ -20,22 +21,24 @@ export function activatePersona({ name, content, config, memory, longMemory, tar
   try {
     // 人格记忆分区：切换前把当前人格的记忆存到 memory__<人格>.json / long-memory__<人格>.json，
     // 切回来时再读回来，这样换人格不会丢另一份记忆。
-    const personaFile = (prefix, person) => path.join(config.dataDir, prefix + '__' + person + '.json')
-    const readPersona = (file) => {
-      try { return existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : null } catch { return null }
+    const personaFile = (prefix, person) => path.join(config.dataDir, prefix + '__' + createHash('sha256').update(String(person||'')).digest('hex') + '.json')
+    const readPersona = (prefix, person) => {
+      let file=personaFile(prefix,person)
+      // Migrate safe legacy names; never interpret a persona name as a path.
+      if(!existsSync(file) && /^[^<>:"/\\|?*\x00-\x1f]{1,60}$/.test(person))file=path.join(config.dataDir,prefix+'__'+person+'.json')
+      if(!existsSync(file))return null
+      const value=JSON.parse(readFileSync(file,'utf8'))
+      if(!value || typeof value.chats!=='object' || Array.isArray(value.chats))throw Error('人格记忆分区格式错误')
+      return value
     }
-    const from = config.activePersona
-    if (from && from !== name) {
-      try {
-        if (recent) writeFileSync(personaFile('memory', from), JSON.stringify(recent))
-        if (long) writeFileSync(personaFile('long-memory', from), JSON.stringify(long))
-      } catch { /* 存不下就只保留备份，不阻断切换 */ }
-    }
-    const targetRecent = from && from !== name ? readPersona(personaFile('memory', name)) : null
-    const targetLong = from && from !== name ? readPersona(personaFile('long-memory', name)) : null
-    memory?.clear?.(); longMemory?.clear?.()
-    if (targetRecent && targetRecent.chats) memory?.restore?.(targetRecent)
-    if (targetLong && targetLong.chats) longMemory?.restore?.(targetLong)
+    const from=config.activePersona||''
+    // Read the target before changing either runtime store.
+    const targetRecent=readPersona('memory',name),targetLong=readPersona('long-memory',name)
+    if(recent)writeJsonAtomic(personaFile('memory',from),recent)
+    if(long)writeJsonAtomic(personaFile('long-memory',from),long)
+    memory?.clear?.();longMemory?.clear?.()
+    if(targetRecent)memory?.restore?.({...targetRecent,resetAt:Math.floor(Date.now()/1000)*1000,keyResetAt:{}})
+    if(targetLong)longMemory?.restore?.(targetLong)
     persist()
   } catch (err) {
     const failures = []

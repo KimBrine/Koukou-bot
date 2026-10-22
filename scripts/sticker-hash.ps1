@@ -1,6 +1,7 @@
 param([string]$listFile)
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 Add-Type -AssemblyName System.Drawing
-$files = Get-Content -LiteralPath $listFile -Raw | ConvertFrom-Json
+$files = Get-Content -LiteralPath $listFile -Raw -Encoding UTF8 | ConvertFrom-Json
 $out = @()
 foreach ($f in $files) {
   try {

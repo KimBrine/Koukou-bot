@@ -92,6 +92,7 @@ export function createLongMemory({ file, logger, llm, maxChars = 1500, intervalM
             if (shorter && shorter.length <= maxChars) merged = shorter
           } catch {}
         }
+        if (revision !== version(key) || store.get(key) !== item || item.paused) return false
         if (merged.length > maxChars) throw new Error('摘要超过 ' + maxChars + ' 字预算，原批次保留待重试')
         const next = { summary: merged, pending: item.pending.slice(batch.length), updatedAt: Date.now() }
         writeJsonAtomic(file, { ...Object.fromEntries(store), [key]: next })
