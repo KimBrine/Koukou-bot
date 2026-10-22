@@ -1533,7 +1533,18 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         target = path.join(dir, id + '.py')
         if (!existsSync(target)) throw new Error('脚本不存在：' + id + '.py')
       }
-      // explorer 的 /select,<path> 必须是一个整体参数；拆成两段会直接起不来
+      // 机器人常以最高权限运行，提权进程直接 spawn explorer 不会在用户桌面开窗。
+      // 改走普通权限的计划任务 KoukouOpenPath：它读 data/open-path.txt 再打开。
+      try {
+        writeFileSync(path.join(config.dataDir, 'open-path.txt'), target, 'utf8')
+      } catch (err) { logger?.warn?.('[控制台] 写入打开路径失败：' + err.message) }
+      const viaTask = await new Promise((resolve) => {
+        execFile('schtasks.exe', ['/Run', '/TN', 'KoukouOpenPath'], { windowsHide: true, timeout: 8000 }, (err, stdout, stderr) => {
+          resolve({ ok: !err, detail: String(stderr || stdout || '').trim().slice(0, 160) })
+        })
+      })
+      if (viaTask.ok) return { ok: true, path: target, mode: id ? 'select' : 'folder' }
+      // 兜底：任务不可用时直接拉起 explorer
       const attempt = (args) => new Promise((resolve) => {
         let settled = false
         const done = (result) => { if (!settled) { settled = true; resolve(result) } }
@@ -1546,10 +1557,8 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         setTimeout(() => done({ ok: true }), 2000)
       })
       const first = await attempt(id ? ['/select,' + target] : [dir])
-      if (first.ok) return { ok: true, path: target, mode: id ? 'select' : 'folder' }
-      const second = await attempt([dir])
-      if (second.ok) return { ok: true, path: dir, mode: 'folder', warning: '定位文件失败，已改为打开所在文件夹' }
-      const reason = first.error || second.error || 'explorer 启动失败'
+      if (first.ok) return { ok: true, path: target, mode: id ? 'select' : 'folder', warning: '计划任务未就绪，已直接打开（若没窗口请用小标题里的提示）' }
+      const reason = first.error || viaTask.detail || 'explorer 启动失败'
       logger?.warn?.('[控制台] 打开资源管理器失败：' + reason)
       return { ok: false, error: reason, path: target }
     },
