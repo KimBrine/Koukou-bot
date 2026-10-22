@@ -30,6 +30,7 @@ jm.py —— 机器人用的后台下载插件 + 详情查询
 子命令：
     初始化 [目录]   生成配置文件（已有配置时只提示现有路径，不重复生成）
     目录 [路径]     查看/修改下载目录（写回 option.yml 的 base_dir）
+    cookies [AVS|清空]   查看/写入登录 cookies（只用于「仅登录可见」的本子）
     查/查询/jmv 350234   查本子详情（不发图，纯文本）
     发图 350234 [张数]    直接把第一话前几张图发到聊天（默认3，最多6）
     记录 350234 [张数]    详情+整话图片打包成一条聊天记录卡片（不填张数=整话全部）
@@ -272,6 +273,42 @@ def cmd_setdir(raw=''):
         return f'已写入 {opt}，但读取校验失败：{type(e).__name__}: {e}'
 
 
+def cmd_cookies(raw=''):
+    """查看/写入登录 cookies（只影响仅登录可见的本子）。"""
+    raw = (raw or '').strip()
+    opt = find_option()
+    text = opt.read_text(encoding='utf-8')
+    m = re.search(r'(?m)^\s*cookies\s*:\s*(.*)$', text)
+
+    if not raw:
+        cur = (m.group(1).strip() if m else '')
+        if not cur or cur in ('null', '~', '""', "''"):
+            return ('当前没有配置 cookies（只影响「仅登录可见」的本子）。\n'
+                    '设置：/py jm cookies <浏览器里的 AVS 值>')
+        shown = re.sub(r'(AVS\s*:\s*")([^"]*)(")', r'\1****\3', cur)
+        if shown == cur:
+            shown = re.sub(r'AVS\s*:\s*\S+', 'AVS: ****', cur)
+        return '当前 cookies：%s\n清除：/py jm cookies 清空' % shown[:120]
+
+    if raw in ('清空', '清除', '删除', 'none', 'null'):
+        value = 'null'
+    elif re.match(r'^[A-Za-z0-9%._+/-]{8,}$', raw):
+        value = '{AVS: "%s"}' % raw
+    elif raw.startswith('{') and raw.endswith('}'):
+        value = raw
+    else:
+        return '格式不对：直接给 AVS 值（浏览器 Cookie 里 AVS= 后面那串），或给 YAML 映射 {AVS: "xxx"}'
+
+    if m:
+        text = re.sub(r'(?m)^(\s*cookies\s*:\s*).*$', lambda x: x.group(1) + value, text, count=1)
+    else:
+        text, count = re.subn(r'(?m)^(\s*proxies\s*:.*)$', lambda x: x.group(1) + '\n      cookies: ' + value, text, count=1)
+        if not count:
+            return '这个 option.yml 里找不到 proxies 行，没法安全插入；请手动在 client.postman.meta_data 下加 cookies。'
+    opt.write_text(text, encoding='utf-8')
+    return '已写入 %s\n用 /py jm 查 <id> 再验证一次（cookies 会过期，失效就重新取）。' % opt
+
+
 def cmd_doctor():
     lines = []
     lines.append(f'Python {sys.version.split()[0]}（{sys.executable}）')
@@ -473,7 +510,8 @@ def cmd_info(raw):
     except SystemExit as e:
         return str(e)
     except Exception as e:
-        return f'查询失败：{type(e).__name__}: {str(e)[:120]}'
+        hint = '\n（若是「仅登录可见」：/py jm cookies <AVS值> 后重试）' if ('MissingAlbumPhoto' in type(e).__name__ or '不存在' in str(e)) else ''
+        return f'查询失败：{type(e).__name__}: {str(e)[:120]}' + hint
 
     text = format_album(album)
     cache_put(f'album_{album_id}', text)
@@ -839,6 +877,9 @@ def main(argv):
         return 0
     if low in ('目录', 'dir', 'setdir'):
         print(cmd_setdir(argv[1] if len(argv) > 1 else ''))
+        return 0
+    if low in ('cookies', '登录', 'cookie'):
+        print(cmd_cookies(argv[1] if len(argv) > 1 else ''))
         return 0
     if low in ('检查', 'doctor', '自检'):
         print(cmd_doctor())
