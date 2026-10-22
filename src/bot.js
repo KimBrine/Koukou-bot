@@ -864,9 +864,72 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
           return
         }
         if (!pythonPlugins) { await sendTo(evt, 'Python 插件未启用。'); return }
+        const pyName = String(pyMatch[1] || '').trim()
+        if (!pyName || /^(列表|list|帮助|help|指令|命令)$/i.test(pyName)) {
+          try { await sendTo(evt, pythonPlugins.helpText()) }
+          catch (err) { await sendTo(evt, '读取脚本列表失败：' + err.message) }
+          return
+        }
+        if (typeof pythonPlugins.isEnabled === 'function' && !pythonPlugins.isEnabled(pyName)) {
+          await sendTo(evt, `脚本「${pyName}」已停用，管理员可在控制台「指令中心 → Python 脚本」开启。`)
+          return
+        }
         try {
-          const r = await pythonPlugins.run(pyMatch[1], pyMatch[2] || '')
-          const body = (r.stdout || r.stderr || '（没有输出）').slice(0, 1500)
+          const r = await pythonPlugins.run(pyName, pyMatch[2] || '')
+          if (!samePersona() || !commandCenter.allows('python',commandContext)) return
+          const out = String(r.stdout || r.stderr || '（没有输出）').trim()
+          if (r.ok && out.startsWith('@@CARD@@')) {
+            try {
+              const card = JSON.parse(out.slice('@@CARD@@'.length))
+              const nodes = (Array.isArray(card.nodes) ? card.nodes : []).map((n) => {
+                const content = []
+                if (n.text) content.push({ type: 'text', data: { text: String(n.text) } })
+                for (const file of (Array.isArray(n.images) ? n.images : [])) {
+                  if (file) content.push({ type: 'image', data: { file: String(file) } })
+                }
+                return content.length ? { content } : null
+              }).filter(Boolean)
+              if (!nodes.length) throw new Error('内容为空')
+              // 整话几十张图时上传较慢，单条合并转发给足 120 秒
+              if (evt.message_type === 'private') await onebot.sendPrivateForward(evt.user_id, nodes, 120000)
+              else await onebot.sendGroupForward(evt.group_id, nodes, 120000)
+              if (card.summary) await sendTo(evt, '✅ ' + card.summary)
+            } catch (err) { await sendTo(evt, '聊天记录发送失败：' + err.message) }
+            return
+          }
+          if (r.ok && out.startsWith('@@FILE@@')) {
+            try {
+              const spec = JSON.parse(out.slice('@@FILE@@'.length))
+              const filePath = path.resolve(String(spec.path || ''))
+              if (!existsSync(filePath) || !statSync(filePath).isFile()) throw new Error('文件不存在：' + filePath)
+              if (statSync(filePath).size > 200 * 1024 * 1024) throw new Error('文件超过 200MB')
+              const name = String(spec.name || path.basename(filePath))
+              // 单位秒，兼容旧脚本仍在用的 recall_minutes
+              const seconds = Math.min(7200, Math.max(0, Number(
+                spec.recall_seconds ?? (spec.recall_minutes ? Number(spec.recall_minutes) * 60 : 300)) || 0))
+              const recallLabel = seconds >= 60 ? `${Math.round(seconds / 60)} 分钟` : `${seconds} 秒`
+              let receipt = null
+              try {
+                const segment = [{ type: 'file', data: { file: 'file:///' + filePath.replace(/\\/g, '/'), name } }]
+                receipt = evt.message_type === 'private'
+                  ? await onebot.sendPrivate(evt.user_id, segment)
+                  : await onebot.sendGroup(evt.group_id, segment)
+              } catch (segErr) {
+                if (!/不支持|unsupported|not implemented|unknown.*(?:segment|type)|file.*segment/i.test(String(segErr.message))) throw segErr
+                // 文件段不被支持时退回群文件/私聊文件上传（这种形式没有消息号，无法自动撤回）
+                if (evt.message_type === 'private') await onebot.api('upload_private_file', { user_id: evt.user_id, file: filePath, name })
+                else await onebot.api('upload_group_file', { group_id: evt.group_id, file: filePath, name })
+              }
+              const mid = receipt && receipt.message_id
+              if (mid && seconds > 0) {
+                const t = setTimeout(() => { onebot.deleteMessage(mid).catch(() => {}) }, seconds * 1000)
+                if (typeof t.unref === 'function') t.unref()
+              }
+              await sendTo(evt, (spec.text || ('已发送文件：' + name)) + (mid && seconds > 0 ? `\n（${recallLabel}后自动撤回；机器人重启会中断计时）` : seconds > 0 ? '\n（当前发送方式无法自动撤回，请手动处理）' : ''))
+            } catch (err) { await sendTo(evt, '文件发送失败：' + err.message) }
+            return
+          }
+          const body = out.slice(0, 1500)
           await sendTo(evt, (r.ok ? '✅ ' : '⚠️ ') + body + (r.killed ? '\n（超时已终止）' : ''))
         } catch (err) { await sendTo(evt, '脚本执行失败：' + err.message) }
         return

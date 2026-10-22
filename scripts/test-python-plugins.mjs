@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import { spawnSync } from 'node:child_process'
 import path from 'node:path'
@@ -43,6 +43,26 @@ try {
     await assert.rejects(() => plugins.run('../x', ''), /脚本名无效/)
     await assert.rejects(() => plugins.run('missing', ''), /脚本不存在/)
   })
+  await test('/py 列表包含脚本名、作用与用法', () => {
+    plugins.importScript('demo.py', '# name: 演示脚本\n# desc: 说明文字\n# usage: /py demo x\nprint(1)')
+    const text = plugins.helpText()
+    assert.match(text, /\/py demo/)
+    assert.match(text, /说明文字/)
+    assert.match(text, /\/py demo x/)
+    plugins.remove('demo')
+    assert.match(plugins.helpText(), /还没有 Python 脚本/)
+  })
+  await test('可以单独停用某个脚本', () => {
+    plugins.importScript('off.py', '# name: 停用测试\nprint(1)')
+    assert.equal(plugins.list().find((x) => x.id === 'off').enabled, true)
+    plugins.setEnabled('off', false)
+    assert.equal(plugins.list().find((x) => x.id === 'off').enabled, false)
+    assert.match(plugins.helpText(), /已停用/)
+    assert.equal(plugins.isEnabled('off'), false)
+    plugins.setEnabled('off', true)
+    assert.equal(plugins.isEnabled('off'), true)
+    plugins.remove('off')
+  })
   await test('执行入口强制UTF-8，覆盖外部GBK配置并显式解码', async () => {
     plugins.importScript('unicode.py', 'print("中文")')
     let actual
@@ -67,6 +87,25 @@ try {
     }finally{for(const [key,value]of Object.entries(previous)){if(value===undefined)delete process.env[key];else process.env[key]=value}}
   })
   else console.log('SKIP 真实Python管道测试：未安装Python；启动选项验证已通过')
+  await test('调用别名、保留词、撤回秒数和旧分钟字段',()=>{
+    plugins.importScript('alias.py','print(1)')
+    assert.equal(plugins.setCommandName('alias','小工具'),'小工具')
+    assert.equal(plugins.resolveId('小工具'),'alias')
+    assert.equal(plugins.list().find(x=>x.id==='alias').command,'小工具')
+    assert.throws(()=>plugins.setCommandName('alias','help'),/保留词/)
+    assert.equal(plugins.setSettings({recallMinutes:2}).recallSeconds,120)
+    assert.equal(plugins.setSettings({recallSeconds:15}).recallSeconds,15)
+    assert.throws(()=>plugins.setSettings({recallSeconds:4}),/5~7200/)
+    plugins.setEnabled('alias',false)
+    assert.equal(plugins.isEnabled('小工具'),false)
+  })
+  await test('停用表或设置损坏不能静默恢复默认',()=>{
+    writeFileSync(path.join(plugins.dir,'disabled.json'),'{')
+    assert.throws(()=>plugins.isEnabled('alias'))
+    writeFileSync(path.join(plugins.dir,'disabled.json'),'[]')
+    writeFileSync(path.join(plugins.dir,'settings.json'),'[')
+    assert.throws(()=>plugins.getSettings())
+  })
   console.log('python plugins checks passed: ' + passed)
 } finally {
   rmSync(root, { recursive: true, force: true })

@@ -71,6 +71,7 @@ let selfCheckInfo = null
 let errorInfo = []
 let pokeReplies = []
 let pythonScripts = []
+let pythonSettings = { recallSeconds: 300 }
 let tasksInfo = null
 let metricsInfo = []
 let metricsRange = 7
@@ -626,15 +627,46 @@ function pokeCorpusCard(){
     '<textarea id="pokeText" rows="10" style="width:100%;margin-top:8px">' + esc(pokeReplies.join('\n')) + '</textarea>' +
     '<div class="flexbar"><button class="btn primary" id="pokeSave">保存语库</button><span class="mut" id="pokeHint"></span></div></section>'
 }
+async function loadPythonScripts(){
+  const r = await api('/api/python-scripts').catch(function(){ return { items: [] } })
+  pythonScripts = r.items || []
+  if (r.settings) pythonSettings = r.settings
+}
 function pythonCard(){
   const items = pythonScripts || []
+  const recall = (pythonSettings && pythonSettings.recallSeconds) || 300
   const rows = items.map(function(s){
-    return '<div class="frow"><label>' + esc(s.name) + ' <span class="mut">/' + esc(s.id) + '</span></label><div><span class="mut">' + esc(s.description || '') + '</span> <span class="mut" style="font-size:12px">' + esc(s.usage || '') + '</span> <button class="btn sm" data-pydel="' + esc(s.id) + '">删除</button></div></div>'
+    const id = esc(s.id)
+    return '<details class="frow"><summary><b>' + esc(s.name) + '</b> <span class="mut">/' + id + '</span>' +
+      (s.enabled === false ? ' <span class="pill">已停用</span>' : '') + '</summary>' +
+      '<div class="mut" style="margin:6px 0 4px">' + esc(s.description || '') + '</div>' +
+      '<div class="mut" style="font-size:12px">用法：' + esc(s.usage || ('/py ' + s.id)) + '</div>' +
+      '<div class="flexbar" style="margin-top:8px"><label class="mut">调用名 /py</label>' +
+        '<input data-pycmd="' + id + '" value="' + esc(s.command || s.id) + '" style="width:120px" maxlength="20">' +
+        '<button class="btn sm" data-pycmdsave="' + id + '">保存调用名</button>' +
+        '<span class="mut" style="font-size:12px">文件名 ' + id + '.py</span></div>' +
+      '<div class="flexbar" style="margin-top:8px">' +
+        '<button class="btn sm" data-pyedit="' + id + '">编辑内容</button>' +
+        '<button class="btn sm" data-pytoggle="' + id + '" data-next="' + (s.enabled === false ? '1' : '0') + '">' + (s.enabled === false ? '启用' : '停用') + '</button>' +
+        '<button class="btn sm" data-pydel="' + id + '">删除</button>' +
+      '</div>' +
+      '<div id="pyEditor-' + id + '" style="display:none;margin-top:8px">' +
+        '<textarea data-pysrc="' + id + '" spellcheck="false" style="width:100%;min-height:240px;font-family:Consolas,monospace;font-size:12px"></textarea>' +
+        '<div class="flexbar" style="margin-top:6px"><button class="btn primary sm" data-pysave="' + id + '">保存</button><button class="btn sm" data-pycancel="' + id + '">取消</button><span class="mut" id="pyMsg-' + id + '"></span></div>' +
+      '</div></details>'
   }).join('')
-  return '<section class="card"><h2>Python 脚本 <span class="pill">' + items.length + ' 个</span></h2>' +
-    '<div class="note">放在 plugins/python 下的白名单脚本，用 <code>/py 脚本名 参数</code> 运行，默认仅管理员。脚本以机器人权限执行，只导入可信文件。</div>' +
+  return '<details class="card"><summary><b>Python 脚本</b> <span class="pill">' + items.length + ' 个</span> <span class="mut">点开管理、编辑内容</span></summary>' +
+    '<div class="note">放在 plugins/python 下的白名单脚本，用 <code>/py 脚本名 参数</code> 运行，默认仅管理员。脚本以机器人权限执行，只导入可信文件。保存会留一份 .bak。</div>' +
+    '<div class="flexbar" style="margin:10px 0"><label class="mut">打包默认撤回（秒）</label><input id="pyRecall" type="number" min="5" max="7200" step="5" value="' + recall + '" style="width:90px"><button class="btn sm" id="pyRecallSave">保存</button><span class="mut" id="pyRecallHint"></span></div>' +
     (rows || '<div class="mut">还没有脚本</div>') +
-    '<div class="flexbar" style="margin-top:10px"><label class="btn" style="cursor:pointer">导入 .py<input type="file" id="pyImport" accept=".py" style="display:none"></label><span class="mut" id="pyHint"></span></div></section>'
+    '<details class="frow" style="margin-top:10px"><summary><b>＋ 新建脚本</b> <span class="mut">自己写，或让 AI 起草</span></summary>' +
+      '<div class="mut" style="margin:8px 0 6px">描述你要的功能，AI 只生成草稿，代码会放在下面，确认后再保存。保存后即可用 <code>/py 文件名</code> 调用。</div>' +
+      '<textarea id="pyPrompt" placeholder="例如：把一段文字倒序输出，并统计字符数；参数为空时提示用法" style="width:100%;min-height:70px"></textarea>' +
+      '<div class="flexbar" style="margin:8px 0"><input id="pyNewName" placeholder="文件名，如 wc.py" style="width:170px"><input id="pyNewCmd" placeholder="调用名（可选）" style="width:140px" maxlength="20"><button class="btn sm" id="pyDraftBtn">AI 生成草稿</button><button class="btn sm" id="pyTplBtn">插入模板</button><span class="mut" id="pyDraftHint"></span></div>' +
+      '<textarea id="pyNewCode" spellcheck="false" placeholder="代码会出现在这里，也可以自己直接写" style="width:100%;min-height:240px;font-family:Consolas,monospace;font-size:12px"></textarea>' +
+      '<div class="flexbar" style="margin-top:6px"><button class="btn primary sm" id="pyNewSave">保存脚本</button><button class="btn sm" id="pyNewClear">清空</button><span class="mut" id="pyNewHint"></span></div>' +
+    '</details>' +
+    '<div class="flexbar" style="margin-top:10px"><label class="btn" style="cursor:pointer">导入 .py<input type="file" id="pyImport" accept=".py" style="display:none"></label><span class="mut" id="pyHint"></span></div></details>'
 }
 function pageCommands(){ return CommandCenterUI.render({custom:customCommands,builtins:commandBuiltins,poke:pokeDiagnostics,groups:joinedGroups}) + commandTestCard() + pokeCorpusCard() + pythonCard() }
 // ── 渲染 ───────────────────────────────────────────────
@@ -1193,7 +1225,7 @@ async function bind(){
   if (errorsRefresh) errorsRefresh.onclick = async function(){
     errorInfo = (await api('/api/errors').catch(function(){ return { items: [] } })).items || []
     pokeReplies = (await api('/api/poke-replies').catch(function(){ return { lines: [] } })).lines || []
-    pythonScripts = (await api('/api/python-scripts').catch(function(){ return { items: [] } })).items || []
+    await loadPythonScripts()
     render()
   }
   const errorsClear = document.getElementById('errorsClear')
@@ -1304,6 +1336,134 @@ async function bind(){
       if (!await ask('删除脚本 ' + b.dataset.pydel + '？', '会同时删除备份文件 .bak。', '删除')) return
       try { await api('/api/action/delete-python-script', { id: b.dataset.pydel }); toast('已删除'); await load(); render() }
       catch(e){ toast('删除失败：' + e.message, true) }
+    }
+  })
+  document.querySelectorAll('[data-pytoggle]').forEach(function(b){
+    b.onclick = async function(){
+      const on = b.dataset.next === '1'
+      try {
+        await api('/api/action/toggle-python-script', { id: b.dataset.pytoggle, enabled: on })
+        toast((on ? '已启用 ' : '已停用 ') + b.dataset.pytoggle)
+        await load(); render()
+      } catch(e){ toast('操作失败：' + e.message, true) }
+    }
+  })
+  document.querySelectorAll('[data-pyedit]').forEach(function(b){
+    b.onclick = async function(){
+      const id = b.dataset.pyedit
+      const box = document.getElementById('pyEditor-' + id)
+      if (!box) return
+      if (box.style.display !== 'none') { box.style.display = 'none'; return }
+      try {
+        const r = await api('/api/action/read-python-script', { id })
+        box.querySelector('[data-pysrc]').value = r.content || ''
+        box.style.display = ''
+      } catch(e){ toast('读取失败：' + e.message, true) }
+    }
+  })
+  document.querySelectorAll('[data-pysave]').forEach(function(b){
+    b.onclick = async function(){
+      const id = b.dataset.pysave
+      const box = document.getElementById('pyEditor-' + id)
+      const msg = document.getElementById('pyMsg-' + id)
+      try {
+        await api('/api/action/import-python-script', { filename: id + '.py', content: box.querySelector('[data-pysrc]').value })
+        if (msg) msg.textContent = '已保存'
+        toast('已保存 ' + id + '.py')
+        await load(); render()
+      } catch(e){ if (msg) msg.textContent = '保存失败：' + e.message; toast('保存失败：' + e.message, true) }
+    }
+  })
+  document.querySelectorAll('[data-pycancel]').forEach(function(b){
+    b.onclick = function(){
+      const box = document.getElementById('pyEditor-' + b.dataset.pycancel)
+      if (box) box.style.display = 'none'
+    }
+  })
+  const pyRecallSave = document.getElementById('pyRecallSave')
+  if (pyRecallSave) pyRecallSave.onclick = async function(){
+    const hint = document.getElementById('pyRecallHint')
+    try {
+      const r = await api('/api/action/save-python-settings', { recallSeconds: Number(document.getElementById('pyRecall').value) })
+      pythonSettings = r.settings || pythonSettings
+      if (hint) hint.textContent = '已保存：' + pythonSettings.recallSeconds + ' 秒'
+      toast('默认撤回已设为 ' + pythonSettings.recallSeconds + ' 秒')
+    } catch(e){ if (hint) hint.textContent = e.message; toast('保存失败：' + e.message, true) }
+  }
+  const pyDraftBtn = document.getElementById('pyDraftBtn')
+  if (pyDraftBtn) pyDraftBtn.onclick = async function(){
+    const hint = document.getElementById('pyDraftHint')
+    const prompt = document.getElementById('pyPrompt').value.trim()
+    if (!prompt) { if (hint) hint.textContent = '先写一句需求'; return }
+    if (hint) hint.textContent = '生成中…'
+    try {
+      const r = await api('/api/action/draft-python-script', { prompt })
+      document.getElementById('pyNewCode').value = r.content || ''
+      const nameInput = document.getElementById('pyNewName')
+      if (!nameInput.value.trim()) nameInput.value = r.filename || 'new.py'
+      const who = r.model ? ('由 ' + r.model + ' 生成') : '草稿已生成'
+      if (hint) hint.textContent = who + (r.warnings && r.warnings.length ? ('；注意：' + r.warnings.join('；')) : '；确认后保存')
+    } catch(e){ if (hint) hint.textContent = '生成失败：' + e.message }
+  }
+  const pyTplBtn = document.getElementById('pyTplBtn')
+  if (pyTplBtn) pyTplBtn.onclick = function(){
+    document.getElementById('pyNewCode').value = [
+      '# name: 新脚本',
+      '# desc: 一句话说明这个脚本做什么',
+      '# usage: /py 新脚本 参数',
+      '# admin: true',
+      '# cmd: 参数 | 说明',
+      'import sys',
+      '',
+      'args = sys.argv[1:]',
+      "if not args:",
+      "    print('用法：/py 新脚本 参数')",
+      '    sys.exit(1)',
+      '',
+      "print('收到：' + ' '.join(args))",
+      ''
+    ].join('\n')
+    const nameInput = document.getElementById('pyNewName')
+    if (!nameInput.value.trim()) nameInput.value = 'new.py'
+  }
+  const pyNewClear = document.getElementById('pyNewClear')
+  if (pyNewClear) pyNewClear.onclick = function(){
+    document.getElementById('pyPrompt').value = ''
+    document.getElementById('pyNewCode').value = ''
+    document.getElementById('pyNewName').value = ''
+    document.getElementById('pyDraftHint').textContent = ''
+    document.getElementById('pyNewHint').textContent = ''
+  }
+  const pyNewSave = document.getElementById('pyNewSave')
+  if (pyNewSave) pyNewSave.onclick = async function(){
+    const hint = document.getElementById('pyNewHint')
+    const name = document.getElementById('pyNewName').value.trim()
+    const code = document.getElementById('pyNewCode').value
+    if (!name) { if (hint) hint.textContent = '请填文件名，例如 wc.py'; return }
+    if (!code.trim()) { if (hint) hint.textContent = '代码是空的'; return }
+    try {
+      await api('/api/action/import-python-script', { filename: name, content: code })
+      const cmdInput = document.getElementById('pyNewCmd')
+      const id = name.replace(/\.py$/i, '')
+      let cmd = id
+      if (cmdInput && cmdInput.value.trim()) {
+        const r = await api('/api/action/set-python-command', { id, command: cmdInput.value.trim() })
+        cmd = r.command
+      }
+      if (hint) hint.textContent = '已保存：' + name + '（调用名 /py ' + cmd + '）'
+      toast('已保存 ' + name + '，用 /py ' + cmd + ' 调用')
+      await load(); render()
+    } catch(e){ if (hint) hint.textContent = '保存失败：' + e.message; toast('保存失败：' + e.message, true) }
+  }
+  document.querySelectorAll('[data-pycmdsave]').forEach(function(b){
+    b.onclick = async function(){
+      const id = b.dataset.pycmdsave
+      const input = document.querySelector('[data-pycmd="' + id + '"]')
+      try {
+        const r = await api('/api/action/set-python-command', { id, command: input ? input.value : '' })
+        toast('调用名已改为 /py ' + r.command)
+        await load(); render()
+      } catch(e){ toast('保存失败：' + e.message, true) }
     }
   })
   const pokeSave = document.getElementById('pokeSave')
@@ -2173,7 +2333,7 @@ async function load(){
     selfCheckInfo = await api('/api/selfcheck').catch(function(){ return null })
     errorInfo = (await api('/api/errors').catch(function(){ return { items: [] } })).items || []
     pokeReplies = (await api('/api/poke-replies').catch(function(){ return { lines: [] } })).lines || []
-    pythonScripts = (await api('/api/python-scripts').catch(function(){ return { items: [] } })).items || []
+    await loadPythonScripts()
     tasksInfo = await api('/api/tasks').catch(function(){ return null })
     metricsInfo = (await api('/api/metrics?days=' + metricsRange).catch(function(){ return { items: [] } })).items || []
     updateSideStatus(s.bot)

@@ -538,7 +538,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     },
     'GET /api/errors': async () => ({ items: errors ? errors.list() : [] }),
     'GET /api/poke-replies': async () => ({ lines: pokeReplies && Array.isArray(pokeReplies.lines) ? [...pokeReplies.lines] : [] }),
-    'GET /api/python-scripts': async () => ({ dir: pythonPlugins ? pythonPlugins.dir : '', items: pythonPlugins ? pythonPlugins.list() : [] }),
+    'GET /api/python-scripts': async () => ({ dir: pythonPlugins ? pythonPlugins.dir : '', items: pythonPlugins ? pythonPlugins.list() : [], settings: pythonPlugins ? pythonPlugins.getSettings() : { recallMinutes: 5 } }),
     'GET /api/tasks': async () => ({
       backup: { last: backup ? backup.lastBackupAt() : 0, everyHours: 6 },
       summary: { enabled: Boolean(config.summaryEnabled), times: config.summaryTimes || '' },
@@ -1452,10 +1452,71 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       })().catch(err=>{job.running=false;job.error=err.message})
       return {ok:true,total:list.length}
     },
+    async 'draft-python-script'(payload) {
+      if (!pythonPlugins) throw new Error('Python 插件未启用')
+      if (typeof llm?.chat !== 'function') throw new Error('AI 接口尚未配置')
+      const prompt = String((payload && payload.prompt) || '').trim()
+      if (!prompt) throw new Error('请先描述这个脚本要做什么')
+      if (prompt.length > 3000) throw new Error('描述请控制在 3000 字内')
+
+      const system = [
+        '你在为 Koukou 机器人的 Python 插件系统写单个 .py 脚本，只输出一个 ```python 代码块，不要解释。',
+        '运行方式：python 脚本名.py 参数……；结果用 print 写到 stdout，机器人把 stdout 当回复（最多 1500 字）。',
+        '必须遵守：',
+        '1. 只用 Python 标准库；需要第三方库时，检测不到就打印一行 pip 安装提示并 sys.exit(1)，不要自动安装。',
+        '2. 文件开头写元数据注释：',
+        '   # name: 中文名',
+        '   # desc: 一句话说明',
+        '   # usage: /py 脚本名 参数（脚本名不带 .py）',
+        '   # admin: true',
+        '   # cmd: 用法 | 说明（每个子功能一行，按需要写若干行）',
+        '3. 不读写系统目录、不执行 shell、不读环境变量里的密钥、不做与功能无关的网络请求。',
+        '4. 不写 QQ/OneBot 调用；如果需要发文件或发卡片，只能用 @@FILE@@ / @@CARD@@ 前缀输出 JSON。',
+        '5. 中文提示，60 行以内，参数缺失要给出用法。',
+      ].join('\n')
+
+      // 不传 maxTokens：输出上限跟随全局模型预算（控制台「模型与接口」可调），
+      // 模型、温度、思考强度都与对话共用同一个 llm 客户端。
+      const raw = await llm.chat(system, [{ role: 'user', content: prompt }],
+        { signal: AbortSignal.timeout(600000), rejectTruncated: true, unlimited: true })
+      const text = String(raw || '')
+      const block = /```(?:python|py)?\s*([\s\S]*?)```/i.exec(text)
+      const content = (block ? block[1] : text).trim()
+      if (!content) throw new Error('AI 没有返回代码')
+
+      const warnings = []
+      const risky = [
+        [/os\.system|subprocess|shutil\.rmtree|os\.remove|os\.rmdir/, '会执行命令或删除文件'],
+        [/eval\(|exec\(|__import__/, '使用了 eval/exec 动态执行'],
+        [/socket\.|requests\.|urllib\.request|http\.client/, '会发起网络请求'],
+        [/os\.environ|getenv/, '会读取环境变量'],
+      ]
+      for (const [re, msg] of risky) if (re.test(content)) warnings.push(msg)
+
+      const stamp = new Date().toISOString().slice(5, 16).replace(/[-:T]/g, '')
+      return { ok: true, content, filename: `new_${stamp}.py`, warnings, model: String(llm.model || ''), effort: String(llm.reasoningEffort || 'default') }
+    },
+    async 'set-python-command'(payload) {
+      if (!pythonPlugins) throw new Error('Python 插件未启用')
+      const command = pythonPlugins.setCommandName(payload && payload.id, payload && payload.command)
+      return { ok: true, command }
+    },
+    async 'read-python-script'(payload) {
+      if (!pythonPlugins) throw new Error('Python 插件未启用')
+      return { content: pythonPlugins.readScript(payload && payload.id) }
+    },
+    async 'save-python-settings'(payload) {
+      if (!pythonPlugins) throw new Error('Python 插件未启用')
+      return { ok: true, settings: pythonPlugins.setSettings(payload || {}) }
+    },
     async 'import-python-script'(payload) {
       if (!pythonPlugins) throw new Error('Python 插件未启用')
       const item = pythonPlugins.importScript(payload && payload.filename, payload && payload.content)
       return { ok: true, item }
+    },
+    async 'toggle-python-script'(payload) {
+      if (!pythonPlugins) throw new Error('Python 插件未启用')
+      return { enabled: pythonPlugins.setEnabled(payload && payload.id, Boolean(payload && payload.enabled)) }
     },
     async 'delete-python-script'(payload) {
       if (!pythonPlugins) throw new Error('Python 插件未启用')

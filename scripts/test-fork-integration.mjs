@@ -125,6 +125,25 @@ try{
       assert.equal(t.chatSettings.get(key).persona,'')
     }finally{admin.server.close()}
   })
+  await test('Python文件结果只在明确不支持时回退，发送超时不重复上传',async()=>{
+    for(const message of ['OneBot API 超时：send_group_msg','不支持file消息段']){
+      const t=fixture(),file=path.join(t.dir,'demo.txt');writeFileSync(file,'offline')
+      t.commandCenter={allows:id=>id==='python',get:()=>({}),allowed:()=>false}
+      t.pythonPlugins={isEnabled:()=>true,async run(){return {ok:true,stdout:'@@FILE@@'+JSON.stringify({path:file,recall_seconds:10})}}}
+      const b=bot(t,{async chat(){throw Error('不应调用模型')}});let uploads=0
+      b.onebot.sendGroup=async(g,text)=>{if(Array.isArray(text))throw Error(message);b.sent.push({g,text});return {message_id:9}}
+      b.onebot.api=async action=>{assert.equal(action,'upload_group_file');uploads++}
+      await b.instance.handleMessage(event('/py mock'))
+      assert.equal(uploads,message.startsWith('不支持')?1:0)
+      assert.ok(b.sent.some(x=>String(x.text).includes(uploads?'无法自动撤回':'文件发送失败')))
+    }
+  })
+  await test('Python脚本执行期间切换人格，不继续发送旧结果',async()=>{
+    const t=fixture(),d=deferred(),entered=deferred();t.commandCenter={allows:id=>id==='python',get:()=>({}),allowed:()=>false}
+    t.pythonPlugins={isEnabled:()=>true,async run(){entered.resolve();return d.promise}}
+    const b=bot(t,{}),task=b.instance.handleMessage(event('/py mock'));await entered.promise
+    t.config.personaRevision=1;d.resolve({ok:true,stdout:'迟到内容'});await task;assert.deepEqual(b.sent,[])
+  })
   console.log(`${passed} cases passed`)
 }finally{
   for(const m of stores){if(m.timer)clearTimeout(m.timer);m.flush()}
