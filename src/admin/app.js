@@ -70,6 +70,7 @@ let backupInfo = { items: [], root: '' }
 let selfCheckInfo = null
 let errorInfo = []
 let pokeReplies = []
+let pythonScripts = []
 let tasksInfo = null
 let metricsInfo = []
 let metricsRange = 7
@@ -625,7 +626,17 @@ function pokeCorpusCard(){
     '<textarea id="pokeText" rows="10" style="width:100%;margin-top:8px">' + esc(pokeReplies.join('\n')) + '</textarea>' +
     '<div class="flexbar"><button class="btn primary" id="pokeSave">保存语库</button><span class="mut" id="pokeHint"></span></div></section>'
 }
-function pageCommands(){ return CommandCenterUI.render({custom:customCommands,builtins:commandBuiltins,poke:pokeDiagnostics,groups:joinedGroups}) + commandTestCard() + pokeCorpusCard() }
+function pythonCard(){
+  const items = pythonScripts || []
+  const rows = items.map(function(s){
+    return '<div class="frow"><label>' + esc(s.name) + ' <span class="mut">/' + esc(s.id) + '</span></label><div><span class="mut">' + esc(s.description || '') + '</span> <span class="mut" style="font-size:12px">' + esc(s.usage || '') + '</span> <button class="btn sm" data-pydel="' + esc(s.id) + '">删除</button></div></div>'
+  }).join('')
+  return '<section class="card"><h2>Python 脚本 <span class="pill">' + items.length + ' 个</span></h2>' +
+    '<div class="note">放在 plugins/python 下的白名单脚本，用 <code>/py 脚本名 参数</code> 运行，默认仅管理员。脚本以机器人权限执行，只导入可信文件。</div>' +
+    (rows || '<div class="mut">还没有脚本</div>') +
+    '<div class="flexbar" style="margin-top:10px"><label class="btn" style="cursor:pointer">导入 .py<input type="file" id="pyImport" accept=".py" style="display:none"></label><span class="mut" id="pyHint"></span></div></section>'
+}
+function pageCommands(){ return CommandCenterUI.render({custom:customCommands,builtins:commandBuiltins,poke:pokeDiagnostics,groups:joinedGroups}) + commandTestCard() + pokeCorpusCard() + pythonCard() }
 // ── 渲染 ───────────────────────────────────────────────
 function pageMemory(){
   const nameOf = function(key){
@@ -1177,6 +1188,7 @@ async function bind(){
   if (errorsRefresh) errorsRefresh.onclick = async function(){
     errorInfo = (await api('/api/errors').catch(function(){ return { items: [] } })).items || []
     pokeReplies = (await api('/api/poke-replies').catch(function(){ return { lines: [] } })).lines || []
+    pythonScripts = (await api('/api/python-scripts').catch(function(){ return { items: [] } })).items || []
     render()
   }
   const errorsClear = document.getElementById('errorsClear')
@@ -1270,6 +1282,25 @@ async function bind(){
     } catch(e){ if (box) box.innerHTML = '<div class="mut">检测失败：' + esc(e.message) + '</div>' }
     finally { simRun.disabled = false }
   }
+  const pyImport = document.getElementById('pyImport')
+  if (pyImport) pyImport.onchange = async function(){
+    const file = pyImport.files && pyImport.files[0]
+    if (!file) return
+    try {
+      const content = await file.text()
+      await api('/api/action/import-python-script', { filename: file.name, content })
+      toast('已导入：' + file.name)
+      await load(); render()
+    } catch(e){ toast('导入失败：' + e.message, true) }
+    finally { pyImport.value = '' }
+  }
+  document.querySelectorAll('[data-pydel]').forEach(function(b){
+    b.onclick = async function(){
+      if (!await ask('删除脚本 ' + b.dataset.pydel + '？', '会同时删除备份文件 .bak。', '删除')) return
+      try { await api('/api/action/delete-python-script', { id: b.dataset.pydel }); toast('已删除'); await load(); render() }
+      catch(e){ toast('删除失败：' + e.message, true) }
+    }
+  })
   const pokeSave = document.getElementById('pokeSave')
   if (pokeSave) pokeSave.onclick = async function(){
     const box = document.getElementById('pokeText')
@@ -2137,6 +2168,7 @@ async function load(){
     selfCheckInfo = await api('/api/selfcheck').catch(function(){ return null })
     errorInfo = (await api('/api/errors').catch(function(){ return { items: [] } })).items || []
     pokeReplies = (await api('/api/poke-replies').catch(function(){ return { lines: [] } })).lines || []
+    pythonScripts = (await api('/api/python-scripts').catch(function(){ return { items: [] } })).items || []
     tasksInfo = await api('/api/tasks').catch(function(){ return null })
     metricsInfo = (await api('/api/metrics?days=' + metricsRange).catch(function(){ return { items: [] } })).items || []
     updateSideStatus(s.bot)
