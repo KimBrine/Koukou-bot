@@ -38,6 +38,7 @@ import { createAdminServer } from './admin/server.js'
 import { createRateLimiter } from './humanize.js'
 import { createChatPromptBuilder } from './chatPrompt.js'
 import { createLlbotWebui } from './llbotWebui.js'
+import { createNapcatWebui } from './napcatWebui.js'
 
 const config = loadConfig()
 const logger = createLogger(config.logLevel, config.logFile)
@@ -496,13 +497,29 @@ const llbotWebui = createLlbotWebui({
   logger,
 })
 
+// 换号后端：LLBot 和 NapCat 都实现同一套接口（当前账号/账号列表/切换/退出/二维码），
+// 控制台不关心用的是谁。LOGIN_PROVIDER=auto 时优先 LLBot，找不到再用 NapCat。
+const napcatWebui = createNapcatWebui({
+  baseUrl: config.napcatWebuiUrl,
+  napcatDir: config.napcatDir,
+  token: config.napcatWebuiToken,
+  logger,
+})
+const loginProvider = (() => {
+  const pref = String(config.loginProvider || 'auto').toLowerCase()
+  if (pref === 'napcat') return napcatWebui
+  if (pref === 'llbot') return llbotWebui
+  return llbotWebui.status().available ? llbotWebui : napcatWebui
+})()
+logger.info(`QQ 登录后端：${loginProvider.name}（${loginProvider.name === 'llbot' ? 'LLBot' : 'NapCat'}）`)
+
 // 本地控制台：机器人自己托管界面，用 Edge/Chrome 的 app 模式窗口打开就像一个桌面应用
 let adminServer = null
 if (config.adminEnabled) {
   adminServer = createAdminServer({
     config,
     logger,
-    llbotWebui,
+    loginProvider,
     onebot,
     memory,
     chatSettings,

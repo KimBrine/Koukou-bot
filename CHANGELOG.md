@@ -5,6 +5,7 @@
 - 群总结加入中性归纳要求与内容检查失败阶段日志；只因篇幅润色被拒绝时保留此前已通过必要校验的初稿，不重复提交拒绝内容。统计版在控制台单独显示，旧任务显示兼容升级；服务首次拒绝仍可能只有统计报告。
 - 补修登录页动态账号按钮点击、代理请求15秒超时及无效响应处理；学习状态损坏后暂停学习，记忆重置/分区边界损坏则停止加载，留档失败拒绝继续，避免恢复旧记忆或覆盖原件。
 - 控制台新增「QQ 登录」页：显示当前账号与在线状态、一键切换 LLBot 已保存的账号、扫码登录新账号、退出登录。换号走 LLBot WebUI（默认 3080，密码文件为 webui_token.txt，可用 LLBOT_WEBUI_URL / LLBOT_WEBUI_TOKEN_FILE 覆盖）；切换期间机器人会短暂离线。
+- 「QQ 登录」页支持两种后端：LLBot 与 NapCat（LOGIN_PROVIDER=auto 自动选择）。NapCat 后端读取 NAPCAT_DIR/config/webui.json 或 NAPCAT_WEBUI_URL+NAPCAT_WEBUI_TOKEN，接口按 NapCat v4 WebUI 实现；本机未装 NapCat 时未实测。
 - 踢人（/id_check_kick）改为 fail-closed：ID_CHECK_OPERATORS 为空时直接拒绝并在启动日志告警；`/id_check` 仍保持原有开放默认。
 - 关停改为有序收尾：先停定时任务，等正在写的报告最多 4 秒，再保存记忆、长期记忆与指标，最后断开 OneBot 退出；任一步失败不影响后续步骤。
 - 重启辅助进程等待上限从 5 秒放宽到 10 秒，超时后强制结束再拉起，避免收尾期间被误判为“停不下来”。

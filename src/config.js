@@ -143,6 +143,10 @@ export function loadConfig() {
     // LLBot（LuckyLillia）WebUI：控制台「QQ 登录」页通过它换号/扫码
     llbotWebuiUrl: (String(env.LLBOT_WEBUI_URL ?? 'http://127.0.0.1:3080').trim() || 'http://127.0.0.1:3080').replace(/\/+$/, ''),
     llbotWebuiTokenFile: env.LLBOT_WEBUI_TOKEN_FILE ? path.resolve(path.dirname(envFile), env.LLBOT_WEBUI_TOKEN_FILE) : '',
+    // 换号后端：auto=能用 LLBot 就用 LLBot，否则用 NapCat；napcat 时优先从 NAPCAT_DIR/config/webui.json 读地址与 token
+    loginProvider: String(env.LOGIN_PROVIDER ?? 'auto').trim().toLowerCase(),
+    napcatWebuiUrl: String(env.NAPCAT_WEBUI_URL ?? '').trim().replace(/\/+$/, ''),
+    napcatWebuiToken: String(env.NAPCAT_WEBUI_TOKEN ?? '').trim(),
 
     // 静音群：在这些群里**完全不出声，连被 @ 也不回**。
     // 换号迁移期间用：新号接管的群，旧号必须彻底闭嘴 —— 白名单只管"主动搭话"，

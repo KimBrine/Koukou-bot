@@ -1,10 +1,11 @@
 // 离线：控制台「QQ 登录」的 LLBot WebUI 代理（不联网、不碰真实账号）
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
 import { createLlbotWebui } from '../src/llbotWebui.js'
+import { createNapcatWebui } from '../src/napcatWebui.js'
 import { createAdminServer } from '../src/admin/server.js'
 
 const dir = mkdtempSync(path.join(os.tmpdir(), 'llbot-webui-'))
@@ -70,6 +71,34 @@ check('切换账号拒绝非法 QQ 号', await admin.actions['qq-switch-account'
 const unconfigured = createAdminServer({ config, llbotWebui: null })
 const off = await unconfigured.actions['qq-login-state']()
 check('没有 LLBot 代理时返回 available:false', off.available === false && off.accounts.length === 0)
+
+// ===== NapCat 后端 =====
+const napcatDir = path.join(dir, 'napcat')
+mkdirSync(path.join(napcatDir, 'config'), { recursive: true })
+writeFileSync(path.join(napcatDir, 'config', 'webui.json'), JSON.stringify({ host: '127.0.0.1', port: 6099, token: 'nap-token' }))
+const napCalls = []
+const napFetch = async (url, opts = {}) => {
+  napCalls.push({ url, opts })
+  if (url.includes('/api/QQLogin/CheckLoginStatus')) return { ok: true, status: 200, json: async () => ({ code: 0, data: { isLogin: true, uin: '20002', nick: '备用号' } }) }
+  if (url.includes('/api/QQLogin/GetQuickLoginList')) return { ok: true, status: 200, json: async () => ({ code: 0, data: [{ uin: '20001', nick: '主号' }, { uin: '20002', nick: '备用号' }] }) }
+  if (url.includes('/api/QQLogin/GetQQLoginQrcode')) return { ok: true, status: 200, json: async () => ({ code: 0, data: { qrcode: 'iVBORw0KGgo=' } }) }
+  if (url.includes('/api/QQLogin/SetQuickLogin')) return { ok: true, status: 200, json: async () => ({ code: 0 }) }
+  if (url.includes('/api/QQLogin/Logout')) return { ok: true, status: 200, json: async () => ({ code: 0 }) }
+  return { ok: false, status: 404, json: async () => ({ code: 404, message: 'not found' }) }
+}
+const napcat = createNapcatWebui({ napcatDir, fetchImpl: napFetch })
+check('NapCat 从 config/webui.json 读取地址与 token', napcat.status().available === true && /6099/.test(napcat.status().baseUrl))
+check('NapCat 当前账号', (await napcat.info()).uin === '20002')
+check('NapCat token 走 query', napCalls[0].url.includes('token=nap-token'))
+check('NapCat 账号列表归一化', (await napcat.accounts()).LocalLoginInfoList.length === 2)
+check('NapCat 二维码转 data URL', (await napcat.qrcode()).image.startsWith('data:image/png;base64,'))
+await napcat.quickLogin('20001')
+check('NapCat 切换账号 body 带 uin', JSON.parse(napCalls.at(-1).opts.body).uin === '20001')
+const napErr = createNapcatWebui({ baseUrl: 'http://127.0.0.1:6099', token: 'x', fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ code: 100, message: '未登录' }) }) })
+check('NapCat 未登录时 info 返回 null', (await napErr.info()) === null)
+check('NapCat 错误码转成错误信息', await napErr.accounts().then(() => false, (e) => /未登录/.test(e.message)))
+const adminNap = createAdminServer({ config, loginProvider: napcat })
+check('控制台标记 NapCat 后端', (await adminNap.actions['qq-login-state']()).provider === 'napcat')
 
 rmSync(dir, { recursive: true, force: true })
 console.log(`qq login checks passed: ${pass}`)
