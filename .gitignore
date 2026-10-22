@@ -53,3 +53,7 @@ Thumbs.db
 # ===== 本 fork 新增：一键启动相关（本地专属，不入库）=====
 llbot_path.txt
 /luckylillia/
+
+# ===== Python 插件的本地配置（含个人下载路径、代理、cookie，不入库）=====
+plugins/python/option.yml
+plugins/python/state/
