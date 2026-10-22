@@ -12,6 +12,7 @@ const PAGES = [
   ['selfcheck','✓  自检'],
   ['errors','⚠  错误'],
   ['logs','≡  运行日志'],
+  ['login','☰  QQ 登录'],
 ]
 let page = location.hash.replace('#','') || 'overview'
 if (!PAGES.some(p => p[0] === page)) page = 'overview'
@@ -1177,8 +1178,57 @@ function restoreOpenDetails(list){
     if (k && want.has(k)) d.open = true
   })
 }
+// ===== QQ 登录（换号/扫码）：登录态在 LLBot，这里只调它的接口 =====
+let qqPollTimer = null
+function stopQqPoll(){ if (qqPollTimer) { clearInterval(qqPollTimer); qqPollTimer = null } }
+function qqMask(uin){ const s = String(uin || ''); return s ? s.slice(0, 4) + '***' + s.slice(-2) : '—' }
+function pageLogin(){
+  return `<section class="card"><h2>当前 QQ 账号</h2>
+    <p class="mut">真正登录的是 LLBot（LuckyLillia）。换号会让机器人短暂离线，重新登录成功后自动恢复收消息。</p>
+    <div id="qqLoginBody" class="mut">正在读取…</div>
+    <div class="flexbar"><button class="btn" id="qqRefresh">刷新状态</button><button class="btn" id="qqLogout">退出当前账号</button></div>
+  </section>
+  <section class="card"><h2>切换已保存账号</h2><p class="mut">LLBot 本机保存过登录态的账号，切换不需要扫码。</p><div id="qqAccounts" class="mut">正在读取…</div></section>
+  <section class="card"><h2>扫码登录新账号</h2><p class="mut">会先退出当前账号，再用手机 QQ 扫码登录；二维码约两分钟有效。</p>
+  <div class="flexbar"><button class="btn primary" id="qqQr">显示登录二维码</button></div><div id="qqQrArea"></div></section>`
+}
+async function loadQqLogin(){
+  const body = document.getElementById('qqLoginBody'), acc = document.getElementById('qqAccounts')
+  if (!body) return
+  try {
+    const s = await api('/api/action/qq-login-state')
+    if (!s.available) {
+      body.innerHTML = '<span class="bad">没找到 LLBot 的 WebUI 密码文件</span><div class="mut" style="margin-top:6px">请在 .env 配置 LLBOT_WEBUI_TOKEN_FILE（LLBot 数据目录下的 webui_token.txt）' + (s.tried && s.tried.length ? '；已尝试：' + esc(s.tried.join('、')) : '') + '</div>'
+      acc.textContent = '—'
+      return
+    }
+    const c = s.current
+    body.innerHTML = c
+      ? `<div><strong>${esc(c.nick || '')}</strong>（QQ ${qqMask(c.uin)}）· ${c.online ? '<span class="ok">在线</span>' : '<span class="bad">离线</span>'}</div><div class="mut" style="margin-top:4px">LLBot：${esc(s.baseUrl || '')}</div>`
+      : '<div class="bad">当前没有登录任何 QQ</div>'
+    acc.innerHTML = (s.accounts || []).length
+      ? s.accounts.map(a => `<div class="flexbar" style="justify-content:space-between;align-items:center;gap:8px;margin:6px 0"><div>${a.face ? `<img src="${esc(a.face)}" alt="" style="width:24px;height:24px;border-radius:50%;vertical-align:middle;margin-right:6px">` : ''}${esc(a.nick || '')}（QQ ${qqMask(a.uin)}）${a.current ? ' · 当前' : ''}</div>${a.current ? '<span class="mut">使用中</span>' : `<button class="btn" data-qq-uin="${esc(a.uin)}">切换到它</button>`}</div>`).join('')
+      : '<span class="mut">LLBot 里还没有保存过其他账号</span>'
+  } catch (err) {
+    body.innerHTML = '<span class="bad">读取失败：' + esc(err.message) + '</span>'
+  }
+}
+function startQqPoll(){
+  stopQqPoll()
+  let ticks = 0
+  qqPollTimer = setInterval(async () => {
+    ticks++
+    if (ticks > 60) { stopQqPoll(); return }
+    try {
+      const s = await api('/api/action/qq-login-state')
+      if (s.current && s.current.online) { stopQqPoll(); toast('已登录：' + (s.current.nick || s.current.uin)); loadQqLogin() }
+    } catch {}
+  }, 3000)
+}
+
 function render(){
   const main = document.getElementById('main')
+  if (page !== 'login') stopQqPoll()
   syncPyOpen()
   if(renderedPage !== null)detailOpenByPage.set(renderedPage,captureOpenDetails())
   const keepOpen = detailOpenByPage.get(page) || []
@@ -1197,6 +1247,7 @@ function render(){
   else if (page === 'selfcheck') html = pageSelfCheck()
   else if (page === 'errors') html = pageErrors()
   else if (page === 'logs') html = pageLogs()
+  else if (page === 'login') html = pageLogin()
   else html = pageMemory()
   main.innerHTML = html
   restoreOpenDetails(keepOpen)
@@ -1208,6 +1259,45 @@ function render(){
 async function bind(){
   refreshSummaryControls()
   const checkUpdate=document.getElementById('checkUpdate');if(checkUpdate)checkUpdate.onclick=()=>refreshUpdates(true)
+  if (page === 'login') {
+    loadQqLogin()
+    const refresh = document.getElementById('qqRefresh')
+    if (refresh) refresh.onclick = () => loadQqLogin()
+    const out = document.getElementById('qqLogout')
+    if (out) out.onclick = async () => {
+      if (!await ask('退出当前 QQ？', '退出后机器人收不到消息，需要用扫码或切换账号重新登录。')) return
+      try {
+        await api('/api/action/qq-logout')
+        toast('已退出登录')
+        loadQqLogin()
+        startQqPoll()
+      } catch (err) { toast(err.message, true) }
+    }
+    document.querySelectorAll('[data-qq-uin]').forEach(el => el.onclick = async () => {
+      const uin = el.dataset.qqUin
+      if (!await ask('切换到 QQ ' + uin + '？', '会先退出当前账号，再快速登录这个账号，期间机器人短暂离线。')) return
+      try {
+        toast('正在切换…')
+        await api('/api/action/qq-switch-account', { uin })
+        startQqPoll()
+        setTimeout(loadQqLogin, 1500)
+      } catch (err) { toast(err.message, true) }
+    })
+    const qr = document.getElementById('qqQr')
+    if (qr) qr.onclick = async () => {
+      if (!await ask('退出当前账号并显示二维码？', '扫码登录前必须先退出当前账号，期间机器人离线。')) return
+      const area = document.getElementById('qqQrArea')
+      area.innerHTML = '<div class="mut">正在退出并获取二维码…</div>'
+      try {
+        await api('/api/action/qq-logout').catch(() => {})
+        const r = await api('/api/action/qq-login-qrcode')
+        area.innerHTML = '<div style="margin-top:10px"><img alt="QQ 登录二维码" src="' + esc(r.image) + '" style="width:200px;height:200px;image-rendering:pixelated;background:#fff;padding:6px;border-radius:8px"></div><div class="mut" style="margin-top:6px">用手机 QQ 扫码登录，成功后这里会自动刷新</div>'
+        startQqPoll()
+      } catch (err) {
+        area.innerHTML = '<div class="bad">' + esc(err.message) + '</div>'
+      }
+    }
+  }
   if(page==='stickers'){
     stickerControlsDirty=false
     document.querySelectorAll('[data-stkfold]').forEach(function(el){

@@ -37,6 +37,7 @@ import { createPersonaGreetingLibrary } from './personaGreetings.js'
 import { createAdminServer } from './admin/server.js'
 import { createRateLimiter } from './humanize.js'
 import { createChatPromptBuilder } from './chatPrompt.js'
+import { createLlbotWebui } from './llbotWebui.js'
 
 const config = loadConfig()
 const logger = createLogger(config.logLevel, config.logFile)
@@ -479,12 +480,27 @@ const personaGreetings=createPersonaGreetingLibrary({file:path.join(config.dataD
 const quietGreetings=createQuietGreetings({config,onebot,chatSettings,memory,logger,library:personaGreetings,
   file:path.join(config.dataDir,'quiet-greetings-state.json')})
 
+// 控制台的「QQ 登录」页要操作 LLBot（登录态在它手里）；密码文件默认按常见部署位置找，
+// 找不到就由 LLBOT_WEBUI_TOKEN_FILE 指定，页面上会显示实际尝试过的路径。
+const llbotWebui = createLlbotWebui({
+  baseUrl: config.llbotWebuiUrl,
+  tokenFile: config.llbotWebuiTokenFile,
+  candidates: [
+    path.join(config.dataDir, '..', 'llbot', 'data', 'webui_token.txt'),
+    path.join(config.dataDir, '..', '..', 'luckylillia', 'bin', 'llbot', 'data', 'webui_token.txt'),
+    path.join(config.rootDir, '..', 'luckylillia', 'bin', 'llbot', 'data', 'webui_token.txt'),
+    path.join(config.rootDir, 'llbot', 'data', 'webui_token.txt'),
+  ],
+  logger,
+})
+
 // 本地控制台：机器人自己托管界面，用 Edge/Chrome 的 app 模式窗口打开就像一个桌面应用
 let adminServer = null
 if (config.adminEnabled) {
   adminServer = createAdminServer({
     config,
     logger,
+    llbotWebui,
     onebot,
     memory,
     chatSettings,

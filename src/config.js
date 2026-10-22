@@ -140,6 +140,10 @@ export function loadConfig() {
     napcatDir: String(env.NAPCAT_DIR ?? '').trim(),
     napcatTaskName: String(env.NAPCAT_TASK_NAME ?? 'NapCatQQ').trim(),
 
+    // LLBot（LuckyLillia）WebUI：控制台「QQ 登录」页通过它换号/扫码
+    llbotWebuiUrl: (String(env.LLBOT_WEBUI_URL ?? 'http://127.0.0.1:3080').trim() || 'http://127.0.0.1:3080').replace(/\/+$/, ''),
+    llbotWebuiTokenFile: env.LLBOT_WEBUI_TOKEN_FILE ? path.resolve(path.dirname(envFile), env.LLBOT_WEBUI_TOKEN_FILE) : '',
+
     // 静音群：在这些群里**完全不出声，连被 @ 也不回**。
     // 换号迁移期间用：新号接管的群，旧号必须彻底闭嘴 —— 白名单只管"主动搭话"，
     // 管不住"群内被@必回"，所以需要这个独立的闸门。

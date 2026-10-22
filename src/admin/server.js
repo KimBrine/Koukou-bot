@@ -221,7 +221,7 @@ function validateGroupConfig(key, value) {
   }
 }
 
-export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, quietGreetings, personaGreetings, bot, customCommands, commandCenter, llm, stickers, stickerTagLLM, updateChecker=createUpdateChecker({currentVersion:APP_VERSION}), switchVision, visionProviders, restartBot, webSearch, switchWebSearch, backup, selfcheck, metrics, errors, pokeReplies, pythonPlugins }) {
+export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, quietGreetings, personaGreetings, bot, customCommands, commandCenter, llm, stickers, stickerTagLLM, updateChecker=createUpdateChecker({currentVersion:APP_VERSION}), switchVision, visionProviders, restartBot, webSearch, switchWebSearch, backup, selfcheck, metrics, errors, pokeReplies, pythonPlugins, llbotWebui }) {
   // 本实例自己的 .env（并行跑两个实例时，写死 rootDir\.env 会改到另一个实例的配置上）
   const envFile = config.envFile || path.join(config.rootDir, '.env')
   const logFile = path.join(config.logDir || path.join(config.rootDir, 'logs'), 'bot.log')
@@ -1684,6 +1684,50 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       })
       logger?.info?.(`[控制台] 已重启 NapCat（${dir} / 任务 ${task}，先结束旧实例再启动新实例）`)
       return { ok: true, killed: 'old-instances-then-start', dir, task }
+    },
+    // ===== QQ 登录（换号/扫码）：真正登录的是 LLBot，这里只是转发 =====
+    async 'qq-login-state'() {
+      const st = llbotWebui?.status?.() || { available: false }
+      if (!st.available) return { ok: true, available: false, current: null, accounts: [], tried: st.tried || [] }
+      const [current, accounts] = await Promise.all([
+        llbotWebui.info(),
+        llbotWebui.accounts().catch(() => ({ LocalLoginInfoList: [] })),
+      ])
+      const list = (accounts?.LocalLoginInfoList || []).map((a) => ({
+        uin: String(a.uin || ''),
+        nick: String(a.nickName || a.nick || ''),
+        face: String(a.faceUrl || ''),
+        current: String(a.uin || '') === String(current?.uin || ''),
+      }))
+      return {
+        ok: true,
+        available: true,
+        current: current ? { uin: String(current.uin || ''), nick: String(current.nick || ''), online: current.online === true } : null,
+        accounts: list,
+        baseUrl: st.baseUrl,
+        tokenFile: st.tokenFile,
+      }
+    },
+    async 'qq-login-qrcode'() {
+      if (!llbotWebui?.status?.().available) throw new Error('没找到 LLBot 的 WebUI 密码文件，请配置 LLBOT_WEBUI_TOKEN_FILE')
+      // 已经登录时 LLBot 不给二维码；先退出再取（前端顺序：qq-logout → 这里）
+      const qr = await llbotWebui.qrcode()
+      return { ok: true, ...qr }
+    },
+    async 'qq-switch-account'(payload) {
+      const uin = String(payload?.uin || '').trim()
+      if (!/^\d{5,12}$/.test(uin)) throw new Error('QQ 号无效')
+      if (!llbotWebui?.status?.().available) throw new Error('没找到 LLBot 的 WebUI 密码文件，请配置 LLBOT_WEBUI_TOKEN_FILE')
+      await llbotWebui.logout().catch((err) => logger?.warn?.('[QQ登录] 退出当前账号失败（可能本来未登录）：' + err.message))
+      await llbotWebui.quickLogin(uin)
+      logger?.info?.(`[QQ登录] 已切换到 QQ ${uin}`)
+      return { ok: true, uin }
+    },
+    async 'qq-logout'() {
+      if (!llbotWebui?.status?.().available) throw new Error('没找到 LLBot 的 WebUI 密码文件，请配置 LLBOT_WEBUI_TOKEN_FILE')
+      await llbotWebui.logout()
+      logger?.info?.('[QQ登录] 已退出当前 QQ 账号（重新登录前机器人收不到消息）')
+      return { ok: true }
     },
     async summary(payload) {
       if(payload?.groupId!=null&&payload.groupId!==''&&(!/^\d{1,15}$/.test(String(payload.groupId))||!Number.isSafeInteger(Number(payload.groupId))||Number(payload.groupId)<=0))throw new Error('群号无效')
