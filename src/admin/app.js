@@ -961,6 +961,8 @@ function pageMetrics(){
   const list = metricsInfo || []
   const sum = function(k){ return list.reduce(function(n, d){ return n + (Number(d[k]) || 0) }, 0) }
   const received = sum('received'), replied = sum('replied'), errors = sum('errors')
+  const skippedSum = sum('skipped')
+  const other = received - replied - skippedSum
   const rate = received ? Math.round(replied / received * 100) : 0
   const fail = received ? Math.round(errors / received * 100) : 0
   const avg = sum('llmCount') ? (sum('llmMs') / sum('llmCount') / 1000).toFixed(1) : '—'
@@ -976,10 +978,12 @@ function pageMetrics(){
       '<div class="card"><h3>错误</h3><div class="kpi">' + errors + '</div><div class="note">占收到的 ' + fail + '%</div></div>' +
       '<div class="card"><h3>表情包</h3><div class="kpi">' + sum('stickers') + '</div><div class="note">发送次数</div></div>' +
       '<div class="card"><h3>联网搜索</h3><div class="kpi">' + sum('searches') + '</div><div class="note">调用次数</div></div>' +
-      '<div class="card"><h3>跳过未回复</h3><div class="kpi">' + sum('skipped') + '</div><div class="note">跳过率 ' + (received ? Math.round(sum('skipped') / received * 100) : 0) + '%</div></div>' +
+      '<div class="card"><h3>跳过未回复</h3><div class="kpi">' + skippedSum + '</div><div class="note">跳过率 ' + (received ? Math.round(skippedSum / received * 100) : 0) + '%</div></div>' +
+      '<div class="card"><h3>其他</h3><div class="kpi">' + other + '</div><div class="note">自身消息 / 补读 / 重复 / 中断</div></div>' +
       '<div class="card"><h3>模型调用</h3><div class="kpi">' + sum('llmCount') + '</div><div class="note">生成次数</div></div>' +
       '<div class="card"><h3>平均生成耗时</h3><div class="kpi">' + avg + 's</div><div class="note">模型端到端</div></div>' +
     '</div>' +
+    '<div class="note" style="margin:-4px 0 14px">口径：<b>收到</b> 是进入机器人的全部消息事件；<b>已回复 + 跳过未回复 + 其他 = 收到</b>。「其他」是自己发的消息、登录补读、重复刷屏、以及中途被打断的；主动回复（拍一拍、自动 +1、定时推送）不经过「收到」，所以「已回复」可能偏大。</div>' +
     chartCard('消息与回复', svgChart(list, [
       { name: '收到', color: '#3b6ea5', get: function(d){ return d.received } },
       { name: '已回复', color: '#4aa3a3', get: function(d){ return d.replied } }
