@@ -18,6 +18,7 @@ import { createWebSearch } from './search.js'
 import { createBackup, applyPendingRestore } from './backup.js'
 import { createSelfCheck } from './selfcheck.js'
 import { createNotifier } from './notify.js'
+import {healthAlertForError} from './onebotErrors.js'
 import { createMetrics } from './metrics.js'
 import { createImageHasher } from './imagehash.js'
 import { createErrorStore } from './errorStore.js'
@@ -277,9 +278,8 @@ const pythonPlugins = createPythonPlugins({ config, logger, pythonPath: process.
     const text = args.map((x) => (x && x.stack) || String(x)).join(' ')
     try { errorStore.add(text, 'bot', 'error') } catch {}
     try {
-      if (/余额|额度|quota|429|401|403|请求参数错误|超时|timeout|ECONN|socket hang up/i.test(text)) {
-        notifier.notify('model-health', '模型调用可能异常：' + text.replace(/\s+/g, ' ').slice(0, 180)).catch(() => {})
-      }
+      const alert=healthAlertForError(text)
+      if(alert)notifier.notify(alert.key,alert.text).catch(() => {})
     } catch {}
     rawError(...args)
   }

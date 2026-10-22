@@ -39,6 +39,15 @@ try{
   const t=fixture();t.setSendError(true);await t.bot.handleMessage(t.event());assert.equal(t.counts.length,0)
   t.setSendError(false);await t.bot.handleMessage(t.event('重试发送'));assert.equal(t.calls.length,2);assert.ok(t.sent.length)
  })
+ await test('私聊发送超时不额外发送模型出错提示，群聊不继续后续分条',async()=>{
+  const p=fixture({privateWhitelist:new Set([U])});let attempts=0
+  p.onebot.sendPrivate=async()=>{attempts++;throw Object.assign(Error('OneBot API 超时：send_private_msg'),{service:'onebot',code:'ONEBOT_TIMEOUT'})}
+  const e=p.event('你好');e.message_type='private';delete e.group_id
+  await p.bot.handleMessage(e);assert.equal(attempts,1)
+  const g=fixture();let calls=0
+  g.onebot.sendGroup=async()=>{calls++;throw Object.assign(Error('OneBot API 超时：send_group_msg'),{service:'onebot',code:'ONEBOT_TIMEOUT'})}
+  await g.bot.handleMessage(g.event());assert.equal(calls,1);assert.equal(g.counts.length,0)
+ })
  await test('成功发送才进入冷却，紧接普通消息不再生成',async()=>{
   const t=fixture();await t.bot.handleMessage(t.event());await t.bot.handleMessage(t.event('马上再说话'))
   assert.equal(t.calls.length,1);assert.equal(t.counts.length,1)

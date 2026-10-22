@@ -1,4 +1,5 @@
 import { createStickerSendPolicy, claimsStickerDelivery } from './stickerSend.js'
+import {isOnebotError} from './onebotErrors.js'
 import { isQuestionMode, QUESTION_MODE_HINT, QUESTION_IMAGE_PROMPT } from './questionMode.js'
 import { readFileSync, existsSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -381,6 +382,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
           else rateLimiter?.touch?.(key)
         }
         onSent(receipt)
+        if(receipt?.message_id==null&&receipt?.data?.message_id==null){logger.warn('OneBot 发送回执缺少消息编号，结果未确认；停止本轮后续发送，不自动重发');return sent}
       }
       sent.push(cleanLine)
     }
@@ -1498,8 +1500,9 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         try { metrics?.replied?.() } catch {}
       } catch (err) {
         if (!samePersona()) return
-        logger.error(`回复生成失败：${err.message}`)
-        if (isPrivate) {
+        const qqFailure=isOnebotError(err)
+        logger.error(`${qqFailure?'QQ 消息发送失败':'回复生成失败'}：${err.message}${qqFailure?'；停止本轮后续发送，不自动重发':''}`)
+        if (isPrivate && !qqFailure) {
           const last = failedRecently.get(key) || 0
           if (Date.now() - last > 60000) {
             failedRecently.set(key, Date.now())

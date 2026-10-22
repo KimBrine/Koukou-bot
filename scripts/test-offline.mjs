@@ -38,6 +38,7 @@ const scripts = [
   'test-vision-providers.mjs',
   'test-python-plugins.mjs', 'test-dev-console-merge.mjs',
   'test-merge-release-guards.mjs',
+  'test-onebot-delivery.mjs',
   'test-id-check-kick.mjs',
   'test-qq-login.mjs',
 ]

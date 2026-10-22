@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { MessageTimeline } from './messageFreshness.js'
 import { renderFacesToCq, textToSegments } from './qqFace.js'
+import {onebotError} from './onebotErrors.js'
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -149,12 +150,14 @@ export class OneBotClient extends EventEmitter {
           return
         }
         // API 调用回包：按 echo 配对
-        if (data && data.echo !== undefined && this.pending.has(data.echo)) {
-          const { resolve: res, reject: rej, timer } = this.pending.get(data.echo)
-          this.pending.delete(data.echo)
+        const echo = data?.echo == null ? null : String(data.echo)
+        if (echo !== null && this.pending.has(echo)) {
+          const { resolve: res, reject: rej, timer, action, ws:owner } = this.pending.get(echo)
+          if(owner !== ws || this.ws !== ws)return
+          this.pending.delete(echo)
           clearTimeout(timer)
           if (data.status === 'ok') res(data.data)
-          else rej(new Error(`OneBot API 失败：retcode=${data.retcode} ${data.message || ''}`.trim()))
+          else rej(onebotError(`OneBot API 失败：retcode=${data.retcode} ${data.message || ''}`.trim(),{action}))
           return
         }
         // lifecycle 事件里也带 self_id，尽早拿到自己的 QQ 号
@@ -194,7 +197,7 @@ export class OneBotClient extends EventEmitter {
         this.statusCheckedAt = 0
         for (const [, item] of this.pending) {
           clearTimeout(item.timer)
-          item.reject(new Error('连接已断开'))
+          item.reject(onebotError('OneBot 连接已断开',{code:'ONEBOT_DISCONNECTED',action:item.action,outcomeUnknown:/^(?:send_|forward_)/.test(item.action||'')}))
         }
         this.pending.clear()
         if (this.stopped) {
@@ -303,31 +306,32 @@ export class OneBotClient extends EventEmitter {
   }
 
   api(action, params = {}, timeoutMs = 8000) {    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      return Promise.reject(new Error('OneBot 未连接'))
+      return Promise.reject(onebotError('OneBot 未连接',{code:'ONEBOT_DISCONNECTED',action}))
     }
     const echo = String(++this.echoSeq)
     return new Promise((resolve, reject) => {
       const timer = timeoutMs===0?null:setTimeout(() => {
         this.pending.delete(echo)
-        reject(new Error(`OneBot API 超时：${action}`))
+        this.logger.warn?.(`[OneBot 请求超时] 动作=${action}，等待=${timeoutMs}ms，在途请求=${this.pending.size}；不自动重发`)
+        reject(onebotError(`OneBot API 超时：${action}`,{code:'ONEBOT_TIMEOUT',action,outcomeUnknown:/^(?:send_|forward_)/.test(action)}))
       }, timeoutMs)
-      this.pending.set(echo, { resolve, reject, timer })
+      this.pending.set(echo, { resolve, reject, timer, action, ws:this.ws })
       try {
         this.ws.send(JSON.stringify({ action, params, echo }))
       } catch (err) {
         clearTimeout(timer)
         this.pending.delete(echo)
-        reject(err)
+        reject(onebotError(`OneBot 请求发送失败：${err.message}`,{code:'ONEBOT_DISCONNECTED',action,outcomeUnknown:/^(?:send_|forward_)/.test(action)}))
       }
     })
   }
 
-  sendPrivate(userId, message) {
-    return this.api('send_private_msg', { user_id: Number(userId), message: normalizeOutgoing(message) })
+  sendPrivate(userId, message, timeoutMs = 30000) {
+    return this.api('send_private_msg', { user_id: Number(userId), message: normalizeOutgoing(message) }, timeoutMs)
   }
 
-  sendGroup(groupId, message) {
-    return this.api('send_group_msg', { group_id: Number(groupId), message: normalizeOutgoing(message) })
+  sendGroup(groupId, message, timeoutMs = 30000) {
+    return this.api('send_group_msg', { group_id: Number(groupId), message: normalizeOutgoing(message) }, timeoutMs)
   }
 
   /** QQ 原生复用一条消息（普通消息，不是合并转发卡片）；图片无需由机器人重新下载。 */
