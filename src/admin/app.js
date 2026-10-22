@@ -71,7 +71,7 @@ let selfCheckInfo = null
 let errorInfo = []
 let pokeReplies = []
 let pythonScripts = []
-let pythonSettings = { recallMinutes: 5 }
+let pythonSettings = { recallSeconds: 300 }
 let tasksInfo = null
 let metricsInfo = []
 let metricsRange = 7
@@ -634,7 +634,7 @@ async function loadPythonScripts(){
 }
 function pythonCard(){
   const items = pythonScripts || []
-  const recall = (pythonSettings && pythonSettings.recallMinutes) || 5
+  const recall = (pythonSettings && pythonSettings.recallSeconds) || 300
   const rows = items.map(function(s){
     const id = esc(s.id)
     return '<details class="frow"><summary><b>' + esc(s.name) + '</b> <span class="mut">/' + id + '</span>' +
@@ -653,7 +653,7 @@ function pythonCard(){
   }).join('')
   return '<details class="card"><summary><b>Python 脚本</b> <span class="pill">' + items.length + ' 个</span> <span class="mut">点开管理、编辑内容</span></summary>' +
     '<div class="note">放在 plugins/python 下的白名单脚本，用 <code>/py 脚本名 参数</code> 运行，默认仅管理员。脚本以机器人权限执行，只导入可信文件。保存会留一份 .bak。</div>' +
-    '<div class="flexbar" style="margin:10px 0"><label class="mut">打包默认撤回（分钟）</label><input id="pyRecall" type="number" min="1" max="120" value="' + recall + '" style="width:80px"><button class="btn sm" id="pyRecallSave">保存</button><span class="mut" id="pyRecallHint"></span></div>' +
+    '<div class="flexbar" style="margin:10px 0"><label class="mut">打包默认撤回（秒）</label><input id="pyRecall" type="number" min="5" max="7200" step="5" value="' + recall + '" style="width:90px"><button class="btn sm" id="pyRecallSave">保存</button><span class="mut" id="pyRecallHint"></span></div>' +
     (rows || '<div class="mut">还没有脚本</div>') +
     '<div class="flexbar" style="margin-top:10px"><label class="btn" style="cursor:pointer">导入 .py<input type="file" id="pyImport" accept=".py" style="display:none"></label><span class="mut" id="pyHint"></span></div></details>'
 }
@@ -1368,10 +1368,10 @@ async function bind(){
   if (pyRecallSave) pyRecallSave.onclick = async function(){
     const hint = document.getElementById('pyRecallHint')
     try {
-      const r = await api('/api/action/save-python-settings', { recallMinutes: Number(document.getElementById('pyRecall').value) })
+      const r = await api('/api/action/save-python-settings', { recallSeconds: Number(document.getElementById('pyRecall').value) })
       pythonSettings = r.settings || pythonSettings
-      if (hint) hint.textContent = '已保存：' + pythonSettings.recallMinutes + ' 分钟'
-      toast('默认撤回已设为 ' + pythonSettings.recallMinutes + ' 分钟')
+      if (hint) hint.textContent = '已保存：' + pythonSettings.recallSeconds + ' 秒'
+      toast('默认撤回已设为 ' + pythonSettings.recallSeconds + ' 秒')
     } catch(e){ if (hint) hint.textContent = e.message; toast('保存失败：' + e.message, true) }
   }
   const pokeSave = document.getElementById('pokeSave')

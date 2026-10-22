@@ -21,7 +21,7 @@ jm.py —— 机器人用的后台下载插件 + 详情查询
     查/查询/jmv 350234   查本子详情（不发图，纯文本）
     发图 350234 [张数]    直接把第一话前几张图发到聊天（默认3，最多6）
     记录 350234 [张数]    详情+整话图片打包成一条聊天记录卡片（不填张数=整话全部）
-    打包 350234 [分钟]    把已下载的本子压成 zip 以文件发送，默认 5 分钟后撤回
+    打包 350234 [秒]    把已下载的本子压成 zip 以文件发送，默认按控制台设置（300 秒）撤回
     123456          下载本子(album)
     p345678         下载单个章节(photo)
     状态/status     当前任务进度
@@ -601,13 +601,18 @@ def cmd_card(raw, count_arg=''):
 
 
 def _plugin_settings():
-    """读控制台里配的默认值（plugins/python/settings.json），读不到就用 5 分钟。"""
+    """读控制台里配的默认值（plugins/python/settings.json），单位秒，读不到就用 300 秒。"""
     try:
         raw = json.loads((HERE / 'settings.json').read_text(encoding='utf-8'))
-        n = int(raw.get('recallMinutes', 5))
-        return max(1, min(120, n))
+        if 'recallSeconds' in raw:
+            n = int(raw['recallSeconds'])
+        elif 'recallMinutes' in raw:          # 兼容旧配置
+            n = int(raw['recallMinutes']) * 60
+        else:
+            n = 300
+        return max(5, min(7200, n))
     except Exception:
-        return 5
+        return 300
 
 
 def cmd_pack(raw='', minutes_arg=''):
@@ -637,12 +642,12 @@ def cmd_pack(raw='', minutes_arg=''):
     arg = (minutes_arg or '').strip()
     if arg:
         try:
-            minutes = int(arg)
+            seconds = int(arg)
         except ValueError:
-            minutes = _plugin_settings()
+            seconds = _plugin_settings()
     else:
-        minutes = _plugin_settings()
-    minutes = max(1, min(minutes, 120))
+        seconds = _plugin_settings()
+    seconds = max(5, min(seconds, 7200))
 
     outdir = state_dir() / 'exports'
     outdir.mkdir(parents=True, exist_ok=True)
@@ -660,7 +665,7 @@ def cmd_pack(raw='', minutes_arg=''):
     payload = {
         'path': zip_path.as_posix(),
         'name': zip_path.name,
-        'recall_minutes': minutes,
+        'recall_seconds': seconds,
         'text': f'打包完成：{zip_path.name}（{size_mb:.1f} MB）',
     }
     return '@@FILE@@' + json.dumps(payload, ensure_ascii=False)

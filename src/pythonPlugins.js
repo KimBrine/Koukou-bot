@@ -81,15 +81,15 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
   function getSettings() {
     let data = {}
     try { data = JSON.parse(readFileSync(SETTINGS_FILE, 'utf8')) || {} } catch {}
-    const n = Number(data.recallMinutes)
-    return { recallMinutes: Number.isFinite(n) ? Math.min(120, Math.max(1, Math.round(n))) : 5 }
+    const n = Number(data.recallSeconds ?? (data.recallMinutes !== undefined ? Number(data.recallMinutes) * 60 : NaN))
+    return { recallSeconds: Number.isFinite(n) ? Math.min(7200, Math.max(5, Math.round(n))) : 300 }
   }
   function setSettings(patch) {
     const next = getSettings()
-    if (patch && patch.recallMinutes !== undefined) {
-      const n = Number(patch.recallMinutes)
-      if (!Number.isFinite(n) || n < 1 || n > 120) throw new Error('撤回分钟数需在 1~120 之间')
-      next.recallMinutes = Math.round(n)
+    if (patch && patch.recallSeconds !== undefined) {
+      const n = Number(patch.recallSeconds)
+      if (!Number.isFinite(n) || n < 5 || n > 7200) throw new Error('撤回秒数需在 5~7200 之间')
+      next.recallSeconds = Math.round(n)
     }
     try { mkdirSync(dir, { recursive: true }); writeFileSync(SETTINGS_FILE, JSON.stringify(next, null, 1), 'utf8') } catch {}
     return next

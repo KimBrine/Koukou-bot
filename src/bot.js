@@ -903,7 +903,10 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
               if (!existsSync(filePath) || !statSync(filePath).isFile()) throw new Error('文件不存在：' + filePath)
               if (statSync(filePath).size > 200 * 1024 * 1024) throw new Error('文件超过 200MB')
               const name = String(spec.name || path.basename(filePath))
-              const minutes = Math.min(120, Math.max(0, Number(spec.recall_minutes ?? 5) || 0))
+              // 单位秒，兼容旧脚本仍在用的 recall_minutes
+              const seconds = Math.min(7200, Math.max(0, Number(
+                spec.recall_seconds ?? (spec.recall_minutes ? Number(spec.recall_minutes) * 60 : 300)) || 0))
+              const recallLabel = seconds >= 60 ? `${Math.round(seconds / 60)} 分钟` : `${seconds} 秒`
               let receipt = null
               try {
                 const segment = [{ type: 'file', data: { file: 'file:///' + filePath.replace(/\\/g, '/'), name } }]
@@ -916,11 +919,11 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
                 else await onebot.api('upload_group_file', { group_id: evt.group_id, file: filePath, name })
               }
               const mid = receipt && receipt.message_id
-              if (mid && minutes > 0) {
-                const t = setTimeout(() => { onebot.deleteMessage(mid).catch(() => {}) }, minutes * 60000)
+              if (mid && seconds > 0) {
+                const t = setTimeout(() => { onebot.deleteMessage(mid).catch(() => {}) }, seconds * 1000)
                 if (typeof t.unref === 'function') t.unref()
               }
-              await sendTo(evt, (spec.text || ('已发送文件：' + name)) + (mid && minutes > 0 ? `\n（${minutes} 分钟后自动撤回）` : ''))
+              await sendTo(evt, (spec.text || ('已发送文件：' + name)) + (mid && seconds > 0 ? `\n（${recallLabel}后自动撤回）` : ''))
             } catch (err) { await sendTo(evt, '文件发送失败：' + err.message) }
             return
           }
