@@ -4,7 +4,7 @@ import { writeJsonAtomic } from './stateFile.js'
 import { createMemoryArchive } from './memoryArchive.js'
 
 /** 分会话摘要 + 私有原文档案。人格切换用独立分区，旧分区只供备份恢复。 */
-export function createLongMemory({ file, logger, llm, maxChars = 1500, intervalMs = 600000, maxBatch = 60 }) {
+export function createLongMemory({ file, logger, llm, maxChars = 1500, intervalMs = 600000, maxBatch = 60, now = Date.now }) {
   let store = new Map(), epoch = 'legacy', keyEpochs = {}, generation = 0, timer = null
   const running = new Map(), edits = new Map()
   const archive = createMemoryArchive(`${file}.records`)
@@ -14,7 +14,7 @@ export function createLongMemory({ file, logger, llm, maxChars = 1500, intervalM
     keyEpochs = state.keyEpochs || {}
     if (!state.resetPending && existsSync(file)) for (const [key, value] of Object.entries(JSON.parse(readFileSync(file, 'utf8')) || {})) {
       if (!(state.clearedKeys || []).includes(key) && value && typeof value === 'object') store.set(key, {
-        summary: String(value.summary || ''), pending: Array.isArray(value.pending) ? value.pending : [], updatedAt: Number(value.updatedAt) || 0, paused: value.paused === true,
+        summary: String(value.summary || ''), pending: Array.isArray(value.pending) ? value.pending : [], updatedAt: Number(value.updatedAt) || 0, paused: value.paused === true, retry: value.retry || null,
       })
     }
     logger?.info?.(`已载入长期记忆：${store.size} 个会话`)
@@ -64,6 +64,7 @@ export function createLongMemory({ file, logger, llm, maxChars = 1500, intervalM
   async function summarize(key) {
     const item = store.get(key)
     if (!item?.pending.length || item.paused) return false
+    if (item.retry?.maxChars === maxChars && Number(item.retry.nextAttemptAt) > now()) return false
     const active = running.get(key)
     if (active?.revision === version(key)) return active.promise
     const revision = version(key)
@@ -94,12 +95,22 @@ export function createLongMemory({ file, logger, llm, maxChars = 1500, intervalM
         }
         if (revision !== version(key) || store.get(key) !== item || item.paused) return false
         if (merged.length > maxChars) throw new Error('摘要超过 ' + maxChars + ' 字预算，原批次保留待重试')
-        const next = { summary: merged, pending: item.pending.slice(batch.length), updatedAt: Date.now() }
+        const next = { summary: merged, pending: item.pending.slice(batch.length), updatedAt: now(), paused: false, retry: null }
         writeJsonAtomic(file, { ...Object.fromEntries(store), [key]: next })
         Object.assign(item, next)
         logger?.info?.(`长期记忆已更新（${key}）：${merged.length} 字，待处理 ${item.pending.length} 条`)
         return true
-      } catch (err) { logger?.warn?.(`长期记忆整理失败（${key}）：${err.message}，原文保留待重试`); return false }
+      } catch (err) {
+        // 手动编辑、清理或切换人格后，旧请求的失败也不能污染新状态。
+        if (revision !== version(key) || store.get(key) !== item || item.paused) return false
+        const failures = Math.min(16, (Number(item.retry?.failures) || 0) + 1)
+        const rejected = /data_inspection_failed|DataInspectionFailed|内容检查/u.test(String(err.message))
+        const delay = Math.min(3600000, Math.max(rejected ? 1800000 : 60000, 60000 * 2 ** (failures - 1)))
+        item.retry = { failures, nextAttemptAt: now() + delay, reason: String(err.message).slice(0, 1000), maxChars }
+        save()
+        logger?.warn?.(`长期记忆整理失败（${key}）：${err.message}，原文和原摘要保留，${Math.ceil(delay / 60000)} 分钟后可重试`)
+        return false
+      }
     })()
     const token = { revision, promise: task, controller }; running.set(key, token)
     try { return await task } finally { if (running.get(key) === token) running.delete(key) }
@@ -135,6 +146,7 @@ export function createLongMemory({ file, logger, llm, maxChars = 1500, intervalM
   }
   // 手动操作先持久化新状态，再使旧异步结果失效；即使模型忽略取消也不能回写。
   function manualChange(key, next) {
+    next = { ...next, retry: null }
     writeJsonAtomic(file, { ...Object.fromEntries(store), [key]: next })
     edits.set(key, (edits.get(key) || 0) + 1)
     store.set(key, next)
@@ -167,7 +179,7 @@ export function createLongMemory({ file, logger, llm, maxChars = 1500, intervalM
     const item = store.get(key)
     if (!item) return { summary: '', pending: [], updatedAt: 0, paused: false, running: false }
     return {
-      paused: item.paused === true, running: running.get(key)?.revision === version(key),
+      retry: item.retry ? { ...item.retry } : null, paused: item.paused === true, running: running.get(key)?.revision === version(key),
       summary: item.summary || '',
       updatedAt: item.updatedAt || 0,
       pending: (item.pending || []).map((e) => ({

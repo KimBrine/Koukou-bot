@@ -956,7 +956,7 @@ function pageErrors(){
       esc(new Date(e.time).toLocaleString()) + ' · ' + esc(e.scope || 'bot') + '</div>' +
       '<pre class="mono" style="white-space:pre-wrap;word-break:break-all;margin:6px 0;font-size:12px;color:' + (warn ? 'var(--text)' : color) + '">' + esc(e.message || '') + '</pre></div>'
   }).join('')
-  return '<h1>错误中心</h1><div class="sub">最近 ' + items.length + ' 条错误；只记录，不影响运行。</div>' +
+  return '<h1>错误中心</h1><div class="sub">最近 ' + items.length + ' 条错误或警告；后台任务可能延迟或暂停，请查看具体原因。</div>' +
     '<div class="flexbar"><button class="btn" id="errorsRefresh">刷新</button><button class="btn" id="errorsClear">清空</button></div>' +
     (rows || '<div class="card mut">还没有错误记录</div>')
 }
