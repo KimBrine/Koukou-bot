@@ -641,6 +641,10 @@ function pythonCard(){
       (s.enabled === false ? ' <span class="pill">已停用</span>' : '') + '</summary>' +
       '<div class="mut" style="margin:6px 0 4px">' + esc(s.description || '') + '</div>' +
       '<div class="mut" style="font-size:12px">用法：' + esc(s.usage || ('/py ' + s.id)) + '</div>' +
+      '<div class="flexbar" style="margin-top:8px"><label class="mut">调用名 /py</label>' +
+        '<input data-pycmd="' + id + '" value="' + esc(s.command || s.id) + '" style="width:120px" maxlength="20">' +
+        '<button class="btn sm" data-pycmdsave="' + id + '">保存调用名</button>' +
+        '<span class="mut" style="font-size:12px">文件名 ' + id + '.py</span></div>' +
       '<div class="flexbar" style="margin-top:8px">' +
         '<button class="btn sm" data-pyedit="' + id + '">编辑内容</button>' +
         '<button class="btn sm" data-pytoggle="' + id + '" data-next="' + (s.enabled === false ? '1' : '0') + '">' + (s.enabled === false ? '启用' : '停用') + '</button>' +
@@ -658,7 +662,7 @@ function pythonCard(){
     '<details class="frow" style="margin-top:10px"><summary><b>＋ 新建脚本</b> <span class="mut">自己写，或让 AI 起草</span></summary>' +
       '<div class="mut" style="margin:8px 0 6px">描述你要的功能，AI 只生成草稿，代码会放在下面，确认后再保存。保存后即可用 <code>/py 文件名</code> 调用。</div>' +
       '<textarea id="pyPrompt" placeholder="例如：把一段文字倒序输出，并统计字符数；参数为空时提示用法" style="width:100%;min-height:70px"></textarea>' +
-      '<div class="flexbar" style="margin:8px 0"><input id="pyNewName" placeholder="文件名，如 wc.py" style="width:180px"><button class="btn sm" id="pyDraftBtn">AI 生成草稿</button><button class="btn sm" id="pyTplBtn">插入模板</button><span class="mut" id="pyDraftHint"></span></div>' +
+      '<div class="flexbar" style="margin:8px 0"><input id="pyNewName" placeholder="文件名，如 wc.py" style="width:170px"><input id="pyNewCmd" placeholder="调用名（可选）" style="width:140px" maxlength="20"><button class="btn sm" id="pyDraftBtn">AI 生成草稿</button><button class="btn sm" id="pyTplBtn">插入模板</button><span class="mut" id="pyDraftHint"></span></div>' +
       '<textarea id="pyNewCode" spellcheck="false" placeholder="代码会出现在这里，也可以自己直接写" style="width:100%;min-height:240px;font-family:Consolas,monospace;font-size:12px"></textarea>' +
       '<div class="flexbar" style="margin-top:6px"><button class="btn primary sm" id="pyNewSave">保存脚本</button><button class="btn sm" id="pyNewClear">清空</button><span class="mut" id="pyNewHint"></span></div>' +
     '</details>' +
@@ -1434,11 +1438,29 @@ async function bind(){
     if (!code.trim()) { if (hint) hint.textContent = '代码是空的'; return }
     try {
       await api('/api/action/import-python-script', { filename: name, content: code })
-      if (hint) hint.textContent = '已保存：' + name
-      toast('已保存 ' + name + '，用 /py ' + name.replace(/\.py$/i, '') + ' 调用')
+      const cmdInput = document.getElementById('pyNewCmd')
+      const id = name.replace(/\.py$/i, '')
+      let cmd = id
+      if (cmdInput && cmdInput.value.trim()) {
+        const r = await api('/api/action/set-python-command', { id, command: cmdInput.value.trim() })
+        cmd = r.command
+      }
+      if (hint) hint.textContent = '已保存：' + name + '（调用名 /py ' + cmd + '）'
+      toast('已保存 ' + name + '，用 /py ' + cmd + ' 调用')
       await load(); render()
     } catch(e){ if (hint) hint.textContent = '保存失败：' + e.message; toast('保存失败：' + e.message, true) }
   }
+  document.querySelectorAll('[data-pycmdsave]').forEach(function(b){
+    b.onclick = async function(){
+      const id = b.dataset.pycmdsave
+      const input = document.querySelector('[data-pycmd="' + id + '"]')
+      try {
+        const r = await api('/api/action/set-python-command', { id, command: input ? input.value : '' })
+        toast('调用名已改为 /py ' + r.command)
+        await load(); render()
+      } catch(e){ toast('保存失败：' + e.message, true) }
+    }
+  })
   const pokeSave = document.getElementById('pokeSave')
   if (pokeSave) pokeSave.onclick = async function(){
     const box = document.getElementById('pokeText')

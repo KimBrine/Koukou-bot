@@ -30,6 +30,7 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
   const list = () => {
     if (!existsSync(dir)) return []
     const disabled = readDisabled()
+    const names = getSettings().names
     const out = []
     for (const file of readdirSync(dir).filter((f) => NAME_RE.test(f)).sort()) {
       const full = path.join(dir, file)
@@ -38,6 +39,7 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
       const meta = parseMeta(text, file)
       try { meta.size = statSync(full).size } catch {}
       meta.enabled = !disabled.has(meta.id)
+      meta.command = names[meta.id] || meta.id
       out.push(meta)
     }
     return out
@@ -49,8 +51,9 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
     while ((m = re.exec(String(raw || '')))) out.push(m[1] ?? m[2] ?? m[3])
     return out
   }
-  async function run(id, rawArgs) {
-    const file = String(id || '').replace(/\.py$/i, '') + '.py'
+  async function run(name, rawArgs) {
+    const id = resolveId(name)
+    const file = id + '.py'
     if (!NAME_RE.test(file)) throw new Error('脚本名无效')
     const full = path.join(dir, file)
     if (!existsSync(full)) throw new Error('脚本不存在：' + file)
@@ -83,21 +86,56 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
     return list().find((x) => x.id === id) || null
   }
   const SETTINGS_FILE = path.join(dir, 'settings.json')
+  function readSettingsRaw() {
+    try { return JSON.parse(readFileSync(SETTINGS_FILE, 'utf8')) || {} } catch { return {} }
+  }
   function getSettings() {
-    let data = {}
-    try { data = JSON.parse(readFileSync(SETTINGS_FILE, 'utf8')) || {} } catch {}
+    const data = readSettingsRaw()
     const n = Number(data.recallSeconds ?? (data.recallMinutes !== undefined ? Number(data.recallMinutes) * 60 : NaN))
-    return { recallSeconds: Number.isFinite(n) ? Math.min(7200, Math.max(5, Math.round(n))) : 300 }
+    const names = data.names && typeof data.names === 'object' && !Array.isArray(data.names) ? data.names : {}
+    return { recallSeconds: Number.isFinite(n) ? Math.min(7200, Math.max(5, Math.round(n))) : 300, names }
   }
   function setSettings(patch) {
-    const next = getSettings()
+    const data = readSettingsRaw()
     if (patch && patch.recallSeconds !== undefined) {
       const n = Number(patch.recallSeconds)
       if (!Number.isFinite(n) || n < 5 || n > 7200) throw new Error('撤回秒数需在 5~7200 之间')
-      next.recallSeconds = Math.round(n)
+      data.recallSeconds = Math.round(n)
     }
-    try { mkdirSync(dir, { recursive: true }); writeFileSync(SETTINGS_FILE, JSON.stringify(next, null, 1), 'utf8') } catch {}
-    return next
+    try { mkdirSync(dir, { recursive: true }); writeFileSync(SETTINGS_FILE, JSON.stringify(data, null, 1), 'utf8') } catch {}
+    return getSettings()
+  }
+  /** 调用名：/py <command>；默认等于文件名（不含 .py） */
+  function commandOf(id) {
+    const key = String(id || '').replace(/\.py$/i, '')
+    return getSettings().names[key] || key
+  }
+  function setCommandName(id, command) {
+    const key = String(id || '').replace(/\.py$/i, '')
+    if (!NAME_RE.test(key + '.py')) throw new Error('脚本名无效')
+    if (!existsSync(path.join(dir, key + '.py'))) throw new Error('脚本不存在：' + key + '.py')
+    const cmd = String(command || '').trim().replace(/\.py$/i, '')
+    const data = readSettingsRaw()
+    const names = data.names && typeof data.names === 'object' && !Array.isArray(data.names) ? { ...data.names } : {}
+    if (!cmd || cmd === key) {
+      delete names[key]
+    } else {
+      if (!/^[A-Za-z0-9_\-\u4e00-\u9fa5]{1,20}$/.test(cmd)) throw new Error('调用名只能用中英文、数字、下划线、短横线，1~20 个字符')
+      for (const [k, v] of Object.entries(names)) if (k !== key && v === cmd) throw new Error('调用名已被 ' + k + '.py 占用')
+      if (existsSync(path.join(dir, cmd + '.py'))) throw new Error('调用名不能和现有脚本文件重名')
+      names[key] = cmd
+    }
+    data.names = names
+    try { mkdirSync(dir, { recursive: true }); writeFileSync(SETTINGS_FILE, JSON.stringify(data, null, 1), 'utf8') } catch {}
+    return cmd || key
+  }
+  /** 把用户输入的调用名解析成实际文件名 id */
+  function resolveId(name) {
+    const n = String(name || '').replace(/\.py$/i, '')
+    if (existsSync(path.join(dir, n + '.py'))) return n
+    const names = getSettings().names
+    for (const [k, v] of Object.entries(names)) if (v === n) return k
+    return n
   }
   function readScript(id) {
     const file = String(id || '').replace(/\.py$/i, '') + '.py'
@@ -119,8 +157,8 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
       writeFileSync(DISABLED_FILE, JSON.stringify([...set], null, 1), 'utf8')
     } catch {}
   }
-  function isEnabled(id) {
-    return !readDisabled().has(String(id || '').replace(/\.py$/i, ''))
+  function isEnabled(name) {
+    return !readDisabled().has(resolveId(name))
   }
   function setEnabled(id, enabled) {
     const key = String(id || '').replace(/\.py$/i, '')
@@ -148,12 +186,12 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
     }
     const lines = [`Python 脚本 ${items.length} 个，用法：/py 脚本名 参数`, '']
     for (const it of items) {
-      lines.push(`▪ /py ${it.id} — ${it.name}${it.enabled === false ? '（已停用）' : ''}`)
+      lines.push(`▪ /py ${it.command || it.id} — ${it.name}${it.enabled === false ? '（已停用）' : ''}`)
       if (it.description) lines.push(`   ${it.description.slice(0, 60)}`)
       const cmds = Array.isArray(it.commands) ? it.commands : []
       if (cmds.length) {
         for (const c of cmds) {
-          const u = /^\/py\b/i.test(c.usage) ? c.usage : `/py ${it.id} ${c.usage}`
+          const u = /^\/py\b/i.test(c.usage) ? c.usage : `/py ${it.command || it.id} ${c.usage}`
           lines.push(`   • ${u}${c.desc ? ' — ' + c.desc : ''}`)
           lines.push('')
         }
@@ -167,5 +205,5 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
     const text = lines.join('\n')
     return text.length > limit ? text.slice(0, limit - 12) + '\n…（已截断）' : text
   }
-  return { list, run, importScript, remove, helpText, isEnabled, setEnabled, getSettings, setSettings, readScript, dir }
+  return { list, run, importScript, remove, helpText, isEnabled, setEnabled, getSettings, setSettings, readScript, commandOf, setCommandName, resolveId, dir }
 }

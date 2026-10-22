@@ -1492,6 +1492,11 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       const stamp = new Date().toISOString().slice(5, 16).replace(/[-:T]/g, '')
       return { ok: true, content, filename: `new_${stamp}.py`, warnings, model: String(llm.model || ''), effort: String(llm.reasoningEffort || 'default') }
     },
+    async 'set-python-command'(payload) {
+      if (!pythonPlugins) throw new Error('Python 插件未启用')
+      const command = pythonPlugins.setCommandName(payload && payload.id, payload && payload.command)
+      return { ok: true, command }
+    },
     async 'read-python-script'(payload) {
       if (!pythonPlugins) throw new Error('Python 插件未启用')
       return { content: pythonPlugins.readScript(payload && payload.id) }
