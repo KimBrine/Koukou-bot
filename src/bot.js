@@ -896,6 +896,34 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
             } catch (err) { await sendTo(evt, '聊天记录发送失败：' + err.message) }
             return
           }
+          if (r.ok && out.startsWith('@@FILE@@')) {
+            try {
+              const spec = JSON.parse(out.slice('@@FILE@@'.length))
+              const filePath = path.resolve(String(spec.path || ''))
+              if (!existsSync(filePath) || !statSync(filePath).isFile()) throw new Error('文件不存在：' + filePath)
+              if (statSync(filePath).size > 200 * 1024 * 1024) throw new Error('文件超过 200MB')
+              const name = String(spec.name || path.basename(filePath))
+              const minutes = Math.min(120, Math.max(0, Number(spec.recall_minutes ?? 5) || 0))
+              let receipt = null
+              try {
+                const segment = [{ type: 'file', data: { file: 'file:///' + filePath.replace(/\\/g, '/'), name } }]
+                receipt = evt.message_type === 'private'
+                  ? await onebot.sendPrivate(evt.user_id, segment)
+                  : await onebot.sendGroup(evt.group_id, segment)
+              } catch (segErr) {
+                // 文件段不被支持时退回群文件/私聊文件上传（这种形式没有消息号，无法自动撤回）
+                if (evt.message_type === 'private') await onebot.api('upload_private_file', { user_id: evt.user_id, file: filePath, name })
+                else await onebot.api('upload_group_file', { group_id: evt.group_id, file: filePath, name })
+              }
+              const mid = receipt && receipt.message_id
+              if (mid && minutes > 0) {
+                const t = setTimeout(() => { onebot.deleteMessage(mid).catch(() => {}) }, minutes * 60000)
+                if (typeof t.unref === 'function') t.unref()
+              }
+              await sendTo(evt, (spec.text || ('已发送文件：' + name)) + (mid && minutes > 0 ? `\n（${minutes} 分钟后自动撤回）` : ''))
+            } catch (err) { await sendTo(evt, '文件发送失败：' + err.message) }
+            return
+          }
           const body = out.slice(0, 1500)
           await sendTo(evt, (r.ok ? '✅ ' : '⚠️ ') + body + (r.killed ? '\n（超时已终止）' : ''))
         } catch (err) { await sendTo(evt, '脚本执行失败：' + err.message) }

@@ -21,6 +21,7 @@ jm.py —— 机器人用的后台下载插件 + 详情查询
     查/查询/jmv 350234   查本子详情（不发图，纯文本）
     发图 350234 [张数]    直接把第一话前几张图发到聊天（默认3，最多6）
     记录 350234 [张数]    详情+整话图片打包成一条聊天记录卡片（不填张数=整话全部）
+    打包 350234 [分钟]    把已下载的本子压成 zip 以文件发送，默认 5 分钟后撤回
     123456          下载本子(album)
     p345678         下载单个章节(photo)
     状态/status     当前任务进度
@@ -599,6 +600,58 @@ def cmd_card(raw, count_arg=''):
     return '@@CARD@@' + json.dumps(payload, ensure_ascii=False)
 
 
+def cmd_pack(raw='', minutes_arg=''):
+    """把已下载的本子目录压成 zip，交给机器人以文件形式发送（可自动撤回）。"""
+    import zipfile
+
+    base = download_dir()
+    if not base.is_dir():
+        return '下载目录还不存在，先 /py jm 350234 下载。'
+
+    digits = re.findall(r'\d+', raw or '')
+    target = None
+    if digits:
+        album_id = ''.join(digits)
+        for child in sorted(base.iterdir()):
+            if child.is_dir() and album_id in child.name:
+                target = child
+                break
+        if target is None:
+            return f'没找到已下载的 JM{album_id}。先 /py jm {album_id} 下完再打包。'
+    else:
+        dirs = [c for c in base.iterdir() if c.is_dir()]
+        if not dirs:
+            return '下载目录里还没有本子。'
+        target = max(dirs, key=lambda p: p.stat().st_mtime)
+
+    try:
+        minutes = int(str(minutes_arg).strip() or 5)
+    except ValueError:
+        minutes = 5
+    minutes = max(1, min(minutes, 120))
+
+    outdir = state_dir() / 'exports'
+    outdir.mkdir(parents=True, exist_ok=True)
+    zip_path = outdir / f'{target.name}.zip'
+
+    try:
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED) as zf:
+            for f in sorted(target.rglob('*')):
+                if f.is_file():
+                    zf.write(f, f.relative_to(target.parent))
+    except Exception as e:
+        return f'打包失败：{type(e).__name__}: {e}'
+
+    size_mb = zip_path.stat().st_size / 1024 / 1024
+    payload = {
+        'path': zip_path.as_posix(),
+        'name': zip_path.name,
+        'recall_minutes': minutes,
+        'text': f'打包完成：{zip_path.name}（{size_mb:.1f} MB）',
+    }
+    return '@@FILE@@' + json.dumps(payload, ensure_ascii=False)
+
+
 # ---------- 提交 ----------
 
 def submit(raw_id):
@@ -768,6 +821,10 @@ def main(argv):
         return 0
     if low in ('记录', '卡片', 'card', '聊天记录'):
         print(cmd_card(argv[1] if len(argv) > 1 else '',
+                       argv[2] if len(argv) > 2 else ''))
+        return 0
+    if low in ('打包', 'zip', '压缩', '文件'):
+        print(cmd_pack(argv[1] if len(argv) > 1 else '',
                        argv[2] if len(argv) > 2 else ''))
         return 0
     if low in ('状态', 'status', '进度'):
