@@ -487,7 +487,9 @@ const llbotWebui = createLlbotWebui({
   tokenFile: config.llbotWebuiTokenFile,
   candidates: [
     path.join(config.dataDir, '..', 'llbot', 'data', 'webui_token.txt'),
+    path.join(config.dataDir, '..', '..', 'llbot', 'data', 'webui_token.txt'),
     path.join(config.dataDir, '..', '..', 'luckylillia', 'bin', 'llbot', 'data', 'webui_token.txt'),
+    path.join(config.rootDir, '..', 'llbot', 'data', 'webui_token.txt'),
     path.join(config.rootDir, '..', 'luckylillia', 'bin', 'llbot', 'data', 'webui_token.txt'),
     path.join(config.rootDir, 'llbot', 'data', 'webui_token.txt'),
   ],

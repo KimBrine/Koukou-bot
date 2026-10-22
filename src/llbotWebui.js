@@ -11,14 +11,14 @@ import { existsSync, readFileSync } from 'node:fs'
 const hash = (value) => createHash('sha256').update(String(value)).digest('hex')
 
 export function createLlbotWebui({ baseUrl = 'http://127.0.0.1:3080', tokenFile = '', candidates = [], fetchImpl = (...args) => fetch(...args), logger = null } = {}) {
-  const tokenCandidates = [tokenFile, ...candidates].filter(Boolean)
+  const tokenCandidates = [...new Set([tokenFile, ...candidates].filter(Boolean))]
   let cached = null
   const tried = []
 
   function resolveToken() {
     if (cached) return cached
     for (const file of tokenCandidates) {
-      tried.push(file)
+      if (!tried.includes(file)) tried.push(file)
       try {
         if (!existsSync(file)) continue
         const text = readFileSync(file, 'utf8').trim()
