@@ -673,6 +673,16 @@ function pythonCard(){
     '</details>' +
     '<div class="flexbar" style="margin-top:10px"><label class="btn" style="cursor:pointer">导入 .py<input type="file" id="pyImport" accept=".py" style="display:none"></label><span class="mut" id="pyHint"></span></div></details>'
 }
+function syncPyOpen(){
+  const card = document.querySelector('details[data-pycard]')
+  if (card) pyOpen.card = card.open
+  const rows = []
+  document.querySelectorAll('details[data-pyrow]').forEach(function(d){ if (d.open) rows.push(d.dataset.pyrow) })
+  pyOpen.rows = rows
+  const eds = []
+  document.querySelectorAll('[id^="pyEditor-"]').forEach(function(el){ if (el.style.display !== 'none') eds.push(el.id.replace('pyEditor-', '')) })
+  pyOpen.editors = eds
+}
 function pageCommands(){ return CommandCenterUI.render({custom:customCommands,builtins:commandBuiltins,poke:pokeDiagnostics,groups:joinedGroups}) + commandTestCard() + pokeCorpusCard() + pythonCard() }
 // ── 渲染 ───────────────────────────────────────────────
 function pageMemory(){
@@ -1326,6 +1336,7 @@ async function bind(){
   }
   const pyImport = document.getElementById('pyImport')
   if (pyImport) pyImport.onchange = async function(){
+    syncPyOpen()
     const file = pyImport.files && pyImport.files[0]
     if (!file) return
     try {
@@ -1339,6 +1350,7 @@ async function bind(){
   document.querySelectorAll('[data-pydel]').forEach(function(b){
     b.onclick = async function(){
       if (!await ask('删除脚本 ' + b.dataset.pydel + '？', '会同时删除备份文件 .bak。', '删除')) return
+      syncPyOpen()
       const did = b.dataset.pydel
       pyOpen.rows = pyOpen.rows.filter(function(x){ return x !== did })
       pyOpen.editors = pyOpen.editors.filter(function(x){ return x !== did })
@@ -1349,6 +1361,7 @@ async function bind(){
   document.querySelectorAll('[data-pytoggle]').forEach(function(b){
     b.onclick = async function(){
       const on = b.dataset.next === '1'
+      syncPyOpen()
       try {
         await api('/api/action/toggle-python-script', { id: b.dataset.pytoggle, enabled: on })
         toast((on ? '已启用 ' : '已停用 ') + b.dataset.pytoggle)
@@ -1372,6 +1385,7 @@ async function bind(){
   })
   document.querySelectorAll('[data-pysave]').forEach(function(b){
     b.onclick = async function(){
+      syncPyOpen()
       const id = b.dataset.pysave
       const box = document.getElementById('pyEditor-' + id)
       const msg = document.getElementById('pyMsg-' + id)
@@ -1447,6 +1461,7 @@ async function bind(){
   }
   const pyNewSave = document.getElementById('pyNewSave')
   if (pyNewSave) pyNewSave.onclick = async function(){
+    syncPyOpen()
     const hint = document.getElementById('pyNewHint')
     const name = document.getElementById('pyNewName').value.trim()
     const code = document.getElementById('pyNewCode').value
@@ -1503,6 +1518,7 @@ async function bind(){
   })
   document.querySelectorAll('[data-pycmdsave]').forEach(function(b){
     b.onclick = async function(){
+      syncPyOpen()
       const id = b.dataset.pycmdsave
       const input = document.querySelector('[data-pycmd="' + id + '"]')
       try {
