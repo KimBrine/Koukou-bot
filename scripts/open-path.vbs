@@ -1,15 +1,16 @@
 Option Explicit
-Dim fso, sh, f, target, ts
+Dim fso, sh, target, mode
+If WScript.Arguments.Count <> 2 Then WScript.Quit 2
 Set fso = CreateObject("Scripting.FileSystemObject")
 Set sh = CreateObject("WScript.Shell")
-f = "D:\QQ-bot\Koukou-bot\data\open-path.txt"
-If Not fso.FileExists(f) Then WScript.Quit 0
-Set ts = fso.OpenTextFile(f, 1, False, -1)
-target = Trim(ts.ReadAll)
-ts.Close
-If Len(target) = 0 Then WScript.Quit 0
-If fso.FolderExists(target) Then
-  sh.Run "explorer.exe """ & target & """", 1, False
-ElseIf fso.FileExists(target) Then
+target = WScript.Arguments(0)
+mode = WScript.Arguments(1)
+If mode = "select" Then
+  If Not fso.FileExists(target) Then WScript.Quit 3
   sh.Run "explorer.exe /select,""" & target & """", 1, False
+ElseIf mode = "folder" Then
+  If Not fso.FolderExists(target) Then WScript.Quit 3
+  sh.Run "explorer.exe """ & target & """", 1, False
+Else
+  WScript.Quit 2
 End If

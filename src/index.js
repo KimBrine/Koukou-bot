@@ -521,7 +521,7 @@ if (config.adminEnabled) {
         const restartOutput = openSync(path.join(config.logDir, 'restart-spawn.log'), 'a')
         const child = spawn(process.execPath, [
           path.join(config.rootDir, 'bot-restart-worker.mjs'),
-          String(process.pid), String(config.botTaskName || 'DeepSeekQQBot'), config.logDir, '--profile=' + profile,
+          String(process.pid), String(config.botTaskName || 'DeepSeekQQBot'), config.logDir,
         ], { detached: true, stdio: ['ignore', restartOutput, restartOutput], windowsHide: true })
         closeSync(restartOutput)
         child.on('spawn', () => logger.info(`[重启] 辅助进程 PID ${child.pid} 已启动`))

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
-import { execFile, spawn } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, cpSync } from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
@@ -10,6 +10,8 @@ import { fileURLToPath } from 'node:url'
 import { keyToGroupId, keyToUserId } from '../chatSettings.js'
 import { activatePersona } from '../personaSwitch.js'
 import { applyConversationSettings, resetConversationMemory } from '../conversationSessions.js'
+import { normalizeAdmins } from '../permissions.js'
+import { openPathOnHost } from '../openPath.js'
 import { writeTextAtomic } from '../stateFile.js'
 import { createWebSearch } from '../search.js'
 import { renderReply } from '../customCommands.js'
@@ -284,6 +286,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     const mem = readJsonSafe(config.memoryFile, {})
     const keys = new Set([...Object.keys(mem), ...chatSettings.keys()])
     for (const g of config.whitelistGroups) keys.add(`g${g}`)
+    for (const uid of [...(config.privateWhitelist || []),...normalizeAdmins(config.adminUsers)]) if (/^[1-9]\d{0,14}$/.test(String(uid))) keys.add(`p${uid}`)
 
     const groups = await getGroupList()
     const friends = await getFriendList()
@@ -330,6 +333,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         lastActive: runtimeStats?.lastMessage?.get?.(key) ?? null,
         replies: runtimeStats?.replies?.get?.(key) ?? 0,
         received: runtimeStats?.received?.get?.(key) ?? 0,
+        privateAccess: uid === null ? undefined : { listed: Boolean(config.privateWhitelist?.has(uid)), admin: normalizeAdmins(config.adminUsers).includes(String(uid)), configured: Boolean(raw) },
         raw: raw ?? {},
         persona: raw?.persona || '',
         effective: eff,
@@ -985,6 +989,18 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       logger?.info?.(`[控制台] ${payload.operation === 'add' ? '添加' : '移出'}白名单群 ${ids.join(',')}`)
       return { ok: true, changed, whitelist: [...next] }
     },
+    async 'add-private-whitelist'(payload) {
+      if (!Array.isArray(payload?.userIds) || !payload.userIds.length || payload.userIds.length > 200) throw new Error('请输入1～200个QQ号')
+      const ids=[...new Set(payload.userIds.map(value=>String(value).trim()))]
+      if(ids.some(id=>!/^[1-9]\d{4,11}$/.test(id)))throw new Error('QQ号应为5～12位数字，不能以0开头')
+      const next=new Set(config.privateWhitelist || []);let changed=0
+      for(const id of ids.map(Number))if(!next.has(id)){next.add(id);changed++}
+      const value=[...next].join(',')
+      writeEnvFile(envFile,{PRIVATE_WHITELIST:value},{atomic:true})
+      applyLive('PRIVATE_WHITELIST',value)
+      logger?.info?.(`[控制台] 添加私聊白名单 ${ids.join(',')}`)
+      return {ok:true,changed,whitelist:[...next]}
+    },
     async 'set-chat'(payload) {
       const { key, patch } = payload
       if (!key) throw new Error('缺少会话 key')
@@ -1062,11 +1078,12 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       if (!name) throw new Error('缺少人格名')
       mkdirSync(personaDir, { recursive: true })
       const text = String(content ?? '')
-      writeFileSync(personaPath(name), text)
+      if (config.activePersona === name && !text.trim()) throw new Error('当前人格正文不能为空')
+      writeTextAtomic(personaPath(name), text)
       // 保存的就是当前在用的人格时，必须同步更新运行中的提示词，否则改了不生效。
       if (config.activePersona === name && text.trim()) {
         const result = activatePersona({ name, content: text.trim(), config, memory, longMemory, targetWatch,
-          persist: () => writeEnvFile(envFile, { ACTIVE_PERSONA: name }, { atomic: true }) })
+          persist: () => {} /* 同名保存不改变ACTIVE_PERSONA，无需重写.env */ })
         logger?.info?.(`[控制台] 已更新当前人格「${name}」（${text.trim().length} 字），即时生效`)
         return { ok: true, applied: true, persona: result.persona }
       }
@@ -1541,35 +1558,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         target = path.join(dir, id + '.py')
         if (!existsSync(target)) throw new Error('脚本不存在：' + id + '.py')
       }
-      // 机器人常以最高权限运行，提权进程直接 spawn explorer 不会在用户桌面开窗。
-      // 改走普通权限的计划任务 KoukouOpenPath：它读 data/open-path.txt 再打开。
-      try {
-        // UTF-16LE + BOM，VBS 用 TristateTrue 读，中文路径不会乱码
-        writeFileSync(path.join(config.dataDir, 'open-path.txt'), '\uFEFF' + target, 'utf16le')
-      } catch (err) { logger?.warn?.('[控制台] 写入打开路径失败：' + err.message) }
-      const viaTask = await new Promise((resolve) => {
-        execFile('schtasks.exe', ['/Run', '/TN', 'KoukouOpenPath'], { windowsHide: true, timeout: 8000 }, (err, stdout, stderr) => {
-          resolve({ ok: !err, detail: String(stderr || stdout || '').trim().slice(0, 160) })
-        })
-      })
-      if (viaTask.ok) return { ok: true, path: target, mode: id ? 'select' : 'folder' }
-      // 兜底：任务不可用时直接拉起 explorer
-      const attempt = (args) => new Promise((resolve) => {
-        let settled = false
-        const done = (result) => { if (!settled) { settled = true; resolve(result) } }
-        let child
-        try {
-          child = spawn('explorer.exe', args, { windowsHide: true, detached: true, stdio: 'ignore' })
-        } catch (err) { done({ ok: false, error: err.code || err.message }); return }
-        child.on('error', (err) => done({ ok: false, error: err.code || err.message }))
-        child.on('spawn', () => { try { child.unref() } catch {} ; done({ ok: true }) })
-        setTimeout(() => done({ ok: true }), 2000)
-      })
-      const first = await attempt(id ? ['/select,' + target] : [dir])
-      if (first.ok) return { ok: true, path: target, mode: id ? 'select' : 'folder', warning: '计划任务未就绪，已直接打开（若没窗口请用小标题里的提示）' }
-      const reason = first.error || viaTask.detail || 'explorer 启动失败'
-      logger?.warn?.('[控制台] 打开资源管理器失败：' + reason)
-      return { ok: false, error: reason, path: target }
+      return openPathOnHost({rootDir:config.rootDir,target,select:Boolean(id)})
     },
     async 'save-poke-replies'(payload) {
       const raw = String((payload && payload.text) || '')

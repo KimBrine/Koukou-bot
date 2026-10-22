@@ -161,6 +161,8 @@ try {
       t.memory.push('g1', 'user', '旧消息')
       const saved = await admin.actions['save-persona']({ name: '甲', content: '修改的甲' })
       assert.equal(saved.applied, true)
+      await assert.rejects(admin.actions['save-persona']({name:'甲',content:'   '}),/不能为空/)
+      assert.equal(readFileSync(path.join(t.dir,'personas','甲.txt'),'utf8'),'修改的甲')
       assert.equal(t.config.persona, '修改的甲')
       assert.equal(t.memory.get('g1').length, 1)
       const r = await admin.actions['activate-persona']({ name: '甲' }); assert.equal(r.changed, false)

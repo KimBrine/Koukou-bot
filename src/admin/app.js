@@ -74,6 +74,9 @@ let pythonScripts = []
 let pythonSettings = { recallSeconds: 300, recallEnabled: true }
 let pythonDir = ''
 let pyOpen = { card: false, rows: [], editors: [] }
+const pyDrafts = Object.create(null)
+const detailOpenByPage = new Map()
+let renderedPage = null
 let tasksInfo = null
 let metricsInfo = []
 let metricsRange = 7
@@ -368,16 +371,30 @@ function personaOptions(cur){
     return '<option value="' + esc(p.name) + '"' + (cur === p.name ? ' selected' : '') + '>' + esc(p.name) + '</option>'
   }).join('')
 }
+function privateWhitelistEntries(){
+  const entries=new Map()
+  const ensure=id=>{const key=String(id);if(!entries.has(key))entries.set(key,{id:key,sources:[]});return entries.get(key)}
+  for(const id of state?.config?.privateWhitelist || [])ensure(id).sources.push('白名单')
+  for(const id of state?.config?.adminUsers || [])ensure(id).sources.push('管理员自动允许')
+  for(const c of chats.filter(c=>c.type==='private' && c.privateAccess?.configured))ensure(c.id).sources.push('已配置私聊')
+  return [...entries.values()].map(item=>({...item,name:friendList.find(f=>String(f.id)===item.id)?.name || chats.find(c=>c.key==='p'+item.id)?.name || 'QQ用户'}))
+}
+function privateWhitelistCard(){
+  const allowed=privateWhitelistEntries()
+  return `<section class="card group-manager private-manager" aria-label="私聊白名单管理"><div class="section-head"><div><h2>私聊白名单 <span class="badge whitelist">${allowed.length} 人获准私聊</span></h2><p class="note">新私聊默认不回复。把对方加入这里后，从下一条新消息起按会话设置回复。</p></div><button class="btn primary" id="addPrivateWhitelist">＋ 添加私聊白名单</button></div>
+  <div class="group-list">${allowed.map(c=>`<div class="group-item"><div class="group-identity"><strong>${esc(c.name)}（${esc(c.id)}）</strong><small>${c.sources.map(esc).join(' · ')}</small></div><button class="btn sm" data-open-chat="p${esc(c.id)}">私聊设置</button></div>`).join('') || '<div class="empty">还没有获准回复的私聊，点击右上方添加QQ号。</div>'}</div><p class="note" style="margin-top:12px">管理员与已在控制台配置过的私聊也会放行；回复仍受聊天开关、安静时段和限流限制。添加不会主动发消息或补发旧回复。</p></section>`
+}
 function pageChats(){
   const groups = chats.filter(c=>c.type==='group'), priv = chats.filter(c=>c.type==='private')
   const whitelist = (state?.config?.whitelist || []).map(id => ({id, name: groupName(id)}))
   return `
-  <h1>会话管理</h1><div class="sub">为每个群聊或私聊设置回复方式。保存后即时生效。</div>
+  <div class="section-head"><div><h1>会话管理</h1><div class="sub">为每个群聊或私聊设置回复方式。保存后即时生效。</div></div><button class="btn primary" id="addPrivateWhitelistTop">＋ 添加私聊白名单</button></div>
   <section class="card group-manager" aria-label="白名单群聊管理">
     <div class="section-head"><div><h2>白名单群聊 <span class="badge whitelist">${whitelist.length} 个群</span></h2><div class="note">机器人可以在这些群主动搭话，概率在「回复行为」中设置。</div></div><button class="btn primary" id="importWhitelist">＋ 添加 / 导入白名单群</button></div>
     <div class="group-list">${whitelist.map(g => `<div class="group-item"><div class="group-identity"><strong>${esc(g.name)}</strong><small>群号 ${g.id}</small></div>${summaryControls(g.id)}<button class="btn sm" data-open-chat="g${g.id}">会话设置</button><button class="btn danger sm" data-whitelist="remove" data-group="${g.id}">移出白名单</button></div>`).join('') || '<div class="empty">还没有白名单群，点击右上方按钮添加。</div>'}</div>
     <div class="note" style="margin-top:12px">移出后停止主动搭话；聊天记录和会话设置保留，被 @ 回复与定时任务按各自设置执行。</div>
   </section>
+  ${privateWhitelistCard()}
   <div class="card">
     <div class="toolgroup">
       <input id="chatSearch" type="text" placeholder="搜索群名、群号或 QQ 号" aria-label="搜索会话" style="max-width:300px">
@@ -392,7 +409,7 @@ function pageChats(){
   </div>
   <h2>群聊（${groups.length}）</h2>
   ${groups.map(chatRow).join('') || '<div class="empty">还没有群会话</div>'}
-  <h2>私聊（${priv.length}）</h2>
+  <div class="section-head"><h2>私聊（${priv.length}）</h2><button class="btn primary" id="addPrivateWhitelistBelow">＋ 添加私聊白名单</button></div>
   ${priv.map(chatRow).join('') || '<div class="empty">还没有私聊会话</div>'}`
 }
 
@@ -517,40 +534,34 @@ function groupRateEditor(value){
   }).join('')
   return `<div class="rate-editor"><input type="hidden" data-cfg="PROACTIVE_RATE_PER_GROUP" value="${esc(value)}"><div class="group-list" id="groupRateRows">${rows}</div><div class="empty" id="rateEmpty" ${rows ? 'hidden' : ''}>没有单独设置的群，均沿用全局概率。</div><div class="inline-error" id="rateError" role="status"></div><div class="rate-add"><select id="rateGroupPick" aria-label="选择需要单独设置概率的群"><option value="">选择群聊…</option>${availableGroups().map(g => `<option value="${g.id}">${esc(g.name)}（${g.id}）</option>`).join('')}<option value="manual">手动输入群号</option></select><input id="rateGroupId" type="text" inputmode="numeric" aria-label="手动输入概率目标群号" placeholder="输入群号" hidden><button class="btn" id="addGroupRate" type="button">＋ 添加群概率</button></div></div>`
 }
-async function importWhitelist(){
-  const root = document.getElementById('modalRoot')
-  root.innerHTML = `<div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="importTitle"><h2 id="importTitle">添加白名单群聊</h2><p>选择群聊，或粘贴多个群号。导入后即时生效。</p><label class="field-label" for="whitelistPick">从已知群聊中选择</label><select id="whitelistPick"><option value="">选择一个群…</option>${availableGroups().filter(g => !(state?.config?.whitelist || []).map(Number).includes(g.id)).map(g => `<option value="${g.id}">${esc(g.name)}（${g.id}）</option>`).join('')}</select><div class="note">QQ 离线时可能无法获取新加入的群，可直接输入群号。</div><label class="field-label" for="whitelistInput">群号（支持批量导入）</label><textarea id="whitelistInput" placeholder="每行一个群号，也支持逗号或空格分隔"></textarea><div id="whitelistPreview" class="import-preview" aria-live="polite"></div><div class="row"><button class="btn" id="importCancel">取消</button><button class="btn primary" id="importCommit" disabled>请先选择或输入群号</button></div></div>`
-  root.classList.add('show'); root.setAttribute('aria-hidden','false')
-  const input = root.querySelector('#whitelistInput'), commit = root.querySelector('#importCommit')
-  let newIds = [], pending = false
-  const close = () => { if (pending) return; root.classList.remove('show'); root.setAttribute('aria-hidden','true'); root.innerHTML = ''; root.onclick = null; document.removeEventListener('keydown', onKey); document.getElementById('importWhitelist')?.focus() }
-  const onKey = ev => { if (ev.key === 'Escape') close() }
-  document.addEventListener('keydown', onKey)
-  root.onclick = ev => { if (ev.target === root) close() }
-  root.querySelector('#importCancel').onclick = close
-  const preview = () => {
-    const tokens = input.value.trim().split(/[\s,，;；]+/).filter(Boolean)
-    const invalid = tokens.filter(id => !/^\d{5,12}$/.test(id))
-    const ids = [...new Set(tokens.filter(id => /^\d{5,12}$/.test(id)).map(id => String(Number(id))))]
-    const existing = new Set((state?.config?.whitelist || []).map(String))
-    newIds = ids.filter(id => !existing.has(id))
-    root.querySelector('#whitelistPreview').innerHTML = invalid.length ? `<div class="inline-error">这些内容不是有效群号：${invalid.map(esc).join('、')}。请填写 5～12 位数字。</div>` : ids.length ? ids.map(id => `<div class="preview-line"><span>${esc(groupName(id))} <span class="mut">${id}</span></span><span class="badge ${existing.has(id) ? '' : 'live'}">${existing.has(id) ? '已在白名单 · 跳过' : '待添加'}</span></div>`).join('') + '<div class="note">重复群号自动合并，已有白名单群不重复添加。</div>' : '<div class="note">输入后会在这里预览待添加的群。</div>'
-    commit.disabled = !!invalid.length || !newIds.length
-    commit.textContent = newIds.length && !invalid.length ? `添加 ${newIds.length} 个白名单群` : ids.length && !invalid.length ? '这些群已在白名单中' : '请先选择或输入群号'
+async function importWhitelist(options={}){
+  const privateChat=options.privateChat===true, label=privateChat?'QQ号':'群号', subject=privateChat?'私聊白名单':'白名单群聊'
+  const root=document.getElementById('modalRoot')
+  const existing=()=>new Set((privateChat?state?.config?.privateWhitelist || []:state?.config?.whitelist || []).map(String))
+  const contactName=id=>privateChat?(friendList.find(f=>String(f.id)===String(id))?.name || 'QQ用户'):groupName(id)
+  const candidates=privateChat?friendList:availableGroups()
+  root.innerHTML=`<div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="importTitle"><h2 id="importTitle">添加${subject}</h2><p>${privateChat?'选择好友或输入QQ号，支持批量添加。添加后新消息即时生效，不会自动发消息或补发旧回复。':'选择群聊，或粘贴多个群号。导入后即时生效。'}</p><label class="field-label" for="whitelistPick">从${privateChat?'好友':'已知群聊'}中选择</label><select id="whitelistPick"><option value="">选择${privateChat?'好友':'群聊'}…</option>${candidates.filter(c=>!existing().has(String(c.id))).map(c=>`<option value="${esc(c.id)}">${esc(c.name)}（${esc(c.id)}）</option>`).join('')}</select><div class="note">未显示在列表中时，也可以直接输入${label}。</div><label class="field-label" for="whitelistInput">${label}（支持批量导入）</label><textarea id="whitelistInput" placeholder="每行一个${label}，也支持逗号或空格分隔"></textarea><div id="whitelistPreview" class="import-preview" aria-live="polite"></div><div class="row"><button class="btn" id="importCancel">取消</button><button class="btn primary" id="importCommit" disabled>请先选择或输入${label}</button></div></div>`
+  root.classList.add('show');root.setAttribute('aria-hidden','false')
+  const input=root.querySelector('#whitelistInput'),commit=root.querySelector('#importCommit')
+  let newIds=[],pending=false
+  const close=()=>{if(pending)return;root.classList.remove('show');root.setAttribute('aria-hidden','true');root.innerHTML='';root.onclick=null;document.removeEventListener('keydown',onKey);document.getElementById(privateChat?'addPrivateWhitelist':'importWhitelist')?.focus()}
+  const onKey=event=>{if(event.key==='Escape')close()}
+  document.addEventListener('keydown',onKey);root.onclick=event=>{if(event.target===root)close()};root.querySelector('#importCancel').onclick=close
+  const preview=()=>{
+    const tokens=input.value.trim().split(/[\s,，;；]+/).filter(Boolean),valid=id=>/^[1-9]\d{4,11}$/.test(id)
+    const invalid=tokens.filter(id=>!valid(id)),ids=[...new Set(tokens.filter(valid))],known=existing()
+    newIds=ids.filter(id=>!known.has(id))
+    root.querySelector('#whitelistPreview').innerHTML=invalid.length?`<div class="inline-error">这些${label}无效：${invalid.map(esc).join('、')}。请填5～12位数字，不能以0开头。</div>`:ids.map(id=>`<div class="preview-line"><span>${esc(contactName(id))}（${esc(id)}）</span><span class="badge">${known.has(id)?'已在白名单 · 跳过':'待添加'}</span></div>`).join('')
+    commit.disabled=Boolean(invalid.length)||!newIds.length
+    commit.textContent=commit.disabled?(ids.length&&!invalid.length?'已在白名单中':`请先选择或输入${label}`):`添加${newIds.length}${privateChat?'人到私聊白名单':'个白名单群'}`
   }
-  input.oninput = preview
-  root.querySelector('#whitelistPick').onchange = ev => {
-    if (!ev.target.value) return
-    input.value = input.value.trim() + (input.value.trim() ? '\n' : '') + ev.target.value
-    ev.target.value = ''; preview()
+  input.oninput=preview;root.querySelector('#whitelistPick').onchange=event=>{if(event.target.value){input.value+=(input.value.trim()?'\n':'')+event.target.value;event.target.value='';preview()}}
+  commit.onclick=async()=>{
+    preview();if(commit.disabled)return;pending=true;commit.disabled=true;commit.textContent='正在添加…'
+    try{const result=await api(privateChat?'/api/action/add-private-whitelist':'/api/action/update-whitelist',privateChat?{userIds:newIds}:{operation:'add',groupIds:newIds});pending=false;close();await load();toast(privateChat?`已添加${result.changed}人到私聊白名单，下一条新消息起生效`:`已添加${result.changed}个白名单群，即时生效`)}
+    catch(error){pending=false;preview();toast('添加失败：'+error.message,true)}
   }
-  commit.onclick = async () => {
-    preview(); if (commit.disabled) return
-    pending = true; commit.disabled = true; commit.textContent = '正在添加…'
-    try { const result = await api('/api/action/update-whitelist', {operation:'add', groupIds:newIds}); pending = false; close(); await load(); toast(`已添加 ${result.changed} 个白名单群，即时生效`) }
-    catch(e){ pending = false; preview(); toast('添加失败：' + e.message, true) }
-  }
-  preview(); root.querySelector('#whitelistPick').focus()
+  preview();root.querySelector('#whitelistPick').focus()
 }
 function configForm(keys, hint){
   const items = configItems.filter(i=>keys.includes(i.key))
@@ -641,7 +652,7 @@ function pythonCard(){
   const recallOn = !pythonSettings || pythonSettings.recallEnabled !== false
   const rows = items.map(function(s){
     const id = esc(s.id)
-    return '<details class="frow"' + (pyOpen.rows.indexOf(s.id) >= 0 ? ' open' : '') + '><summary><b>' + esc(s.name) + '</b> <span class="mut">/' + id + '</span>' +
+    return '<details class="frow" data-pyrow="' + id + '"' + (pyOpen.rows.indexOf(s.id) >= 0 ? ' open' : '') + '><summary><b>' + esc(s.name) + '</b> <span class="mut">/' + id + '</span>' +
       (s.enabled === false ? ' <span class="pill">已停用</span>' : '') + '</summary>' +
       '<div class="mut" style="margin:6px 0 4px">' + esc(s.description || '') + '</div>' +
       '<div class="mut" style="font-size:12px">用法：' + esc(s.usage || ('/py ' + s.id)) + '</div>' +
@@ -657,7 +668,7 @@ function pythonCard(){
       '</div>' +
       '<div id="pyEditor-' + id + '" style="display:' + (pyOpen.editors.indexOf(s.id) >= 0 ? '' : 'none') + ';margin-top:8px">' +
         '<div class="mut" id="pyInfo-' + id + '" style="font-size:12px;margin-bottom:4px">这里是该脚本的完整源码；保存会覆盖 plugins/python/' + id + '.py（自动留 .bak）。</div>' +
-        '<textarea data-pysrc="' + id + '" spellcheck="false" style="width:100%;min-height:360px;font-family:Consolas,monospace;font-size:12px"></textarea>' +
+        '<textarea data-pysrc="' + id + '" spellcheck="false" style="width:100%;min-height:360px;font-family:Consolas,monospace;font-size:12px">' + esc(pyDrafts[s.id] ?? '') + '</textarea>' +
         '<div class="flexbar" style="margin-top:6px"><button class="btn primary sm" data-pysave="' + id + '">保存</button><button class="btn sm" data-pycancel="' + id + '">取消</button><span class="mut" id="pyMsg-' + id + '"></span></div>' +
       '</div></details>'
   }).join('')
@@ -677,13 +688,15 @@ function pythonCard(){
 }
 function syncPyOpen(){
   const card = document.querySelector('details[data-pycard]')
-  if (card) pyOpen.card = card.open
+  if (!card) return
+  pyOpen.card = card.open
   const rows = []
   document.querySelectorAll('details[data-pyrow]').forEach(function(d){ if (d.open) rows.push(d.dataset.pyrow) })
   pyOpen.rows = rows
   const eds = []
   document.querySelectorAll('[id^="pyEditor-"]').forEach(function(el){ if (el.style.display !== 'none') eds.push(el.id.replace('pyEditor-', '')) })
   pyOpen.editors = eds
+  document.querySelectorAll('[data-pysrc]').forEach(el=>{const box=el.closest('[id^="pyEditor-"]');if(box?.style.display !== 'none' && (pyDrafts[el.dataset.pysrc] !== undefined || el.value))pyDrafts[el.dataset.pysrc]=el.value})
 }
 function pageCommands(){ return CommandCenterUI.render({custom:customCommands,builtins:commandBuiltins,poke:pokeDiagnostics,groups:joinedGroups}) + commandTestCard() + pokeCorpusCard() + pythonCard() }
 // ── 渲染 ───────────────────────────────────────────────
@@ -981,11 +994,11 @@ function pageMetrics(){
       '<div class="card"><h3>表情包</h3><div class="kpi">' + sum('stickers') + '</div><div class="note">发送次数</div></div>' +
       '<div class="card"><h3>联网搜索</h3><div class="kpi">' + sum('searches') + '</div><div class="note">调用次数</div></div>' +
       '<div class="card"><h3>跳过未回复</h3><div class="kpi">' + skippedSum + '</div><div class="note">跳过率 ' + (received ? Math.round(skippedSum / received * 100) : 0) + '%</div></div>' +
-      '<div class="card"><h3>其他</h3><div class="kpi">' + other + '</div><div class="note">自身消息 / 补读 / 重复 / 中断</div></div>' +
+      '<div class="card"><h3>统计差额</h3><div class="kpi">' + other + '</div><div class="note">收到 − 回复 − 跳过，可为负值</div></div>' +
       '<div class="card"><h3>模型调用</h3><div class="kpi">' + sum('llmCount') + '</div><div class="note">生成次数</div></div>' +
       '<div class="card"><h3>平均生成耗时</h3><div class="kpi">' + avg + 's</div><div class="note">模型端到端</div></div>' +
     '</div>' +
-    '<div class="note" style="margin:-4px 0 14px">口径：<b>收到</b> 是进入机器人的全部消息事件；<b>已回复 + 跳过未回复 + 其他 = 收到</b>。「其他」是自己发的消息、登录补读、重复刷屏、以及中途被打断的；主动回复（拍一拍、自动 +1、定时推送）不经过「收到」，所以「已回复」可能偏大。</div>' +
+    '<div class="note" style="margin:-4px 0 14px">口径：收到、回复和跳过统计的事件范围不同。统计差额 = 收到 − 回复 − 跳过，只是算术差额，不代表已经逐条归类的“其他消息”；主动推送、拍一拍和跨日处理等会使差额为负值，回复/收到的比值也可能超过100%。</div>' +
     chartCard('消息与回复', svgChart(list, [
       { name: '收到', color: '#3b6ea5', get: function(d){ return d.received } },
       { name: '已回复', color: '#4aa3a3', get: function(d){ return d.replied } }
@@ -1132,8 +1145,17 @@ function pageStickers(){
   ].join('')
 }
 function detailKey(d){
-  const s = d.querySelector('summary')
-  return s ? String(s.textContent || '').replace(/\s+/g, '').replace(/\d+/g, '#') : ''
+  for(const attr of ['id','data-pyrow','data-stk-detail','data-stkfold','data-apicard']){
+    const value=d.getAttribute(attr)
+    if(value)return attr+':'+value
+  }
+  const summary=d.querySelector('summary')
+  if(!summary)return ''
+  const title=summary.cloneNode(true)
+  title.querySelectorAll('.pill,.api-card-meta').forEach(el=>el.remove())
+  const trail=[];let node=d
+  while(node.parentElement){const parent=node.parentElement;trail.unshift(Array.prototype.indexOf.call(parent.children,node));node=parent;if(node.id==='main')break}
+  return String(title.textContent||'').replace(/\s+/g,'')+'@'+trail.join('.')
 }
 function captureOpenDetails(){
   const out = []
@@ -1154,7 +1176,10 @@ function restoreOpenDetails(list){
 }
 function render(){
   const main = document.getElementById('main')
-  const keepOpen = captureOpenDetails()
+  syncPyOpen()
+  if(renderedPage !== null)detailOpenByPage.set(renderedPage,captureOpenDetails())
+  const keepOpen = detailOpenByPage.get(page) || []
+  renderedPage = page
   let html = ''
   if (page === 'overview') html = pageOverview()
   else if (page === 'chats') html = pageChats()
@@ -1383,7 +1408,7 @@ async function bind(){
       const did = b.dataset.pydel
       pyOpen.rows = pyOpen.rows.filter(function(x){ return x !== did })
       pyOpen.editors = pyOpen.editors.filter(function(x){ return x !== did })
-      try { await api('/api/action/delete-python-script', { id: did }); toast('已删除'); await load(); render() }
+      try { await api('/api/action/delete-python-script', { id: did }); b.closest('details')?.remove();delete pyDrafts[did];toast('已删除'); await load(); render() }
       catch(e){ toast('删除失败：' + e.message, true) }
     }
   })
@@ -1419,12 +1444,11 @@ async function bind(){
       if (box.style.display !== 'none') { box.style.display = 'none'; pyOpen.editors = pyOpen.editors.filter(function(x){ return x !== id }); return }
       if (pyOpen.editors.indexOf(id) < 0) pyOpen.editors.push(id)
       try {
-        const r = await api('/api/action/read-python-script', { id })
-        const text = r.content || ''
-        box.querySelector('[data-pysrc]').value = text
+        const ta=box.querySelector('[data-pysrc]')
+        if(pyDrafts[id] === undefined){const r=await api('/api/action/read-python-script',{id});if(box.isConnected === false)return;if(pyDrafts[id] === undefined){pyDrafts[id]=r.content || ''}}
+        ta.value=pyDrafts[id];box.style.display = ''
         const info = document.getElementById('pyInfo-' + id)
-        if (info) info.textContent = '完整源码 · ' + text.split('\n').length + ' 行 · 保存会覆盖 plugins/python/' + id + '.py（自动留 .bak）'
-        box.style.display = ''
+        if (info) info.textContent = '完整源码 · ' + ta.value.split('\n').length + ' 行 · 保存会覆盖 plugins/python/' + id + '.py（自动留 .bak）'
       } catch(e){ toast('读取失败：' + e.message, true) }
     }
   })
@@ -1446,7 +1470,8 @@ async function bind(){
     b.onclick = function(){
       const cid = b.dataset.pycancel
       const box = document.getElementById('pyEditor-' + cid)
-      if (box) box.style.display = 'none'
+      if (box) {box.style.display = 'none';box.querySelector('[data-pysrc]').value=''}
+      delete pyDrafts[cid]
       pyOpen.editors = pyOpen.editors.filter(function(x){ return x !== cid })
     }
   })
@@ -1546,6 +1571,7 @@ async function bind(){
       catch(e){ toast('复制失败，请手动选择路径', true) }
     }
   })
+  document.querySelectorAll('[data-pysrc]').forEach(el=>el.addEventListener('input',()=>{pyDrafts[el.dataset.pysrc]=el.value}))
   const pyCardEl = document.querySelector('details[data-pycard]')
   if (pyCardEl) pyCardEl.addEventListener('toggle', function(){ pyOpen.card = pyCardEl.open })
   document.querySelectorAll('details[data-pyrow]').forEach(function(d){
@@ -1560,7 +1586,7 @@ async function bind(){
     if (!box) return
     const ta = box.querySelector('[data-pysrc]')
     box.style.display = ''
-    if (ta && !ta.value) api('/api/action/read-python-script', { id: eid }).then(function(r){ ta.value = r.content || '' }).catch(function(){})
+    if (ta && pyDrafts[eid] === undefined) api('/api/action/read-python-script', { id: eid }).then(function(r){ if(ta.isConnected !== false && pyDrafts[eid] === undefined && !ta.value){ta.value = r.content || '';pyDrafts[eid]=ta.value} }).catch(function(){})
   })
   document.querySelectorAll('[data-pycmdsave]').forEach(function(b){
     b.onclick = async function(){
@@ -2149,11 +2175,7 @@ async function bind(){
         await api('/api/action/set-chat', { key: 'g' + v, patch: {} })
         toast('已加入白名单群，可主动搭话')
       } else if (type === 'p') {
-        await api('/api/action/set-chat', { key: 'p' + v, patch: {} })
-        const current = (state && state.config && state.config.privateWhitelist) || []
-        if (!current.map(String).includes(String(v))) {
-          await api('/api/action/set-config', { key: 'PRIVATE_WHITELIST', value: current.concat([v]).join(',') })
-        }
+        await api('/api/action/add-private-whitelist', { userIds: [v] })
         toast('已添加私聊并加入白名单')
       } else {
         await api('/api/action/set-chat', { key: 'g' + v, patch: {} })
@@ -2167,6 +2189,7 @@ async function bind(){
     const q = search.value.trim().toLowerCase()
     document.querySelectorAll('.chat').forEach(box => { box.style.display = box.textContent.toLowerCase().includes(q) ? '' : 'none' })
   }
+  for(const id of ['addPrivateWhitelist','addPrivateWhitelistBelow','addPrivateWhitelistTop']){const button=document.getElementById(id);if(button)button.onclick=()=>importWhitelist({privateChat:true})}
   const importButton = document.getElementById('importWhitelist')
   if (importButton) importButton.onclick = importWhitelist
   document.querySelectorAll('[data-open-chat]').forEach(b => b.onclick = () => {
