@@ -219,7 +219,7 @@ function validateGroupConfig(key, value) {
   }
 }
 
-export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, quietGreetings, personaGreetings, bot, customCommands, commandCenter, llm, stickers, stickerTagLLM, updateChecker=createUpdateChecker({currentVersion:APP_VERSION}), switchVision, visionProviders, restartBot, webSearch, switchWebSearch, backup, selfcheck, metrics, errors, pokeReplies }) {
+export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, quietGreetings, personaGreetings, bot, customCommands, commandCenter, llm, stickers, stickerTagLLM, updateChecker=createUpdateChecker({currentVersion:APP_VERSION}), switchVision, visionProviders, restartBot, webSearch, switchWebSearch, backup, selfcheck, metrics, errors, pokeReplies, pythonPlugins }) {
   // 本实例自己的 .env（并行跑两个实例时，写死 rootDir\.env 会改到另一个实例的配置上）
   const envFile = config.envFile || path.join(config.rootDir, '.env')
   const logFile = path.join(config.logDir || path.join(config.rootDir, 'logs'), 'bot.log')
@@ -537,6 +537,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     },
     'GET /api/errors': async () => ({ items: errors ? errors.list() : [] }),
     'GET /api/poke-replies': async () => ({ lines: pokeReplies && Array.isArray(pokeReplies.lines) ? [...pokeReplies.lines] : [] }),
+    'GET /api/python-scripts': async () => ({ dir: pythonPlugins ? pythonPlugins.dir : '', items: pythonPlugins ? pythonPlugins.list() : [] }),
     'GET /api/tasks': async () => ({
       backup: { last: backup ? backup.lastBackupAt() : 0, everyHours: 6 },
       summary: { enabled: Boolean(config.summaryEnabled), times: config.summaryTimes || '' },
@@ -1429,6 +1430,16 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         logger?.info?.('[控制台] 表情包批量打标完成：' + retagJob.done + ' 张，失败 ' + retagJob.errors)
       })().catch((err) => { retagJob.running = false; retagJob.error = err.message })
       return { ok: true, total: list.length }
+    },
+    async 'import-python-script'(payload) {
+      if (!pythonPlugins) throw new Error('Python 插件未启用')
+      const item = pythonPlugins.importScript(payload && payload.filename, payload && payload.content)
+      return { ok: true, item }
+    },
+    async 'delete-python-script'(payload) {
+      if (!pythonPlugins) throw new Error('Python 插件未启用')
+      pythonPlugins.remove(payload && payload.id)
+      return { ok: true }
     },
     async 'save-poke-replies'(payload) {
       const raw = String((payload && payload.text) || '')

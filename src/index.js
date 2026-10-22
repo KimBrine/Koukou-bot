@@ -21,6 +21,7 @@ import { createNotifier } from './notify.js'
 import { createMetrics } from './metrics.js'
 import { createImageHasher } from './imagehash.js'
 import { createErrorStore } from './errorStore.js'
+import { createPythonPlugins } from './pythonPlugins.js'
 import { loadPokeReplies, createPokeReplier } from './pokeReplies.js'
 import { createLongMemory } from './longMemory.js'
 import { createCustomCommands } from './customCommands.js'
@@ -261,6 +262,7 @@ const selfCheck = createSelfCheck({ config, onebot, backup: backupService, logge
 const metricsService = createMetrics({ file: path.join(config.dataDir, 'metrics.json'), logger })
 const stickerHasher = createImageHasher({ config, logger })
 const errorStore = createErrorStore({ file: path.join(config.dataDir, 'errors.json') })
+const pythonPlugins = createPythonPlugins({ config, logger, pythonPath: process.env.PYTHON_PATH || 'python' })
 // 所有 logger.error 都计入当天错误数（用于失败率曲线）
 {
   const rawError = logger.error.bind(logger)
@@ -463,7 +465,8 @@ const runtimeStats = {
 }
 
 const bot = createBot({
-    metrics: metricsService, config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt: systemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, commandCenter, longMemory, stickers, stickerLearner })
+    metrics: metricsService,
+    pythonPlugins, config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt: systemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, commandCenter, longMemory, stickers, stickerLearner })
 
 // 固定语库调度不使用模型；语库与人格正文绑定，发送状态与迁移语库分开保存。
 const personaGreetings=createPersonaGreetingLibrary({file:path.join(config.dataDir,'persona-greetings.json'),logger})
@@ -498,6 +501,7 @@ if (config.adminEnabled) {
     metrics: metricsService,
     selfcheck: selfCheck,
     pokeReplies: { lines: pokeLines },
+    pythonPlugins,
     errors: errorStore,
     visionProviders,
     restartBot: () => {

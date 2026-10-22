@@ -15,7 +15,7 @@ import { parseMessage } from './cq.js'
 import { isBotAdmin, hasAdmins, adminHint } from './permissions.js'
 import { renderReply } from './customCommands.js'
 import { extractStickerMarkers } from './stickers.js'
-import { SUMMARY_RE, CLEAR_RE, HELP_RE, SEND_FILE_RE, SEND_LINK_RE } from './commandCenter.js'
+import { SUMMARY_RE, CLEAR_RE, HELP_RE, SEND_FILE_RE, SEND_LINK_RE, PY_CMD_RE } from './commandCenter.js'
 import { formatCommandHelp } from './commandHelp.js'
 import { createGroupMute } from './groupMute.js'
 import { createSelfActions } from './selfActions.js'
@@ -298,7 +298,7 @@ const SEARCH_TOOLS = [{
   },
 }]
 
-export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, commandCenter, longMemory, stickers = null, stickerLearner = null, musicSearch = searchSong, rand = Math.random, metrics = null }) {
+export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, commandCenter, longMemory, stickers = null, stickerLearner = null, musicSearch = searchSong, rand = Math.random, metrics = null, pythonPlugins = null }) {
   const imageCache = sharedImageCache ?? (config.dataDir && config.visionCacheEnabled !== false ? createImageCache({
     dir: path.join(config.dataDir, 'image-cache'),
     maxBytes: config.visionCacheMaxBytes,
@@ -855,6 +855,20 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         } catch (err) {
           try { await sendTo(evt, title + ' ' + url) } catch { await sendTo(evt, '链接发送失败：' + err.message) }
         }
+        return
+      }
+      const pyMatch = PY_CMD_RE.exec(String(parsed.text || '').trim())
+      if (pyMatch) {
+        if (!commandCenter || !commandCenter.allows('python', commandContext)) {
+          if (directReply) await sendTo(evt, '这个指令需要机器人管理员权限。')
+          return
+        }
+        if (!pythonPlugins) { await sendTo(evt, 'Python 插件未启用。'); return }
+        try {
+          const r = await pythonPlugins.run(pyMatch[1], pyMatch[2] || '')
+          const body = (r.stdout || r.stderr || '（没有输出）').slice(0, 1500)
+          await sendTo(evt, (r.ok ? '✅ ' : '⚠️ ') + body + (r.killed ? '\n（超时已终止）' : ''))
+        } catch (err) { await sendTo(evt, '脚本执行失败：' + err.message) }
         return
       }
       const selfResult=!questionMode&&!muteFollowup&&selfActions.applies(evt,parsed,selfFollowup)?await selfActions.handle(evt,parsed,{followup:selfFollowup,quotedRaw,canReply:samePersona,replyPrompt:()=>{
