@@ -2252,7 +2252,7 @@ async function bind(){
   const sp = document.getElementById('savePersona')
   if (sp) sp.onclick = async () => {
     const name = document.getElementById('personaSel').value
-    try { await api('/api/action/save-persona', { name, content: document.getElementById('personaText').value }); personaCache[name] = document.getElementById('personaText').value; toast('人格已保存；点击“切换使用”应用此版本') }
+    try { const r = await api('/api/action/save-persona', { name, content: document.getElementById('personaText').value }); personaCache[name] = document.getElementById('personaText').value; toast(r.applied ? '人格已保存并立即生效' : '人格已保存；点击“切换使用”应用此版本') }
     catch(e){ toast(e.message, true) }
   }
   const act = document.getElementById('activate')
