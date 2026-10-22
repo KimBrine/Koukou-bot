@@ -67,8 +67,8 @@ input::placeholder,textarea::placeholder{color:#7f90a8}
 textarea{min-height:90px;resize:vertical;line-height:1.55}
 input[type=range]{width:min(260px,100%);accent-color:var(--accent)}
 input[type=checkbox]{accent-color:#69d8c5}
-.switch{display:inline-flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
-.switch input{display:none}
+.switch{position:relative;display:inline-flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
+.switch input{position:absolute;opacity:0;width:1px;height:1px;margin:0;padding:0;border:0;clip-path:inset(50%);overflow:hidden}
 .switch i{width:42px;height:24px;border-radius:14px;background:#3a4860;position:relative;transition:.15s;display:inline-block}
 .switch i::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#becbdb;transition:.15s}
 .switch input:checked+i{background:#3a9c8e}
@@ -247,3 +247,8 @@ details.card[open] > summary { padding-bottom: 16px; border-bottom: 1px solid va
 .mem-day > summary::before { content: '▸'; color: var(--muted, #9aabc0); transition: transform .15s ease; }
 .mem-day[open] > summary::before { transform: rotate(90deg); }
 .mem-day-body { padding-top: 4px; padding-right: 6px; max-height: 260px; overflow-y: auto; overscroll-behavior: contain; }
+
+.switch input:focus-visible+i{outline:2px solid var(--accent);outline-offset:3px}
+.switch:has(input:disabled){cursor:not-allowed;opacity:.55}
+.sticker-learn-switch{display:flex;gap:12px;font-size:14px;margin:14px 0}
+.sticker-learn-switch i{flex-shrink:0}

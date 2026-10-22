@@ -876,6 +876,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         }
         try {
           const r = await pythonPlugins.run(pyName, pyMatch[2] || '')
+          if (!samePersona() || !commandCenter.allows('python',commandContext)) return
           const out = String(r.stdout || r.stderr || '（没有输出）').trim()
           if (r.ok && out.startsWith('@@CARD@@')) {
             try {
@@ -914,6 +915,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
                   ? await onebot.sendPrivate(evt.user_id, segment)
                   : await onebot.sendGroup(evt.group_id, segment)
               } catch (segErr) {
+                if (!/不支持|unsupported|not implemented|unknown.*(?:segment|type)|file.*segment/i.test(String(segErr.message))) throw segErr
                 // 文件段不被支持时退回群文件/私聊文件上传（这种形式没有消息号，无法自动撤回）
                 if (evt.message_type === 'private') await onebot.api('upload_private_file', { user_id: evt.user_id, file: filePath, name })
                 else await onebot.api('upload_group_file', { group_id: evt.group_id, file: filePath, name })
@@ -923,7 +925,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
                 const t = setTimeout(() => { onebot.deleteMessage(mid).catch(() => {}) }, seconds * 1000)
                 if (typeof t.unref === 'function') t.unref()
               }
-              await sendTo(evt, (spec.text || ('已发送文件：' + name)) + (mid && seconds > 0 ? `\n（${recallLabel}后自动撤回）` : ''))
+              await sendTo(evt, (spec.text || ('已发送文件：' + name)) + (mid && seconds > 0 ? `\n（${recallLabel}后自动撤回；机器人重启会中断计时）` : seconds > 0 ? '\n（当前发送方式无法自动撤回，请手动处理）' : ''))
             } catch (err) { await sendTo(evt, '文件发送失败：' + err.message) }
             return
           }

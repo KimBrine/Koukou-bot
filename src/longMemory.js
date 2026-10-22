@@ -94,22 +94,7 @@ export function createLongMemory({ file, logger, llm, maxChars = 1500, intervalM
           } catch {}
         }
         if (revision !== version(key) || store.get(key) !== item || item.paused) return false
-        if (merged.length > maxChars) {
-          // 前两次仍按原契约退回重试，避免用截断内容覆盖旧摘要；
-          // 连续失败说明模型就是不守字数，第三次起按行截断保存，不然整理会永远卡住。
-          const failures = Number(item.retry?.failures) || 0
-          if (failures < 2) throw new Error('摘要超过 ' + maxChars + ' 字预算，原批次保留待重试')
-          const original = merged.length
-          const kept = []
-          let used = 0
-          for (const line of merged.split('\n')) {
-            if (used + line.length + 1 > maxChars) break
-            kept.push(line)
-            used += line.length + 1
-          }
-          merged = (kept.length ? kept.join('\n') : merged.slice(0, maxChars)).trim()
-          logger?.warn?.(`长期记忆摘要连续 ${failures} 次超出 ${maxChars} 字（本次 ${original} 字），已截断保存`)
-        }
+        if (merged.length > maxChars) throw new Error('摘要超过 ' + maxChars + ' 字预算，原批次保留待重试')
         const next = { summary: merged, pending: item.pending.slice(batch.length), updatedAt: now(), paused: false, retry: null }
         writeJsonAtomic(file, { ...Object.fromEntries(store), [key]: next })
         Object.assign(item, next)

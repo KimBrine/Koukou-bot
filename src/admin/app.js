@@ -1028,9 +1028,12 @@ function pageStickers(){
   const learn = stickerLearn || {}
   const settings = stickerSettings || {}
   const groupMap = new Map(joinedGroups.map(g => [String(g.id), { id: String(g.id), name: g.name }]))
-  chats.filter(c => c.type === 'group').forEach(g => groupMap.set(String(g.id), g))
+  chats.filter(c => c.type === 'group').forEach(g => {
+    const id=String(g.id),joined=groupMap.get(id)
+    if (!joined?.name || joined.name === id) groupMap.set(id,g)
+  })
   ;[...(learn.groups || []),...(settings.groups || [])].forEach(id => { if (!groupMap.has(String(id))) groupMap.set(String(id), { id: String(id), name: '已指定群' }) })
-  const groups = [...groupMap.values()]
+  const groups = [...groupMap.values()].map(g=>({ ...g, name: !g.name || String(g.name).replace(/\s+/g,'') === '群'+g.id || String(g.name) === String(g.id) ? '群聊' : g.name }))
   const gopts = groups.map(function(g){ return '<option value="' + g.id + '">' + esc(g.name) + '（' + g.id + '）</option>' }).join('')
   const sceneChoices = sceneList.map(function(sc){
     return '<label style="font-size:12px;margin-right:10px;white-space:nowrap"><input type="checkbox" data-up-scene value="' + esc(sc.id) + '">' + esc(sc.name) + '</label>'
@@ -1073,13 +1076,13 @@ function pageStickers(){
     '<div class="mut" style="margin-top:6px">DeepSeek Flash 初筛，Qwen 复核并打标签；无法确认的图不收录。已学习 ' + (stickerLearned || 0) + ' 张 / 共 ' + items.length + ' / ' + (learn.limit || 60) + ' 张。</div>',
     '<div class="note">每个人格图库最多60张（含手动上传）；满库自动停止学习，清理到60张以下后需手动重新开启。' + (learn.pausedByCapacity ? '当前已因容量停止学习。' : '') + '</div>',
     '<details class="learn-box"><summary><b>群聊学习</b> <span class="pill">' + ((learn.groups || []).length) + ' 个群</span></summary>',
-    '<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:10px 0"><input type="checkbox" id="stkLearnToggle"' + (learn.enabled ? ' checked' : '') + (learn.full ? ' disabled' : '') + '> 启用群聊表情包学习</label>',
+    '<label class="switch sticker-learn-switch"><input type="checkbox" role="switch" id="stkLearnToggle"' + (learn.enabled ? ' checked' : '') + (learn.full ? ' disabled' : '') + '><i aria-hidden="true"></i><span>启用群聊表情包学习</span></label>',
     '<div class="note">只学习下面勾选的群，可选非白名单群；不改变聊天回复范围。</div>',
     '<input id="stkLearnSearch" placeholder="搜索群名或群号" style="width:100%;margin:8px 0">',
-    '<div id="stkLearnGroupList" style="max-height:220px;overflow:auto">' + (groups || []).map(function(g) { return '<label style="display:block;margin:6px 0"><input type="checkbox" data-stk-learn-group="' + esc(g.id) + '"' + ((learn.groups || []).map(String).includes(String(g.id)) ? ' checked' : '') + '> ' + esc(g.name || g.id) + ' (' + esc(g.id) + ')</label>' }).join('') + '</div>',
+    '<div id="stkLearnGroupList" style="max-height:220px;overflow:auto">' + (groups || []).map(function(g) { return '<label style="display:block;margin:6px 0"><input type="checkbox" data-stk-learn-group="' + esc(g.id) + '"' + ((learn.groups || []).map(String).includes(String(g.id)) ? ' checked' : '') + '> ' + esc(g.name || '群聊') + '（' + esc(g.id) + '）</label>' }).join('') + '</div>',
     '</details>',
     '<details class="learn-box"><summary><b>私聊学习</b> <span class="pill">' + (learn.private ? '已开启' : '未开启') + '</span></summary>',
-    '<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:10px 0"><input type="checkbox" id="stkLearnPrivate"' + (learn.private && learn.enabled ? ' checked' : '') + (learn.full ? ' disabled' : '') + '> 私聊里发来的图片也收藏</label>',
+    '<label class="switch sticker-learn-switch"><input type="checkbox" role="switch" id="stkLearnPrivate"' + (learn.private && learn.enabled ? ' checked' : '') + (learn.full ? ' disabled' : '') + '><i aria-hidden="true"></i><span>私聊里发来的图片也收藏</span></label>',
     '<div class="note">开启后，所有和机器人私聊的人发来的图片都会尝试收藏；仍受每小时上限约束。群聊与私聊可以单独开关。</div>',
     '</details>',
     '<div class="row" style="margin-top:8px;display:flex;gap:8px;align-items:center">',

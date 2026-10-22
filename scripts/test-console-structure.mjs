@@ -39,3 +39,15 @@ assert.equal(vm.runInContext('Object.keys(proactiveSettingsPatch({querySelector(
 const patch=vm.runInContext(`proactiveSettingsPatch({querySelector(s){return s.includes('data-global')?{checked:false}:s.includes('proactiveEnabled')?{checked:false}:{value:'.25'}}})`,context)
 assert.equal(patch.proactiveEnabled,false);assert.equal(patch.proactiveRate,.25)
 console.log('控制台结构及私聊设置检查通过：私聊不展示/提交群聊概率，群聊设置保留。')
+
+// QQ真实群名不能被会话占位名覆盖；满库时两个学习开关仍须禁用。
+vm.runInContext(`joinedGroups=[{id:'200000002',name:'真实测试群'}];chats=[{type:'group',id:'200000002',name:'群 200000002'},{type:'group',id:'200000003',name:'群 200000003'}];stickerLearn={enabled:true,private:true,groups:[200000002],full:false}`,context)
+let stickerPage=vm.runInContext('pageStickers()',context)
+assert.match(stickerPage,/真实测试群（200000002）/)
+assert.match(stickerPage,/群聊（200000003）/)
+assert.doesNotMatch(stickerPage,/群 200000002|群 200000003/)
+for(const id of ['stkLearnToggle','stkLearnPrivate']) assert.match(stickerPage,new RegExp('role="switch" id="'+id+'" checked'))
+vm.runInContext('stickerLearn={enabled:false,private:true,full:true}',context)
+stickerPage=vm.runInContext('pageStickers()',context)
+for(const id of ['stkLearnToggle','stkLearnPrivate']) assert.match(stickerPage,new RegExp('role="switch" id="'+id+'" disabled'))
+console.log('表情包学习界面检查通过：真实群名、群号去重、滑动开关与满库禁用。')

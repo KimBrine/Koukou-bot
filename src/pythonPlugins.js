@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { writeJsonAtomic } from './stateFile.js'
 
 const NAME_RE = /^[a-z0-9_-]{1,40}\.py$/i
 
@@ -25,7 +26,7 @@ function parseMeta(text, file) {
 }
 
 /** Python 插件：只执行 plugins/python 下的白名单脚本，参数按 argv 传，不走 shell。 */
-export function createPythonPlugins({ config, logger, pythonPath = 'python', timeoutMs = 20000 }) {
+export function createPythonPlugins({ config, logger, pythonPath = 'python', timeoutMs = 20000, execFileImpl = execFile }) {
   const dir = path.join(config.rootDir, 'plugins', 'python')
   const list = () => {
     if (!existsSync(dir)) return []
@@ -60,7 +61,7 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
     if (!isEnabled(id)) throw new Error('脚本已停用：' + id + '（管理员可在控制台「指令中心 → Python 脚本」开启）')
     const args = splitArgs(rawArgs).slice(0, 20)
     return await new Promise((resolve) => {
-      execFile(pythonPath, [full, ...args], { cwd: dir, timeout: timeoutMs, maxBuffer: 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
+      execFileImpl(pythonPath, ['-X', 'utf8', full, ...args], { cwd: dir, timeout: timeoutMs, maxBuffer: 1024 * 1024, windowsHide: true, encoding: 'utf8', env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' } }, (err, stdout, stderr) => {
         resolve({
           ok: !err, code: err?.code ?? 0, killed: err?.killed === true,
           stdout: String(stdout || '').trim(), stderr: String(stderr || '').trim(),
@@ -87,7 +88,10 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
   }
   const SETTINGS_FILE = path.join(dir, 'settings.json')
   function readSettingsRaw() {
-    try { return JSON.parse(readFileSync(SETTINGS_FILE, 'utf8')) || {} } catch { return {} }
+    if (!existsSync(SETTINGS_FILE)) return {}
+    const value = JSON.parse(readFileSync(SETTINGS_FILE, 'utf8'))
+    if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Python插件设置格式错误，请恢复备份')
+    return value
   }
   function getSettings() {
     const data = readSettingsRaw()
@@ -106,7 +110,7 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
       if (!Number.isFinite(n) || n < 5 || n > 7200) throw new Error('撤回秒数需在 5~7200 之间（0.1~120 分钟）')
       data.recallSeconds = Math.round(n)
     }
-    try { mkdirSync(dir, { recursive: true }); writeFileSync(SETTINGS_FILE, JSON.stringify(data, null, 1), 'utf8') } catch {}
+    mkdirSync(dir, { recursive: true }); writeJsonAtomic(SETTINGS_FILE, data)
     return getSettings()
   }
   /** 调用名：/py <command>；默认等于文件名（不含 .py） */
@@ -119,6 +123,7 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
     if (!NAME_RE.test(key + '.py')) throw new Error('脚本名无效')
     if (!existsSync(path.join(dir, key + '.py'))) throw new Error('脚本不存在：' + key + '.py')
     const cmd = String(command || '').trim().replace(/\.py$/i, '')
+    if (/^(列表|list|帮助|help|指令|命令)$/i.test(cmd)) throw new Error('调用名不能使用列表或帮助保留词')
     const data = readSettingsRaw()
     const names = data.names && typeof data.names === 'object' && !Array.isArray(data.names) ? { ...data.names } : {}
     if (!cmd || cmd === key) {
@@ -130,7 +135,7 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
       names[key] = cmd
     }
     data.names = names
-    try { mkdirSync(dir, { recursive: true }); writeFileSync(SETTINGS_FILE, JSON.stringify(data, null, 1), 'utf8') } catch {}
+    mkdirSync(dir, { recursive: true }); writeJsonAtomic(SETTINGS_FILE, data)
     return cmd || key
   }
   /** 把用户输入的调用名解析成实际文件名 id */
@@ -150,16 +155,14 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
   }
   const DISABLED_FILE = path.join(dir, 'disabled.json')
   function readDisabled() {
-    try {
-      const raw = JSON.parse(readFileSync(DISABLED_FILE, 'utf8'))
-      return new Set(Array.isArray(raw) ? raw.map(String) : [])
-    } catch { return new Set() }
+    if (!existsSync(DISABLED_FILE)) return new Set()
+    const raw = JSON.parse(readFileSync(DISABLED_FILE, 'utf8'))
+    if (!Array.isArray(raw)) throw new Error('Python插件停用设置损坏，请恢复备份')
+    return new Set(raw.map(String))
   }
   function writeDisabled(set) {
-    try {
-      mkdirSync(dir, { recursive: true })
-      writeFileSync(DISABLED_FILE, JSON.stringify([...set], null, 1), 'utf8')
-    } catch {}
+    mkdirSync(dir, { recursive: true })
+    writeJsonAtomic(DISABLED_FILE, [...set])
   }
   function isEnabled(name) {
     return !readDisabled().has(resolveId(name))

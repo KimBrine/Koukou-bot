@@ -16,6 +16,11 @@ try {
     const c=client();await c.chat('p',[],{maxTokens:800});await c.chat('p',[],{maxTokens:2400});await c.chat('p',[],{maxTokens:99999});await c.chat('p',[])
     assert.deepEqual(bodies.map(b=>b.max_tokens),[800,2400,12000,12000])
   })
+  await test('脚本起草unlimited只省略输出预算，保留max思考',async()=>{
+    let body;globalThis.fetch=async(_,options)=>{body=JSON.parse(options.body);return success()}
+    const c=client({model:'deepseek-flash',reasoningEffort:'max'});await c.chat('p',[],{unlimited:true})
+    assert.equal(Object.hasOwn(body,'max_tokens'),false);assert.equal(body.reasoning_effort,'max')
+  })
   await test('仅识别已支持混合思考的千问型号，不误改其他厂商或旧视觉模型', () => {
     for (const model of ['qwen3.8-flash','qwen3.7-flash-2026-07-15','qwen3.5-plus','qwen3-vl-flash','qwen-plus','qwen-flash']) assert.ok(isQwenHybridModel(model))
     for (const model of ['deepseek-flash','qwen-vl-plus','qwen3.8-max','qwen3.8-omni-flash','other-model']) assert.equal(isQwenHybridModel(model),false)
