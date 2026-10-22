@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url'
 import { keyToGroupId, keyToUserId } from '../chatSettings.js'
 import { activatePersona } from '../personaSwitch.js'
 import { applyConversationSettings, resetConversationMemory } from '../conversationSessions.js'
+import { normalizeAdmins } from '../permissions.js'
 import { openPathOnHost } from '../openPath.js'
 import { writeTextAtomic } from '../stateFile.js'
 import { createWebSearch } from '../search.js'
@@ -285,6 +286,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     const mem = readJsonSafe(config.memoryFile, {})
     const keys = new Set([...Object.keys(mem), ...chatSettings.keys()])
     for (const g of config.whitelistGroups) keys.add(`g${g}`)
+    for (const uid of [...(config.privateWhitelist || []),...normalizeAdmins(config.adminUsers)]) if (/^[1-9]\d{0,14}$/.test(String(uid))) keys.add(`p${uid}`)
 
     const groups = await getGroupList()
     const friends = await getFriendList()
@@ -331,6 +333,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         lastActive: runtimeStats?.lastMessage?.get?.(key) ?? null,
         replies: runtimeStats?.replies?.get?.(key) ?? 0,
         received: runtimeStats?.received?.get?.(key) ?? 0,
+        privateAccess: uid === null ? undefined : { listed: Boolean(config.privateWhitelist?.has(uid)), admin: normalizeAdmins(config.adminUsers).includes(String(uid)), configured: Boolean(raw) },
         raw: raw ?? {},
         persona: raw?.persona || '',
         effective: eff,
@@ -985,6 +988,18 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       applyLive('WHITELIST_GROUPS', value)
       logger?.info?.(`[控制台] ${payload.operation === 'add' ? '添加' : '移出'}白名单群 ${ids.join(',')}`)
       return { ok: true, changed, whitelist: [...next] }
+    },
+    async 'add-private-whitelist'(payload) {
+      if (!Array.isArray(payload?.userIds) || !payload.userIds.length || payload.userIds.length > 200) throw new Error('请输入1～200个QQ号')
+      const ids=[...new Set(payload.userIds.map(value=>String(value).trim()))]
+      if(ids.some(id=>!/^[1-9]\d{4,11}$/.test(id)))throw new Error('QQ号应为5～12位数字，不能以0开头')
+      const next=new Set(config.privateWhitelist || []);let changed=0
+      for(const id of ids.map(Number))if(!next.has(id)){next.add(id);changed++}
+      const value=[...next].join(',')
+      writeEnvFile(envFile,{PRIVATE_WHITELIST:value},{atomic:true})
+      applyLive('PRIVATE_WHITELIST',value)
+      logger?.info?.(`[控制台] 添加私聊白名单 ${ids.join(',')}`)
+      return {ok:true,changed,whitelist:[...next]}
     },
     async 'set-chat'(payload) {
       const { key, patch } = payload

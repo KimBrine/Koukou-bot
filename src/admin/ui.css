@@ -252,3 +252,6 @@ details.card[open] > summary { padding-bottom: 16px; border-bottom: 1px solid va
 .switch:has(input:disabled){cursor:not-allowed;opacity:.55}
 .sticker-learn-switch{display:flex;gap:12px;font-size:14px;margin:14px 0}
 .sticker-learn-switch i{flex-shrink:0}
+
+.private-manager{border-color:var(--accent);box-shadow:inset 4px 0 0 var(--accent)}
+.private-manager .section-head .primary{min-height:46px;font-size:15px}
