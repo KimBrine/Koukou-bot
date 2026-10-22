@@ -20,7 +20,7 @@ function parseMeta(text, file) {
 }
 
 /** Python 插件：只执行 plugins/python 下的白名单脚本，参数按 argv 传，不走 shell。 */
-export function createPythonPlugins({ config, logger, pythonPath = 'python', timeoutMs = 20000 }) {
+export function createPythonPlugins({ config, logger, pythonPath = 'python', timeoutMs = 20000, execFileImpl = execFile }) {
   const dir = path.join(config.rootDir, 'plugins', 'python')
   const list = () => {
     if (!existsSync(dir)) return []
@@ -49,7 +49,7 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
     if (!existsSync(full)) throw new Error('脚本不存在：' + file)
     const args = splitArgs(rawArgs).slice(0, 20)
     return await new Promise((resolve) => {
-      execFile(pythonPath, [full, ...args], { cwd: dir, timeout: timeoutMs, maxBuffer: 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
+      execFileImpl(pythonPath, ['-X', 'utf8', full, ...args], { cwd: dir, timeout: timeoutMs, maxBuffer: 1024 * 1024, windowsHide: true, encoding: 'utf8', env: { ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' } }, (err, stdout, stderr) => {
         resolve({
           ok: !err, code: err?.code ?? 0, killed: err?.killed === true,
           stdout: String(stdout || '').trim(), stderr: String(stderr || '').trim(),
