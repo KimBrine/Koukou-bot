@@ -1392,7 +1392,8 @@ async function bind(){
       document.getElementById('pyNewCode').value = r.content || ''
       const nameInput = document.getElementById('pyNewName')
       if (!nameInput.value.trim()) nameInput.value = r.filename || 'new.py'
-      if (hint) hint.textContent = (r.warnings && r.warnings.length) ? ('注意：' + r.warnings.join('；')) : '草稿已生成，确认后保存'
+      const who = r.model ? ('由 ' + r.model + ' 生成') : '草稿已生成'
+      if (hint) hint.textContent = who + (r.warnings && r.warnings.length ? ('；注意：' + r.warnings.join('；')) : '；确认后保存')
     } catch(e){ if (hint) hint.textContent = '生成失败：' + e.message }
   }
   const pyTplBtn = document.getElementById('pyTplBtn')

@@ -1471,8 +1471,10 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         '5. 中文提示，60 行以内，参数缺失要给出用法。',
       ].join('\n')
 
+      // 不传 maxTokens：输出上限跟随全局模型预算（控制台「模型与接口」可调），
+      // 模型、温度、思考强度都与对话共用同一个 llm 客户端。
       const raw = await llm.chat(system, [{ role: 'user', content: prompt }],
-        { signal: AbortSignal.timeout(120000), rejectTruncated: false, maxTokens: 3000 })
+        { signal: AbortSignal.timeout(180000), rejectTruncated: true })
       const text = String(raw || '')
       const block = /```(?:python|py)?\s*([\s\S]*?)```/i.exec(text)
       const content = (block ? block[1] : text).trim()
@@ -1488,7 +1490,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       for (const [re, msg] of risky) if (re.test(content)) warnings.push(msg)
 
       const stamp = new Date().toISOString().slice(5, 16).replace(/[-:T]/g, '')
-      return { ok: true, content, filename: `new_${stamp}.py`, warnings }
+      return { ok: true, content, filename: `new_${stamp}.py`, warnings, model: String(llm.model || ''), effort: String(llm.reasoningEffort || 'default') }
     },
     async 'read-python-script'(payload) {
       if (!pythonPlugins) throw new Error('Python 插件未启用')
