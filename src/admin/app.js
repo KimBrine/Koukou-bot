@@ -624,10 +624,10 @@ function pageLogs(){
   <div class="logbox mono" id="logBot" style="max-height:420px"></div>`
 }
 function pokeCorpusCard(){
-  return '<section class="card"><h2>拍一拍语库 <span class="pill">' + pokeReplies.length + ' 条</span></h2>' +
+  return '<details class="card"><summary><b>拍一拍语库</b> <span class="pill">' + pokeReplies.length + ' 条</span> <span class="mut">点开编辑语料</span></summary>' +
     '<div class="note">一行一条；<code>#</code> 开头的行不生效；<code>{name}</code> 会替换成拍你的人。保存后立即生效，随机抽取且不会连续重复。</div>' +
     '<textarea id="pokeText" rows="10" style="width:100%;margin-top:8px">' + esc(pokeReplies.join('\n')) + '</textarea>' +
-    '<div class="flexbar"><button class="btn primary" id="pokeSave">保存语库</button><span class="mut" id="pokeHint"></span></div></section>'
+    '<div class="flexbar"><button class="btn primary" id="pokeSave">保存语库</button><span class="mut" id="pokeHint"></span></div></details>'
 }
 async function loadPythonScripts(){
   const r = await api('/api/python-scripts').catch(function(){ return { items: [] } })
@@ -1125,8 +1125,30 @@ function pageStickers(){
     '<dialog id="stkPreviewDialog" style="max-width:90vw;max-height:90vh;background:var(--card,#15243a);color:inherit;border:1px solid #567;border-radius:16px;padding:20px"><h2 id="stkPreviewTitle"></h2><img id="stkPreviewImage" style="display:block;max-width:80vw;max-height:65vh;object-fit:contain" alt="表情包预览"><button class="btn" id="stkPreviewClose">关闭预览</button></dialog>'
   ].join('')
 }
+function detailKey(d){
+  const s = d.querySelector('summary')
+  return s ? String(s.textContent || '').replace(/\s+/g, '').replace(/\d+/g, '#') : ''
+}
+function captureOpenDetails(){
+  const out = []
+  document.querySelectorAll('#main details').forEach(function(d){
+    if (!d.open) return
+    const k = detailKey(d)
+    if (k) out.push(k)
+  })
+  return out
+}
+function restoreOpenDetails(list){
+  if (!list || !list.length) return
+  const want = new Set(list)
+  document.querySelectorAll('#main details').forEach(function(d){
+    const k = detailKey(d)
+    if (k && want.has(k)) d.open = true
+  })
+}
 function render(){
   const main = document.getElementById('main')
+  const keepOpen = captureOpenDetails()
   let html = ''
   if (page === 'overview') html = pageOverview()
   else if (page === 'chats') html = pageChats()
@@ -1143,6 +1165,7 @@ function render(){
   else if (page === 'logs') html = pageLogs()
   else html = pageMemory()
   main.innerHTML = html
+  restoreOpenDetails(keepOpen)
   bind().catch(e => toast('界面初始化失败：' + e.message, true))
   if (page === 'logs') refreshLogs()
   if (page === 'report' || page === 'memory') loadDaily()
