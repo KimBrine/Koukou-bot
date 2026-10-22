@@ -42,6 +42,15 @@ try {
     await assert.rejects(() => plugins.run('../x', ''), /脚本名无效/)
     await assert.rejects(() => plugins.run('missing', ''), /脚本不存在/)
   })
+  test('/py 列表包含脚本名、作用与用法', () => {
+    plugins.importScript('demo.py', '# name: 演示脚本\n# desc: 说明文字\n# usage: /py demo x\nprint(1)')
+    const text = plugins.helpText()
+    assert.match(text, /\/py demo/)
+    assert.match(text, /说明文字/)
+    assert.match(text, /\/py demo x/)
+    plugins.remove('demo')
+    assert.match(plugins.helpText(), /还没有 Python 脚本/)
+  })
   console.log('python plugins checks passed: ' + passed)
 } finally {
   rmSync(root, { recursive: true, force: true })

@@ -864,9 +864,34 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
           return
         }
         if (!pythonPlugins) { await sendTo(evt, 'Python 插件未启用。'); return }
+        const pyName = String(pyMatch[1] || '').trim()
+        if (!pyName || /^(列表|list|帮助|help|指令|命令)$/i.test(pyName)) {
+          try { await sendTo(evt, pythonPlugins.helpText()) }
+          catch (err) { await sendTo(evt, '读取脚本列表失败：' + err.message) }
+          return
+        }
         try {
-          const r = await pythonPlugins.run(pyMatch[1], pyMatch[2] || '')
-          const body = (r.stdout || r.stderr || '（没有输出）').slice(0, 1500)
+          const r = await pythonPlugins.run(pyName, pyMatch[2] || '')
+          const out = String(r.stdout || r.stderr || '（没有输出）').trim()
+          if (r.ok && out.startsWith('@@CARD@@')) {
+            try {
+              const card = JSON.parse(out.slice('@@CARD@@'.length))
+              const nodes = (Array.isArray(card.nodes) ? card.nodes : []).map((n) => {
+                const content = []
+                if (n.text) content.push({ type: 'text', data: { text: String(n.text) } })
+                for (const file of (Array.isArray(n.images) ? n.images : [])) {
+                  if (file) content.push({ type: 'image', data: { file: String(file) } })
+                }
+                return content.length ? { content } : null
+              }).filter(Boolean)
+              if (!nodes.length) throw new Error('内容为空')
+              if (evt.message_type === 'private') await onebot.sendPrivateForward(evt.user_id, nodes)
+              else await onebot.sendGroupForward(evt.group_id, nodes)
+              if (card.summary) await sendTo(evt, '✅ ' + card.summary)
+            } catch (err) { await sendTo(evt, '聊天记录发送失败：' + err.message) }
+            return
+          }
+          const body = out.slice(0, 1500)
           await sendTo(evt, (r.ok ? '✅ ' : '⚠️ ') + body + (r.killed ? '\n（超时已终止）' : ''))
         } catch (err) { await sendTo(evt, '脚本执行失败：' + err.message) }
         return

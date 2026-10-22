@@ -18,6 +18,8 @@ jm.py —— 机器人用的后台下载插件 + 详情查询
 子命令：
     初始化 [目录]   生成配置文件，默认 ~/jmcomic/option.yml
     查/查询/jmv 350234   查本子详情（不发图，纯文本）
+    发图 350234 [张数]    直接把第一话前几张图发到聊天（默认3，最多6）
+    记录 350234 [张数]    详情+图片打包成一条聊天记录卡片（默认5，最多8）
     123456          下载本子(album)
     p345678         下载单个章节(photo)
     状态/status     当前任务进度
@@ -413,6 +415,114 @@ def cmd_info(raw):
     return text
 
 
+def _fetch_pages(album_id, count, timeout=17):
+    """取某一话的前 count 张图（已解密），返回 (album, pindex, pname, files, total)。"""
+
+    def fetch():
+        from jmcomic import create_option
+        option = create_option(str(find_option()))
+        _quiet_jmcomic()
+        client = option.new_jm_client()
+        album = client.get_album_detail(int(album_id))
+        episodes = getattr(album, 'episode_list', None) or []
+        if not episodes:
+            raise RuntimeError('这本没有章节信息')
+        pid, pindex, pname = episodes[0]
+
+        photo = client.get_photo_detail(pid, fetch_album=True, fetch_scramble_id=True)
+        outdir = state_dir() / 'images' / str(photo.photo_id)
+        outdir.mkdir(parents=True, exist_ok=True)
+
+        files = []
+        for img in list(photo)[:count]:
+            save_path = outdir / img.filename
+            if not save_path.is_file() or save_path.stat().st_size == 0:
+                client.download_image(img.download_url, str(save_path),
+                                      photo.scramble_id, decode_image=True)
+            files.append(save_path)
+        total = len(getattr(photo, 'page_arr', []) or [])
+        return album, pindex, pname, files, total
+
+    return _with_timeout(fetch, timeout)
+
+
+def _page_head(album, pindex, pname, total, n):
+    return (f'📖 {getattr(album, "name", "")} 第{pindex}话 {str(pname).strip()[:12]}\n'
+            f'共 {total or "?"} 页，先发前 {n} 页：')
+
+
+def cmd_send_images(raw, count_arg=''):
+    """把图片以 CQ 码直接发在聊天里。"""
+    digits = re.findall(r'\d+', raw or '')
+    if not digits:
+        return '用法：/py jm 发图 350234 [张数]\n默认 3 张，最多 6 张。'
+    try:
+        count = int(str(count_arg).strip() or 3)
+    except ValueError:
+        count = 3
+    count = max(1, min(count, 6))
+
+    try:
+        album, pindex, pname, files, total = _fetch_pages(''.join(digits), count, 16)
+    except TimeoutError:
+        return '下载图片超时（16 秒）。网慢时先 /py jm 350234 后台下载，再 /py jm 发图 350234。'
+    except SystemExit as e:
+        return str(e)
+    except Exception as e:
+        return f'发图失败：{type(e).__name__}: {str(e)[:120]}'
+
+    if not files:
+        return '没取到图片，可能这一话没有内容。'
+    codes = '\n'.join(f'[CQ:image,file={p.as_posix()}]' for p in files)
+    return _page_head(album, pindex, pname, total, len(files)) + '\n' + codes
+
+
+def cmd_card(raw, count_arg=''):
+    """把详情和图片打包成一条「聊天记录」卡片，交给机器人合并转发。"""
+    digits = re.findall(r'\d+', raw or '')
+    if not digits:
+        return '用法：/py jm 记录 350234 [张数]\n默认 5 张，最多 8 张。'
+    album_id = ''.join(digits)
+
+    try:
+        count = int(str(count_arg).strip() or 5)
+    except ValueError:
+        count = 5
+    count = max(1, min(count, 8))
+
+    try:
+        album, pindex, pname, files, total = _fetch_pages(album_id, count, 17)
+    except TimeoutError:
+        return '生成聊天记录超时（17 秒）。先 /py jm 350234 后台下载，再试 /py jm 记录 350234。'
+    except SystemExit as e:
+        return str(e)
+    except Exception as e:
+        return f'生成记录失败：{type(e).__name__}: {str(e)[:120]}'
+
+    if not files:
+        return '没取到图片，可能这一话没有内容。'
+
+    from jmcomic import JmcomicText
+
+    title = getattr(album, 'name', '') or 'JM'
+    info = '\n'.join(x for x in [
+        f'📖 {title}',
+        f'🆔 JM{album.album_id}   👤 {_fmt_list(getattr(album, "authors", None), 3) or "未知"}',
+        f'📅 {_fmt_date(getattr(album, "pub_date", None))}   📄 {getattr(album, "page_count", 0)} 页',
+        ('🏷️ ' + _fmt_list(getattr(album, 'tags', None), 8)) if getattr(album, 'tags', None) else '',
+        f'📑 第{pindex}话 {str(pname).strip()[:16]}（共 {total or "?"} 页）',
+    ] if x)
+
+    nodes = [{'text': info}]
+    for i, p in enumerate(files, 1):
+        nodes.append({'text': f'{i}/{len(files)}', 'images': [p.as_posix()]})
+    nodes.append({'text': f'🔗 {JmcomicText.format_album_url(album.album_id)}\n'
+                          f'下载：/py jm {album.album_id}'})
+
+    payload = {'name': 'JM', 'summary': f'{title[:20]} ｜ {len(files)} 张图', 'nodes': nodes}
+    return '@@CARD@@' + json.dumps(payload, ensure_ascii=False)
+
+
 # ---------- 提交 ----------
 
 def submit(raw_id):
@@ -423,7 +533,9 @@ def submit(raw_id):
     kind = 'photo' if raw_id[:1].lower() == 'p' else 'album'
     jm_id = raw_id[1:] if kind == 'photo' else raw_id
     if not jm_id.isdigit():
-        raise SystemExit(f'id 必须是数字：{raw_id}')
+        raise SystemExit(f'不认识「{raw_id}」。\n'
+                         '下载 /py jm 350234｜查详情 /py jm 查 350234｜'
+                         '发图 /py jm 发图 350234｜进度 /py jm 状态｜帮助 /py jm 帮助')
 
     for rec in all_jobs():
         if rec.get('jm_id') == jm_id and rec.get('kind') == kind and rec.get('status') == 'running':
@@ -568,6 +680,14 @@ def main(argv):
         return 0
     if low in ('查', '查询', 'jmv', 'info', 'detail'):
         print(cmd_info(argv[1] if len(argv) > 1 else ''))
+        return 0
+    if low in ('发图', '图', 'pages', 'img'):
+        print(cmd_send_images(argv[1] if len(argv) > 1 else '',
+                              argv[2] if len(argv) > 2 else ''))
+        return 0
+    if low in ('记录', '卡片', 'card', '聊天记录'):
+        print(cmd_card(argv[1] if len(argv) > 1 else '',
+                       argv[2] if len(argv) > 2 else ''))
         return 0
     if low in ('状态', 'status', '进度'):
         print(cmd_status())

@@ -83,5 +83,20 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
     try { rmSync(full + '.bak', { force: true }) } catch {}
     return true
   }
-  return { list, run, importScript, remove, dir }
+  /** 列出已安装脚本的指令与作用，供 /py 直接查看；控制在 1400 字内，避免被截断。 */
+  function helpText(limit = 1400) {
+    const items = list()
+    if (!items.length) {
+      return '还没有 Python 脚本。\n把 .py 放进 plugins/python，或在控制台「指令中心」导入。'
+    }
+    const lines = [`已安装 Python 脚本 ${items.length} 个，用法：/py 脚本名 参数`, '']
+    for (const it of items) {
+      lines.push(`▪ /py ${it.id} — ${it.name}`)
+      if (it.description) lines.push(`   ${it.description.slice(0, 80)}`)
+      if (it.usage) lines.push(`   用法：${it.usage.slice(0, 90)}`)
+    }
+    const text = lines.join('\n')
+    return text.length > limit ? text.slice(0, limit - 12) + '\n…（已截断）' : text
+  }
+  return { list, run, importScript, remove, helpText, dir }
 }
