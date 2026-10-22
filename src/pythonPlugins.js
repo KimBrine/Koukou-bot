@@ -6,11 +6,16 @@ const NAME_RE = /^[a-z0-9_-]{1,40}\.py$/i
 
 function parseMeta(text, file) {
   const id = file.replace(/\.py$/i, '')
-  const meta = { id, name: id, description: '', usage: '', admin: false, size: 0 }
+  const meta = { id, name: id, description: '', usage: '', admin: false, size: 0, commands: [] }
   for (const line of String(text || '').split(/\r?\n/).slice(0, 30)) {
-    const m = /^\s*#\s*(name|desc|description|usage|admin)\s*[:：]\s*(.+)$/i.exec(line)
+    const m = /^\s*#\s*(name|desc|description|usage|admin|cmd)\s*[:：]\s*(.+)$/i.exec(line)
     if (!m) continue
     const key = m[1].toLowerCase()
+    if (key === 'cmd') {
+      const [usage, desc] = m[2].split('|')
+      if (usage && usage.trim()) meta.commands.push({ usage: usage.trim(), desc: (desc || '').trim() })
+      continue
+    }
     if (key === 'name') meta.name = m[2].trim()
     else if (key === 'usage') meta.usage = m[2].trim()
     else if (key === 'admin') meta.admin = /^(1|true|yes|是)$/i.test(m[2].trim())
@@ -141,11 +146,23 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
     if (!items.length) {
       return '还没有 Python 脚本。\n把 .py 放进 plugins/python，或在控制台「指令中心」导入。'
     }
-    const lines = [`已安装 Python 脚本 ${items.length} 个，用法：/py 脚本名 参数`, '']
+    const lines = [`Python 脚本 ${items.length} 个，用法：/py 脚本名 参数`, '']
     for (const it of items) {
       lines.push(`▪ /py ${it.id} — ${it.name}${it.enabled === false ? '（已停用）' : ''}`)
-      if (it.description) lines.push(`   ${it.description.slice(0, 80)}`)
-      if (it.usage) lines.push(`   用法：${it.usage.slice(0, 90)}`)
+      if (it.description) lines.push(`   ${it.description.slice(0, 60)}`)
+      const cmds = Array.isArray(it.commands) ? it.commands : []
+      if (cmds.length) {
+        for (const c of cmds) {
+          const u = /^\/py\b/i.test(c.usage) ? c.usage : `/py ${it.id} ${c.usage}`
+          lines.push(`   • ${u}${c.desc ? ' — ' + c.desc : ''}`)
+          lines.push('')
+        }
+      } else if (it.usage) {
+        lines.push(`   • ${it.usage.slice(0, 90)}`)
+        lines.push('')
+      } else {
+        lines.push('')
+      }
     }
     const text = lines.join('\n')
     return text.length > limit ? text.slice(0, limit - 12) + '\n…（已截断）' : text
