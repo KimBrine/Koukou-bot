@@ -33,7 +33,7 @@ const scripts = [
   'test-summary-request-recovery.mjs',
   'test-quiet-greetings.mjs',
   'test-memory-edit.mjs',
-  'test-dev-integration.mjs',
+  'test-dev-integration.mjs', 'test-dev-merge-safety.mjs',
   'test-reply-budget.mjs',
   'test-vision-providers.mjs',
 ]

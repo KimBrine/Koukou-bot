@@ -15,6 +15,12 @@ import { createVisionProviders } from './visionProviders.js'
 import { createSummaryVisionClient } from './summaryReferences.js'
 import { createDailySummary, buildSummaryPrompt } from './dailySummary.js'
 import { createWebSearch } from './search.js'
+import { createBackup, applyPendingRestore } from './backup.js'
+import { createSelfCheck } from './selfcheck.js'
+import { createNotifier } from './notify.js'
+import { createMetrics } from './metrics.js'
+import { createImageHasher } from './imagehash.js'
+import { createErrorStore } from './errorStore.js'
 import { loadPokeReplies, createPokeReplier } from './pokeReplies.js'
 import { createLongMemory } from './longMemory.js'
 import { createCustomCommands } from './customCommands.js'
@@ -114,6 +120,8 @@ try {
 } catch {
   /* 锁文件写入失败不影响运行 */
 }
+
+if (applyPendingRestore({config,logger})) Object.assign(config,loadConfig())
 
 const memory = new MemoryStore({ file: config.memoryFile, limit: config.historyLimit, logger })
 memory.load()
@@ -248,6 +256,33 @@ const wsUrl = config.onebotAccessToken
   : config.onebotWsUrl
 
 const onebot = new OneBotClient({ url: wsUrl, logger, probeUserId: config.idCheckOperators?.[0] || config.dailyPingTarget })
+// 备份 / 自检 / 异常通知
+const backupService = createBackup({ config, logger })
+const notifier = createNotifier({ config, onebot, logger, file: path.join(config.dataDir, 'notifications.json') })
+const selfCheck = createSelfCheck({ config, onebot, backup: backupService, logger })
+const metricsService = createMetrics({ file: path.join(config.dataDir, 'metrics.json'), logger })
+const stickerHasher = createImageHasher({ config, logger })
+const errorStore = createErrorStore({ file: path.join(config.dataDir, 'errors.json') })
+// 所有 logger.error 都计入当天错误数（用于失败率曲线）
+{
+  const rawError = logger.error.bind(logger)
+  logger.error = (...args) => {
+    try { metricsService.error() } catch {}
+    const text = args.map((x) => (x && x.stack) || String(x)).join(' ')
+    try { errorStore.add(text, 'bot', 'error') } catch {}
+    try {
+      if (/余额|额度|quota|429|401|403|请求参数错误|超时|timeout|ECONN|socket hang up/i.test(text)) {
+        notifier.notify('model-health', '模型调用可能异常：' + text.replace(/\s+/g, ' ').slice(0, 180)).catch(() => {})
+      }
+    } catch {}
+    rawError(...args)
+  }
+  const rawWarn = logger.warn.bind(logger)
+  logger.warn = (...args) => {
+    try { errorStore.add(args.map((x) => (x && x.stack) || String(x)).join(' '), 'bot', 'warn') } catch {}
+    rawWarn(...args)
+  }
+}
 const sharedImageCache = config.dataDir && config.visionCacheEnabled !== false ? createImageCache({
   dir: path.join(config.dataDir, 'image-cache'), maxBytes: config.visionCacheMaxBytes,
   maxEntries: config.visionCacheMaxEntries, maxImageBytes: config.visionMaxImageBytes,
@@ -312,6 +347,26 @@ const stickerTagLLM = new Proxy({}, {
   has(_t, prop) { return Boolean(tagActive && prop in tagActive) },
 })
 const stickerLearner = createStickerLearner({ config, logger, onebot, stickers,
+  similar: async (dataUrl, {store:library=stickers,current=()=>true}={}) => {
+    if (!stickerHasher.supported || !current()) return false
+    const m = /^data:([^;]+);base64,(.*)$/.exec(String(dataUrl || ''))
+    if (!m) return false
+    const buf = Buffer.from(m[2], 'base64')
+    const tmp = path.join(config.dataDir, 'tmp-similar-' + process.pid + '-' + Date.now() + '.img')
+    try {
+      writeFileSync(tmp, buf)
+      await stickerHasher.hashFiles([tmp])
+      const h = stickerHasher.hashOf({ file: tmp })
+      if (!h) return false
+      const files = (library.list() || []).map((x) => path.join(library.dir, x.file)).filter((f) => existsSync(f))
+      await stickerHasher.hashFiles(files)
+      if (!current()) return false
+      return (library.list() || []).some((item) => {
+        const other = stickerHasher.hashOf(item, library.dir)
+        return other && stickerHasher.distance(h, other) <= 8
+      })
+    } catch { return false } finally { stickerHasher.forget(tmp); try { rmSync(tmp, { force: true }) } catch {} }
+  },
   filterLLM: stickerFilterLLM, tagLLM: stickerTagLLM, imageCache: sharedImageCache })
 const commandCenter = createCommandCenter({file:path.join(config.dataDir,'command-center.json'),customCommands,config,logger,llm})
 
@@ -367,7 +422,8 @@ const dailySummary = createDailySummary({ config, logger, onebot, llm: { chat: s
 const systemPrompt = createChatPromptBuilder({ config, longMemory, todayNote: key => dailyPing?.todayNote?.(key) ?? '' })
 
 // 拍一拍回复语（poke-replies.txt，可自行增删）
-const pokeReplier = createPokeReplier(loadPokeReplies(config.rootDir, logger, config.pokeRepliesFile))
+const pokeLines = loadPokeReplies(config.rootDir, logger, config.pokeRepliesFile)
+const pokeReplier = createPokeReplier(pokeLines)
 
 // 盯人回复：定期检查目标群里指定用户是否发过言，有则 @ 他回一两句
 const replyLog = new Map() // `${groupId}:${userId}` -> 上次回复时间戳
@@ -410,7 +466,8 @@ const runtimeStats = {
   },
 }
 
-const bot = createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt: systemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, commandCenter, longMemory, stickers, stickerLearner })
+const bot = createBot({
+    metrics: metricsService, config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt: systemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, commandCenter, longMemory, stickers, stickerLearner })
 
 // 固定语库调度不使用模型；语库与人格正文绑定，发送状态与迁移语库分开保存。
 const personaGreetings=createPersonaGreetingLibrary({file:path.join(config.dataDir,'persona-greetings.json'),logger})
@@ -441,6 +498,11 @@ if (config.adminEnabled) {
     switchVision: () => { rebuildVision(); rebuildStickerTag() },
     webSearch,
     switchWebSearch: (patch) => webSearch.setOptions(patch),
+    backup: backupService,
+    metrics: metricsService,
+    selfcheck: selfCheck,
+    pokeReplies: { lines: pokeLines },
+    errors: errorStore,
     visionProviders,
     restartBot: () => {
       // 让一个独立进程在 1.2 秒后杀掉当前实例并用计划任务重新拉起（避免自己杀自己杀不干净）
@@ -468,6 +530,29 @@ if (config.adminEnabled) {
   })
   adminServer.start(config.adminPort)
 }
+
+// 自动备份：启动 1 分钟后检查一次，之后每 6 小时检查；一天内已有备份就跳过。
+function maybeBackup(reason) {
+  try {
+    if (Date.now() - backupService.lastBackupAt() < 20 * 3600 * 1000) return
+    memory.flush(); longMemory.save({strict:true})
+    const result = backupService.run({ reason })
+    notifier.notify('backup-ok', '已自动备份记忆与表情包：' + result.name, { minIntervalMs: 20 * 3600 * 1000 }).catch(() => {})
+  } catch (err) { logger.warn('自动备份失败：' + err.message) }
+}
+setTimeout(() => maybeBackup('startup'), 60 * 1000).unref?.()
+setInterval(() => maybeBackup('auto'), 6 * 3600 * 1000).unref?.()
+
+// 掉线提醒：连续两次检测不到 OneBot 才通知，避免抖动刷屏。
+let offlineTicks = 0
+setInterval(() => {
+  try {
+    const st = onebot.status()
+    if (st && st.connected) { offlineTicks = 0; return }
+    offlineTicks += 1
+    if (offlineTicks === 2) notifier.notify('onebot-offline', 'OneBot 连接断开（3001），机器人暂时收不到消息').catch(() => {})
+  } catch {}
+}, 2 * 60 * 1000).unref?.()
 
 // 独立持久化发送状态，重启后先核对已发送/待核验记录。
 const customSchedule = createCustomCommandSchedule({
@@ -503,6 +588,7 @@ function shutdown() {
   shuttingDown = true
   logger.info('正在关闭，保存记忆…')
   memory.flush()
+  metricsService.flush()
   bot.flush()
   quietGreetings.stop()
   customSchedule.stop()
@@ -513,8 +599,8 @@ function shutdown() {
 process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)
 
-process.on('unhandledRejection', (err) => logger.error(`未处理的 Promise 拒绝：${err?.stack || err}`))
-process.on('uncaughtException', (err) => logger.error(`未捕获异常：${err?.stack || err}`))
+process.on('unhandledRejection', (err) => { logger.error(`未处理的 Promise 拒绝：${err?.stack || err}`); notifier.notify('crash', '未处理的 Promise 拒绝：' + String(err?.message || err).slice(0, 200)).catch(() => {}) })
+process.on('uncaughtException', (err) => { logger.error(`未捕获异常：${err?.stack || err}`); notifier.notify('crash', '未捕获异常：' + String(err?.message || err).slice(0, 200)).catch(() => {}) })
 
 logger.info('===== DeepSeek × QQ 机器人启动 =====')
 logger.info(`模型：${config.deepseekModel}｜DeepSeek思考强度：${config.deepseekReasoningEffort ?? '服务端默认'}`)

@@ -12,6 +12,8 @@ import { activatePersona } from '../personaSwitch.js'
 import { applyConversationSettings, resetConversationMemory } from '../conversationSessions.js'
 import { writeTextAtomic } from '../stateFile.js'
 import { createWebSearch } from '../search.js'
+import { renderReply } from '../customCommands.js'
+import { createImageHasher } from '../imagehash.js'
 import { createUpdateChecker } from '../updateCheck.js'
 import { suggestStickerMetadata } from '../stickerMetadata.js'
 
@@ -217,7 +219,7 @@ function validateGroupConfig(key, value) {
   }
 }
 
-export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, quietGreetings, personaGreetings, bot, customCommands, commandCenter, llm, stickers, stickerTagLLM, updateChecker=createUpdateChecker({currentVersion:APP_VERSION}), switchVision, visionProviders, restartBot, webSearch, switchWebSearch }) {
+export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, quietGreetings, personaGreetings, bot, customCommands, commandCenter, llm, stickers, stickerTagLLM, updateChecker=createUpdateChecker({currentVersion:APP_VERSION}), switchVision, visionProviders, restartBot, webSearch, switchWebSearch, backup, selfcheck, metrics, errors, pokeReplies }) {
   // 本实例自己的 .env（并行跑两个实例时，写死 rootDir\.env 会改到另一个实例的配置上）
   const envFile = config.envFile || path.join(config.rootDir, '.env')
   const logFile = path.join(config.logDir || path.join(config.rootDir, 'logs'), 'bot.log')
@@ -518,6 +520,35 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         hasKey: Boolean(config.deepseekApiKey),
       },
     }),
+    'GET /api/stickers/retag-status': async (query) => (!stickers?.scope || (query?.scope===stickers.scope().token && retagJob?.scope===query.scope)) ? (retagJob || {running:false,done:0,total:0,errors:0}) : {running:false,done:0,total:0,errors:0},
+    'GET /api/metrics': async (query) => {
+      const days = Math.max(1, Math.min(30, Number(query && query.days) || 7))
+      return { days, items: metrics ? metrics.snapshot(days) : [] }
+    },
+    'GET /api/backups': async () => ({ items: backup ? backup.list().map((x) => ({ name: x.name, size: x.size })) : [], root: backup ? backup.root : '' }),
+    'GET /api/memory-export': async () => {
+      const readJson = (file) => { try { return JSON.parse(readFileSync(file, 'utf8')) } catch { return {} } }
+      return {
+        version: 1,
+        exportedAt: Date.now(),
+        persona: String(config.activePersona || ''),
+        memory: readJson(config.memoryFile),
+        longMemory: readJson(path.join(config.dataDir, 'long-memory.json')),
+      }
+    },
+    'GET /api/errors': async () => ({ items: errors ? errors.list() : [] }),
+    'GET /api/poke-replies': async () => ({ lines: pokeReplies && Array.isArray(pokeReplies.lines) ? [...pokeReplies.lines] : [] }),
+    'GET /api/tasks': async () => ({
+      backup: { last: backup ? backup.lastBackupAt() : 0, everyHours: 6 },
+      summary: { enabled: Boolean(config.summaryEnabled), times: config.summaryTimes || '' },
+      longMemory: { enabled: Boolean(config.longMemoryEnabled), everyMinutes: Math.max(1, Math.round((config.longMemoryIntervalMs || 600000) / 60000)) },
+      stickersLearn: { enabled: Boolean(config.stickerLearnEnabled), perHour: config.stickerLearnPerHour || 0 },
+    }),
+    'GET /api/selfcheck': async () => {
+      if (!selfcheck) return { items: [] }
+      const st = onebot && typeof onebot.status === 'function' ? onebot.status() : null
+      return typeof selfcheck === 'function' ? selfcheck(st) : selfcheck.run(st)
+    },
     'GET /api/websearch': async () => ({
       enabled: Boolean(config.webSearchEnabled),
       model: config.webSearchModel || 'qwen-plus',
@@ -872,6 +903,8 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     return true
   }
 
+  let retagJob = null
+  const imageHasher = createImageHasher({ config, logger })
   const actions = {
     async 'set-config-batch'(payload) {
       const patch = payload?.patch && typeof payload.patch === 'object' && !Array.isArray(payload.patch) ? payload.patch : {}
@@ -1066,7 +1099,13 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       return { ok, removed: ok }
     },
     async 'save-builtin-command'(payload){return {ok:true,item:commandCenter.saveBuiltin(payload)}} ,
-    async 'generate-command'(payload){return {ok:true,draft:await commandCenter.generate(payload.description,{mode:payload.mode})}},
+    async 'generate-command'(payload){
+      const description=String(payload&&payload.description||'').trim()
+      if(!description)throw Error('请先写一句需求')
+      if(description.length>2000)throw Error('需求太长，最多 2000 字')
+      try{return {ok:true,draft:await commandCenter.generate(description,{mode:payload&&payload.mode})}}
+      catch(err){throw Error('AI 生成失败：'+(err&&err.message||'未知错误'))}
+    },
     async 'export-commands'(payload){return commandCenter.exportPack(payload)},
     async 'preview-commands'(payload){return commandCenter.preview(payload.content)},
     async 'import-commands'(payload){return {ok:true,...commandCenter.importPack(payload.content,{includeBuiltins:payload.includeBuiltins===true})}},
@@ -1287,6 +1326,165 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       logger?.info?.(`[控制台] 已删除会话 ${key}${whitelistRemoved ? '（并从白名单移除）' : ''}`)
       return { ok: true, key, whitelistRemoved, dailyBackup, ...result }
     },
+    async 'clear-errors'() {
+      if (errors) errors.clear()
+      logger?.info?.('[控制台] 已清空错误记录')
+      return { ok: true }
+    },
+    async 'test-command'(payload) {
+      const text = String((payload && payload.text) || '').trim()
+      if (!text) throw new Error('请输入要测试的内容')
+      const firstAdmin = Array.isArray(config.adminUsers) ? config.adminUsers[0] : String(config.adminUsers || '').split(',')[0]
+      const ctx = { isPrivate: !(payload && payload.isPrivate === false), groupId: Number(payload && payload.groupId) || 0, userId: Number(payload && payload.userId) || Number(firstAdmin) || 0 }
+      const builtinId = commandCenter.detect(text)
+      let builtin = null
+      if (builtinId) {
+        const c = commandCenter.get(builtinId)
+        builtin = { id: builtinId, name: c.name, enabled: c.enabled, allowed: commandCenter.allows(builtinId, ctx), trigger: c.trigger }
+      }
+      const custom = []
+      for (const c of customCommands.all()) {
+        if (c.enabled === false) continue
+        const triggers = [c.trigger, ...(c.aliases || [])].filter(Boolean)
+        const hit = triggers.find((t) => (c.match === 'exact' ? text === t : text.startsWith(t)))
+        if (!hit) continue
+        let reply = ''
+        try { reply = renderReply(c.reply, { name: '测试用户', args: text.slice(hit.length).trim() }) } catch { reply = c.reply || '' }
+        custom.push({ id: c.id, name: c.name, trigger: hit, reply: String(reply || '').slice(0, 500) })
+      }
+      return { builtin, custom }
+    },
+    async 'persona-check'() {
+      const text = String(config.persona || '').trim()
+      const warnings = []
+      if (!text) warnings.push('当前人格正文为空')
+      const pairs = [['只认', '好朋友'], ['唯一的', '朋友'], ['主人', '朋友'], ['只能', '也可以'], ['禁止', '可以']]
+      for (const [a, b] of pairs) if (text.includes(a) && text.includes(b)) warnings.push('同时出现「' + a + '」和「' + b + '」，可能自相矛盾')
+      const lines = text.split(/[。\n；]/).map((x) => x.trim()).filter(Boolean)
+      const seen = new Map()
+      for (const line of lines) {
+        const key = line.slice(0, 20)
+        if (seen.has(key) && seen.get(key) !== line) warnings.push('疑似重复表述：' + line.slice(0, 40))
+        seen.set(key, line)
+      }
+      return { length: text.length, lines: lines.length, warnings }
+    },
+    async 'memory-import'(payload) {
+      const data=payload?.data
+      if(!data || typeof data!=='object' || Array.isArray(data))throw Error('导入内容无效')
+      if(data.persona!==undefined && data.persona!==String(config.activePersona||''))throw Error('请先切换到导出文件所用人格，再导入记忆')
+      const mem=data.memory,long=data.longMemory
+      const object=v=>v && typeof v==='object' && !Array.isArray(v)
+      if(!object(mem)&&!object(long))throw Error('文件里没有记忆数据')
+      for(const [key,items] of Object.entries(mem||{}))if(!/^[gp]\d{1,15}$/.test(key)||!Array.isArray(items)||items.some(x=>!object(x)||!['user','assistant','system'].includes(x.role)||typeof x.content!=='string'))throw Error('近期记忆格式错误')
+      for(const [key,item] of Object.entries(long||{}))if(!/^[gp]\d{1,15}$/.test(key)||!object(item)||typeof item.summary!=='string'||!Array.isArray(item.pending)||item.pending.some(x=>!object(x)||typeof x.text!=='string'))throw Error('长期记忆格式错误')
+      memory?.flush?.();longMemory?.save?.({strict:true})
+      const old=memory.snapshot(),oldLong=longMemory.snapshot()
+      if(!backup)throw Error('备份不可用，未开始导入')
+      backup.run({reason:'导入前备份'})
+      try {
+        if(mem)memory.restore({chats:mem,resetAt:Math.floor(Date.now()/1000)*1000,keyResetAt:{}})
+        if(long)longMemory.restore({chats:long,epoch:randomUUID(),keyEpochs:{}})
+      } catch(err){memory.restore(old);longMemory.restore(oldLong);throw err}
+      logger?.info?.('[控制台] 已导入记忆')
+      return {ok:true,recentKeys:Object.keys(mem||{}).length,longKeys:Object.keys(long||{}).length}
+    },
+    async 'detect-similar'(payload) {
+      if (stickers?.scope && payload?.stickerScope!==stickers.scope().token) throw Error('人格已变化，请刷新后再操作')
+      if (!imageHasher.supported) throw Error('当前系统暂不支持相似图检测，仍保留文件哈希去重')
+      const selected=stickers.snapshot?.(),library=selected?.store||stickers
+      const list = library.list() || []
+      const files = list.map((x) => path.join(library.dir, x.file)).filter((f) => existsSync(f))
+      await imageHasher.hashFiles(files)
+      if (selected && !selected.current()) throw Error('人格已变化，已取消相似图结果')
+      const groups = []
+      for (let i = 0; i < list.length; i += 1) {
+        const a = imageHasher.hashOf(list[i],library.dir)
+        if (!a) continue
+        for (let j = i + 1; j < list.length; j += 1) {
+          const b = imageHasher.hashOf(list[j],library.dir)
+          if (!b) continue
+          const d = imageHasher.distance(a, b)
+          if (d <= 8) groups.push({ distance: d, a: { id: list[i].id, name: list[i].name }, b: { id: list[j].id, name: list[j].name } })
+        }
+      }
+      groups.sort((x, y) => x.distance - y.distance)
+      logger?.info?.('[控制台] 相似图检测：' + list.length + ' 张，命中 ' + groups.length + ' 组')
+      return { checked: list.length, groups: groups.slice(0, 200) }
+    },
+    async 'retag-stickers'(payload) {
+      if (stickers?.scope && payload?.stickerScope!==stickers.scope().token) throw Error('人格已变化，请刷新后再操作')
+      if (!stickerTagLLM || typeof stickerTagLLM.describeImages !== 'function') throw Error('打标模型未配置')
+      if (retagJob?.running) throw Error('正在生成中，请稍候')
+      const selected=stickers.snapshot?.(),library=selected?.store||stickers
+      const current=()=>!selected || selected.current()
+      const tagClient=stickerTagLLM.snapshot?.()||stickerTagLLM
+      const fields=item=>item && {id:item.id,hash:item.hash,name:item.name,keywords:item.keywords,scenes:item.scenes,description:item.description}
+      const only=Array.isArray(payload?.ids)?payload.ids:null,missingOnly=payload?.onlyMissing===true
+      const list=library.list().filter(x=>(!only||only.includes(x.id)) && (!missingOnly||!x.description?.trim()||!x.keywords?.length||!x.name?.trim())).map(item=>({item,revision:stamp(fields(item))}))
+      const job={running:true,done:0,total:list.length,errors:0,skipped:0,startedAt:Date.now(),scope:stickers.scope?.().token}
+      retagJob=job
+      ;(async()=>{
+        try { for(const {item,revision} of list){
+          if(!current()){job.cancelled=true;break}
+          try {
+            if(stamp(fields(library.get(item.id)))!==revision){job.skipped++;continue}
+            const file=library.dataUrlOf(item)
+            if(!file)throw Error('图片已删除或拉黑')
+            const dataUrl=file.startsWith('base64://')?'data:'+item.mime+';base64,'+file.slice('base64://'.length):file
+            const draft=await suggestStickerMetadata({dataUrl,tagLLM:tagClient})
+            if(!current()){job.cancelled=true;break}
+            if(stamp(fields(library.get(item.id)))!==revision){job.skipped++;continue}
+            const patch={}
+            if(!missingOnly||!item.name?.trim())patch.name=draft.name
+            if(!missingOnly||!item.keywords?.length)patch.keywords=draft.keywords.join(' ')
+            if(!missingOnly||!item.scenes?.length)patch.scenes=draft.scenes
+            if(!missingOnly||!item.description?.trim())patch.description=draft.description
+            library.update(item.id,patch)
+          } catch(err){job.errors++;job.lastError=err.message}
+          finally {job.done++}
+        }} finally {job.running=false;logger?.info?.('[控制台] 表情包批量打标结束：'+job.done+' 张，跳过 '+job.skipped+' 张，失败 '+job.errors)}
+      })().catch(err=>{job.running=false;job.error=err.message})
+      return {ok:true,total:list.length}
+    },
+    async 'save-poke-replies'(payload) {
+      const raw = String((payload && payload.text) || '')
+      const lines = raw.split(/\r?\n/).map((x) => x.trim()).filter((x) => x && !x.startsWith('#'))
+      if (!lines.length) throw new Error('至少保留一条回复')
+      if (lines.length > 300) throw new Error('最多 300 条')
+      for (const line of lines) if (line.length > 120) throw new Error('单条不超过 120 字')
+      const file = config.pokeRepliesFile || path.join(config.dataDir, 'poke-replies.txt')
+      mkdirSync(path.dirname(file), { recursive: true })
+      writeFileSync(file, lines.join('\n') + '\n', 'utf8')
+      if (pokeReplies && Array.isArray(pokeReplies.lines)) pokeReplies.lines.splice(0, pokeReplies.lines.length, ...lines)
+      logger?.info?.('[控制台] 已更新拍一拍语库：' + lines.length + ' 条')
+      return { ok: true, count: lines.length }
+    },
+    async 'delete-backup'(payload) {
+      const name = String((payload && payload.name) || '')
+      if (!/^[0-9A-Za-z_-]{1,40}$/.test(name)) throw new Error('备份名称无效')
+      const dir = path.resolve(config.dataDir, 'backups', name)
+      if (path.dirname(dir) !== path.resolve(config.dataDir, 'backups') || !existsSync(dir)) throw new Error('找不到这份备份')
+      rmSync(dir, { recursive: true, force: true })
+      logger?.info?.('[控制台] 已删除备份：' + name)
+      return { ok: true, name }
+    },
+    async 'restore-backup'(payload) {
+      const name = String((payload && payload.name) || '')
+      if (!/^[0-9A-Za-z_-]{1,40}$/.test(name)) throw new Error('备份名称无效')
+      const dir = path.resolve(config.dataDir, 'backups', name)
+      if (path.dirname(dir) !== path.resolve(config.dataDir, 'backups') || !existsSync(dir)) throw new Error('找不到这份备份')
+      if (!backup) throw new Error('备份服务未启用')
+      memory?.flush?.(); longMemory?.save?.({strict:true})
+      return backup.queueRestore(name)
+    },
+    async 'backup'() {
+      if (!backup) throw new Error('备份不可用')
+      memory?.flush?.(); longMemory?.save?.({strict:true})
+      const result = backup.run({ reason: 'manual' })
+      logger?.info?.('[控制台] 手动备份完成：' + result.name)
+      return { ok: true, ...result }
+    },
     async 'cleanup-groups'() {
       const mem = readJsonSafe(config.memoryFile, {})
       const keys = new Set([...Object.keys(mem),...Object.keys(memory?.snapshot?.()?.chats||{}),...Object.keys(longMemory?.snapshot?.()?.chats||{}), ...chatSettings.keys(),...(existsSync(dailyDir)?readdirSync(dailyDir).filter(x=>/^\d+$/.test(x)).map(x=>'g'+x):[])])
@@ -1316,7 +1514,6 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       let model = String(payload?.model || config.webSearchModel || 'qwen-plus').trim()
       const requestedProvider = String(payload?.provider || '').toLowerCase()
       const provider = requestedProvider || (model === 'deepseek' || model === 'bing' ? model : 'dashscope')
-      if(model==='deepseek'||model==='bing')model='qwen-plus'
       if(!['auto','deepseek','dashscope','baidu','bing','off'].includes(provider))throw Error('联网搜索服务商无效')
       if (model && !/^[A-Za-z0-9._:-]{1,64}$/.test(model)) throw new Error('模型名不合法')
       createWebSearch({provider:enabled?provider:'off',apiKey:config.baiduApiKey,deepseekApiKey:config.deepseekApiKey,dashscopeApiKey:config.dashscopeApiKey,dashscopeModel:model})

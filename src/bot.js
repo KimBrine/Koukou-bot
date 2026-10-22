@@ -15,7 +15,7 @@ import { parseMessage } from './cq.js'
 import { isBotAdmin, hasAdmins, adminHint } from './permissions.js'
 import { renderReply } from './customCommands.js'
 import { extractStickerMarkers } from './stickers.js'
-import { SUMMARY_RE, CLEAR_RE, HELP_RE } from './commandCenter.js'
+import { SUMMARY_RE, CLEAR_RE, HELP_RE, SEND_FILE_RE, SEND_LINK_RE } from './commandCenter.js'
 import { formatCommandHelp } from './commandHelp.js'
 import { createGroupMute } from './groupMute.js'
 import { createSelfActions } from './selfActions.js'
@@ -298,7 +298,7 @@ const SEARCH_TOOLS = [{
   },
 }]
 
-export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, commandCenter, longMemory, stickers = null, stickerLearner = null, musicSearch = searchSong, rand = Math.random }) {
+export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, commandCenter, longMemory, stickers = null, stickerLearner = null, musicSearch = searchSong, rand = Math.random, metrics = null }) {
   const imageCache = sharedImageCache ?? (config.dataDir && config.visionCacheEnabled !== false ? createImageCache({
     dir: path.join(config.dataDir, 'image-cache'),
     maxBytes: config.visionCacheMaxBytes,
@@ -564,6 +564,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         }
         try {
           const { summary } = await webSearch(query)
+          try { metrics?.search?.() } catch {}
           logger.info(`[联网搜索] ${query.slice(0, 60)}`)
           answers.push({ id: call.id, text: String(summary).slice(0, 3000) })
         } catch (err) {
@@ -692,6 +693,8 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
     flush() { autoPlusOne.flush() },
 
     async handleMessage(evt) {
+      try { metrics?.received?.() } catch {}
+      try { if (evt.group_id) metrics?.group?.(evt.group_id) } catch {}
       const personaRevision = config.personaRevision || 0
       const conversationKey = evt.message_type === 'private' ? `p${evt.user_id}` : `g${evt.group_id}`
       let memoryRevision = memory.version?.(conversationKey)
@@ -818,6 +821,41 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       if(requestedFeature){
         if(!featureAllowed(requestedFeature)){await sendTo(evt,'这个指令在当前会话未启用，或需要机器人管理员权限。');return}
         featurePolicy={id:requestedFeature,snapshot:JSON.stringify(commandCenter?.get(requestedFeature))}
+      }
+      const sendText = String(parsed.text || '').trim()
+      const sendFileMatch = SEND_FILE_RE.exec(sendText)
+      const sendLinkMatch = sendFileMatch ? null : SEND_LINK_RE.exec(sendText)
+      if (sendFileMatch || sendLinkMatch) {
+        const sendId = sendFileMatch ? 'send-file' : 'send-link'
+        if (!commandCenter || !commandCenter.allows(sendId, commandContext)) {
+          if (directReply) await sendTo(evt, '这个指令需要机器人管理员权限。')
+          return
+        }
+        const targetType = (sendFileMatch || sendLinkMatch)[1]
+        const targetId = Number((sendFileMatch || sendLinkMatch)[2])
+        if (sendFileMatch) {
+          const filePath = path.resolve(sendFileMatch[3].trim().replace(/^"|"$/g, ''))
+          if (!existsSync(filePath) || !statSync(filePath).isFile()) { await sendTo(evt, '文件不存在：' + filePath); return }
+          const st = statSync(filePath)
+          if (st.size > 200 * 1024 * 1024) { await sendTo(evt, '文件超过 200MB，未发送'); return }
+          try {
+            if (targetType === '群') await onebot.api('upload_group_file', { group_id: targetId, file: filePath, name: path.basename(filePath) })
+            else await onebot.api('upload_private_file', { user_id: targetId, file: filePath, name: path.basename(filePath) })
+            await sendTo(evt, '已发送文件：' + path.basename(filePath))
+          } catch (err) { await sendTo(evt, '文件发送失败：' + err.message) }
+          return
+        }
+        const url = sendLinkMatch[3]
+        const title = String(sendLinkMatch[4] || url).trim()
+        const segment = [{ type: 'share', data: { url, title, content: title } }]
+        try {
+          if (targetType === '群') await onebot.sendGroup(targetId, segment)
+          else await onebot.sendPrivate(targetId, segment)
+          await sendTo(evt, '已发送链接：' + title)
+        } catch (err) {
+          try { await sendTo(evt, title + ' ' + url) } catch { await sendTo(evt, '链接发送失败：' + err.message) }
+        }
+        return
       }
       const selfResult=!questionMode&&!muteFollowup&&selfActions.applies(evt,parsed,selfFollowup)?await selfActions.handle(evt,parsed,{followup:selfFollowup,quotedRaw,canReply:samePersona,replyPrompt:()=>{
         const personaText=sessionPersona(config,chatSettings?.get?.(conversationKey)?.persona||'').text
@@ -1079,6 +1117,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         }
       }
       if (!decision.reply) {
+        try { metrics?.skipped?.() } catch {}
         runtimeStats?.noteSkip?.()
         logger.debug(`忽略消息（${decision.reason}）id=${evt.message_id}`)
         return
@@ -1359,6 +1398,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
               if (evt.message_type === 'private') await onebot.sendPrivate(evt.user_id, segments)
               else await onebot.sendGroup(evt.group_id, segments)
               logger.info(`[表情包] 发送「${item.name}」到 ${evt.message_type === 'private' ? '私聊' : '群 ' + evt.group_id}`)
+              try { metrics?.sticker?.() } catch {}
               if (record) { record += '\n[表情包]' } else { record = '[表情包]' }
               if (typeof replyStickers.noteUsage === 'function') replyStickers.noteUsage(item.id, sentText || parsed.text)
             } catch (err) {
@@ -1376,7 +1416,9 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         runtimeStats?.noteReply?.(key)
         const decoTag = /🍥/u.test(record) ? (hasDecoration(record.replace(/🍥/gu, '')) ? '（🍥+颜文字）' : '（🍥）') : hasDecoration(record) ? '（颜文字）' : '（纯文字）'
         logger.info(`[耗时] 模型生成 ${(thinkMs / 1000).toFixed(1)}s`)
+        try { metrics?.llm?.(thinkMs) } catch {}
         logger.info(`[已回复]${finalLines.length > 1 ? `（${finalLines.length} 行分条）` : ''}${decoTag} ${senderName}：${record.replace(/\n/g, ' ⏎ ').slice(0, 60)}`)
+        try { metrics?.replied?.() } catch {}
       } catch (err) {
         if (!samePersona()) return
         logger.error(`回复生成失败：${err.message}`)

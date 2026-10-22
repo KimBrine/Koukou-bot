@@ -1,5 +1,6 @@
 /* 浏览器指令编辑器；草稿留在页面，轮询事件不会重绘输入框。 */
 window.CommandCenterUI=(()=>{
+  let dupTriggers=new Set()
   let state={},draft={},builtin=false,importContent='',preview=null,description='',generationMode='fixed'
   const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
   const checked=value=>value?' checked':''
@@ -10,13 +11,16 @@ window.CommandCenterUI=(()=>{
   const scopeName=c=>c.whitelistOnly?'仅白名单群（所有成员）':c.scope==='group'?(c.groups||[]).map(id=>state.groups?.find(g=>Number(g.id)===Number(id))?.name||id).join('、')||'尚未选择群':scopes.find(s=>s[0]===c.scope)?.[1]||'所有会话'
   const field=(label,body)=>{const id=/<(?:input|textarea|select)[^>]*\bid="([^"]+)"/.exec(body)?.[1];return `<div class="frow"><label${id?` for="${esc(id)}"`:''}>${label}</label><div>${body}</div></div>`}
   const button=(label,key,value='',primary=false)=>`<button class="btn${primary?' primary':''}" type="button" data-cc-${key}="${esc(value)}">${label}</button>`
-  function card(c,isBuiltin){return `<article class="cc-item"><div class="flexbar"><strong>${esc(c.name)}</strong><span class="pill">${c.enabled?'已启用':'已关闭'}</span></div><p class="mut">${esc(c.trigger||'拍一拍事件')}</p><p>${esc(modeName(c))} · ${c.adminOnly?'仅机器人管理员':'按原有授权规则'}</p><p class="mut">${esc(scopeName(c))}</p>${c.description?`<p class="mut">${esc(c.description)}</p>`:''}<div class="flexbar">${button('编辑设置',isBuiltin?'builtin':'edit',c.id)}${button(c.enabled?'关闭':'启用',isBuiltin?'toggle-builtin':'toggle',c.id)}${button('导出','export',c.id)}${isBuiltin?'':button('删除','delete',c.id)}</div></article>`}
+  const catOf=c=>['send-file','send-link','music','request-sticker','request-poke'].includes(c.id)?'media':(c.management||c.groupAction?'manage':(c.ai==='none'?'rule':'ai'))
+  function card(c,isBuiltin){
+    const dup=!isBuiltin&&[c.trigger,...(c.aliases||[])].filter(Boolean).some(t=>dupTriggers.has(t));
+    return `<article class="cc-item" data-cat="${catOf(c)}" data-search="${esc((c.name+' '+(c.trigger||'')+' '+(c.description||'')).toLowerCase())}"><div class="flexbar"><strong>${esc(c.name)}</strong><span class="pill">${c.enabled?'已启用':'已关闭'}</span>${dup?'<span class="pill" style="background:#a33;color:#fff">触发词重复</span>':''}</div><p class="mut">${esc(c.trigger||'拍一拍事件')}</p><p>${esc(modeName(c))} · ${c.adminOnly?'仅机器人管理员':'按原有授权规则'}</p><p class="mut">${esc(scopeName(c))}</p>${c.description?`<p class="mut">${esc(c.description)}</p>`:''}<div class="flexbar">${button('编辑设置',isBuiltin?'builtin':'edit',c.id)}${button(c.enabled?'关闭':'启用',isBuiltin?'toggle-builtin':'toggle',c.id)}${button('导出','export',c.id)}${isBuiltin?'':button('删除','delete',c.id)}</div></article>`}
   function form(){
     const c=draft,mode=c.responseMode||'fixed',event=c.event||'message'
     const groups=new Map((state.groups||[]).map(g=>[Number(g.id),g]))
     for(const id of c.groups||[])if(!groups.has(Number(id)))groups.set(Number(id),{id,name:'群 '+id})
     const picker=`<div class="cc-picks">${[...groups.values()].map(g=>`<label class="chk"><input type="checkbox" data-cc-group value="${esc(g.id)}"${checked((c.groups||[]).map(Number).includes(Number(g.id)))}> ${esc(g.name)} <small>(${esc(g.id)})</small></label>`).join('')||'<span class="mut">暂未取得群列表，可在下方输入群号。</span>'}</div><input id="ccExtraGroups" placeholder="其他群号，可用空格或换行分隔"><div class="mut">只有选择“仅选择的群聊”时使用此名单，至少选择一群。</div>`
-    return `<section class="card" id="ccEditor"><h2>${builtin?'内置功能设置':c.id?'编辑自定义指令':'新建自定义指令'}</h2>${builtin?`<div class="note">${esc(c.description)}。这里管理触发和权限，内置功能继续使用原实现。</div>`:''}
+    return `<details class="card" id="ccEditor"><summary><b class="api-card-title">${builtin?'内置功能设置':c.id?'编辑自定义指令':'新建自定义指令'}</b></summary><div class="api-card-body">${builtin?`<div class="note">${esc(c.description)}。这里管理触发和权限，内置功能继续使用原实现。</div>`:''}
     ${field('名称',`<input id="ccName" value="${esc(c.name||'')}"${builtin?' readonly':''} placeholder="如：早安问候">`)}
     ${!builtin?field('触发方式',`<select id="ccEvent">${options([['message','聊天消息'],['poke','拍一拍机器人']],event)}</select>`):''}
     ${field('触发词',`<input id="ccTrigger" value="${esc(c.trigger||'')}"${builtin?' readonly':''} placeholder="如 /早安；拍一拍无需填写"><div class="mut">${builtin?'使用既有指令格式。':'匹配外层消息，转发记录中的指令不会触发。'}</div>`)}
@@ -30,14 +34,14 @@ window.CommandCenterUI=(()=>{
     ${!builtin?field('冷却时间',`<input id="ccCooldown" type="number" min="0" max="86400" value="${Number(c.cooldownSec)||0}"><small>秒；同一会话两次执行的最短间隔。</small>`):''}
     ${!builtin?`<details><summary>每日定时推送（仅文字触发的固定回复）</summary>${field('开关',`<label class="chk"><input id="ccSchedule" type="checkbox"${checked(c.scheduleEnabled)}> 每日到点推送</label>`)}${field('时间',`<input id="ccTimes" value="${esc((c.scheduleTimes||[]).join(','))}" placeholder="09:00,21:30">`)}${field('目标群',`<input id="ccScheduleGroups" value="${esc((c.scheduleGroups||[]).join(' '))}" placeholder="群号，空格分隔"><small>同时遵守本指令适用范围；管理员限制只针对用户触发。</small>`)}</details>`:''}
     ${field('启用',`<label class="chk"><input id="ccEnabled" type="checkbox"${checked(c.enabled!==false)}> 保存后启用这条指令</label>`)}
-    <div class="flexbar"><button class="btn primary" id="ccSave">保存设置</button><button class="btn" id="ccNew">新建一条</button><span class="mut">生成草稿和预览导入均不会自动启用。</span></div></section>`
+    <div class="flexbar"><button class="btn primary" id="ccSave">保存设置</button><button class="btn" id="ccNew">新建一条</button><span class="mut">生成草稿和预览导入均不会自动启用。</span></div></div></details>`
   }
-  function render(data){state=data;return `<style>.cc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:14px}.cc-item{padding:18px;border:1px solid var(--border,#31465c);border-radius:18px;overflow-wrap:anywhere}.cc-item p{font-size:13px;margin:9px 0}.cc-item .btn{padding:7px 10px;font-size:12px}.cc-picks{display:grid;gap:9px;max-height:240px;overflow:auto;margin-bottom:12px}.cc-picks small{opacity:.6}.cc-tools{display:flex;gap:10px;flex-wrap:wrap;align-items:center}#ccEditor{scroll-margin-top:20px}</style>
+  function render(data){state=data;dupTriggers=(()=>{const seen=new Set(),dup=new Set();for(const c of data.custom||[]){for(const t of [c.trigger,...(c.aliases||[])].filter(Boolean)){if(seen.has(t))dup.add(t);else seen.add(t)}}return dup})();return `<style>.cc-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:14px}.cc-item{padding:18px;border:1px solid var(--border,#31465c);border-radius:18px;overflow-wrap:anywhere}.cc-item p{font-size:13px;margin:9px 0}.cc-item .btn{padding:7px 10px;font-size:12px}.cc-picks{display:grid;gap:9px;max-height:240px;overflow:auto;margin-bottom:12px}.cc-picks small{opacity:.6}.cc-tools{display:flex;gap:10px;flex-wrap:wrap;align-items:center}#ccEditor{scroll-margin-top:20px}</style>
     <h1>指令中心</h1><div class="sub">已有功能与自定义规则统一管理。规则可以不用 AI；也可以只在创建时让 AI 帮忙。</div>
     <section class="card"><div class="cc-tools"><strong>${data.builtins.length} 项已有功能 · ${data.custom.length} 条自定义指令</strong><button class="btn primary" id="ccCreate">新建指令</button><button class="btn" data-cc-export="">导出全部</button><label class="chk"><input type="checkbox" id="ccExportGroups"> 导出时包含群号</label></div><p class="mut">默认导出不包含群号、凭据或聊天记忆。内置指令导出的是设置，不是功能源代码。</p></section>
-    <details class="card" open><summary><strong>已有功能</strong></summary><div class="cc-grid" style="margin-top:16px">${data.builtins.map(c=>card(c,true)).join('')}</div><p class="mut">其他机器人的 /今日猪猪 等指令仍由原机器人执行，已有定时调用在“群聊报告 / 定时指令”中管理。</p></details>
+    <details class="card"><summary><strong>已有功能</strong></summary><div class="flexbar" style="margin:12px 0"><input id="ccSearch" placeholder="搜索名称、触发词或说明" style="flex:1;min-width:200px"><select id="ccCat"><option value="all">全部</option><option value="media">媒体 / 发送</option><option value="manage">群管理</option><option value="ai">AI 互动</option><option value="rule">规则回复</option></select></div><div class="cc-grid" id="ccBuiltinGrid" style="margin-top:16px">${data.builtins.map(c=>card(c,true)).join('')}</div><p class="mut">其他机器人的 /今日猪猪 等指令仍由原机器人执行，已有定时调用在“群聊报告 / 定时指令”中管理。</p></details>
     <section class="card"><h2>拍一拍检测</h2><div id="ccPokeStatus">${diagnosticText(data.poke)}</div><button class="btn" id="ccPokeCheck">开始观察拍一拍</button><div class="mut">请在 QQ 拍机器人头像；这里只观察真实事件，不向群里发送测试消息。关闭回应后仍可检测事件。</div></section>
-    <section class="card"><h2>自定义指令</h2>${data.custom.length?`<div class="cc-grid">${data.custom.map(c=>card(c,false)).join('')}</div>`:'<p class="mut">还没有自定义规则。已有功能在上方，不需要重新添加。</p>'}</section>
+    <details class="card"><summary><b class="api-card-title">自定义指令</b> <span class="api-card-meta">${data.custom.length} 条</span></summary><div class="api-card-body">${data.custom.length?`<div class="cc-grid">${data.custom.map(c=>card(c,false)).join('')}</div>`:'<p class="mut">还没有自定义规则。已有功能在上方，不需要重新添加。</p>'}</div></details></section>
     <section class="card"><h2>用自然语言生成草稿</h2><p class="mut">这一步使用“模型与接口”中的对话模型调用一次 AI。选固定或随机回复，保存后运行不再调用 AI；复杂功能仍使用已有实现。</p><textarea id="ccGenerateDescription" rows="3" placeholder="例如：群友说早安时，从三句简短问候中随机回复一句，带上昵称。">${esc(description)}</textarea><div class="flexbar"><select id="ccGenerateMode">${options(modes,generationMode)}</select><button class="btn" id="ccGenerate">调用 AI 生成草稿</button><span id="ccGenerateStatus" class="mut"></span></div></section>
     ${form()}
     <section class="card"><h2>导入指令文件</h2><p class="mut">先预览，再确认导入。追加保存，不覆盖已有自定义指令；新导入规则、自然语言触发和定时推送默认关闭。</p><input type="file" id="ccImportFile" accept=".json,application/json"><div id="ccImportPreview">${preview?`<p>${preview.commands.length} 条自定义规则：${preview.commands.map(c=>esc(c.name)).join('、')||'无'}</p><p>${preview.builtins.length} 项内置功能设置：${preview.builtins.map(c=>esc(c.id)).join('、')||'无'}</p><label class="chk"><input type="checkbox" id="ccImportBuiltins"> 同时覆盖文件中的内置功能设置（导入后关闭，需手动检查启用）</label><div class="flexbar"><button class="btn primary" id="ccImportCommit">确认导入</button><button class="btn" id="ccImportCancel">取消</button></div>`:''}</div></section>`}
@@ -51,7 +55,14 @@ window.CommandCenterUI=(()=>{
     return {...draft,name:v('ccName'),trigger:v('ccTrigger'),aliases:v('ccAliases').split(/[,，\n]/),event:v('ccEvent')||draft.event||'message',match:v('ccMatch')||draft.match||'exact',scope:v('ccScope'),groups:[...new Set(groups)],adminOnly:on('ccAdmin'),enabled:on('ccEnabled'),responseMode:mode,naturalLanguage:on('ccNatural'),description:v('ccDescription')||draft.description||'',reply:mode==='ai'?draft.reply||'':v('ccBody'),aiPrompt:mode==='ai'?v('ccBody'):draft.aiPrompt||'',cooldownSec:Number(v('ccCooldown')),scheduleEnabled:on('ccSchedule'),scheduleTimes:v('ccTimes').split(','),scheduleGroups:v('ccScheduleGroups').split(/[\s,，]+/).filter(Boolean)}
   }
   function bind({api,toast,load,render:rerender,ask}){
-    const g=id=>document.getElementById(id),redraw=()=>{rerender();g('ccEditor')?.scrollIntoView({behavior:'smooth',block:'start'})}
+    const applyFilter=()=>{
+      const q=(document.getElementById('ccSearch')?.value||'').trim().toLowerCase()
+      const cat=document.getElementById('ccCat')?.value||'all'
+      document.querySelectorAll('#ccBuiltinGrid .cc-item').forEach(el=>{ el.hidden=!((!q||el.dataset.search.includes(q))&&(cat==='all'||el.dataset.cat===cat)) })
+    }
+    if(document.getElementById('ccSearch'))document.getElementById('ccSearch').oninput=applyFilter
+    if(document.getElementById('ccCat'))document.getElementById('ccCat').onchange=applyFilter
+    const g=id=>document.getElementById(id),redraw=()=>{rerender();const ed=g('ccEditor');if(ed)ed.open=true;ed?.scrollIntoView({behavior:'smooth',block:'start'})}
     const safely=fn=>async ev=>{const b=ev?.currentTarget;if(b)b.disabled=true;try{await fn(ev)}catch(e){toast(e.message,true)}finally{if(b)b.disabled=false}}
     const reset=()=>{draft={enabled:false};builtin=false;redraw()}
     if(g('ccCreate'))g('ccCreate').onclick=reset
@@ -64,7 +75,24 @@ window.CommandCenterUI=(()=>{
     if(g('ccMode'))g('ccMode').onchange=()=>{const next=g('ccMode').value,previous=draft.responseMode||'fixed';g('ccMode').value=previous;draft=collect();draft.responseMode=next;redraw()}
     if(g('ccEditor'))g('ccEditor').addEventListener('input',ev=>{if(ev.target.id!=='ccMode')try{draft=collect()}catch{}})
     if(g('ccSave'))g('ccSave').onclick=safely(async()=>{draft=collect();await api('/api/action/'+(builtin?'save-builtin-command':'save-custom-command'),draft);draft={enabled:false};builtin=false;await load();toast('已保存，立即生效')})
-    if(g('ccGenerate'))g('ccGenerate').onclick=safely(async()=>{description=g('ccGenerateDescription').value;generationMode=g('ccGenerateMode').value;g('ccGenerateStatus').textContent='正在生成，尚未保存…';const r=await api('/api/action/generate-command',{description,mode:generationMode});draft=r.draft;builtin=false;redraw();toast('草稿已填入下方表单，请检查后保存')})
+    if(g('ccGenerate'))g('ccGenerate').onclick=safely(async()=>{
+      const status=g('ccGenerateStatus')
+      description=g('ccGenerateDescription').value
+      generationMode=g('ccGenerateMode').value
+      if(!String(description||'').trim()){status.textContent='请先写一句需求';toast('请先写一句需求',true);return}
+      status.textContent='正在生成，尚未保存…'
+      let timer=null
+      try{
+        const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('生成超时（45 秒），请检查模型接口是否可用')),45000)})
+        const r=await Promise.race([api('/api/action/generate-command',{description,mode:generationMode}),timeout])
+        draft=r.draft;builtin=false
+        status.textContent='已生成草稿，请检查后保存'
+        redraw();toast('草稿已填入下方表单，请检查后保存')
+      }catch(e){
+        status.textContent='生成失败：'+(e.message||'未知错误')
+        toast('生成失败：'+(e.message||'未知错误'),true)
+      }finally{ if(timer)clearTimeout(timer) }
+    })
     if(g('ccPokeCheck'))g('ccPokeCheck').onclick=safely(async()=>{const r=await api('/api/action/check-poke',{});updateDiagnostics(r.diagnostics);toast(r.note)})
     document.querySelectorAll('[data-cc-export]').forEach(b=>b.onclick=safely(async()=>{const id=b.dataset.ccExport||null,pack=await api('/api/action/export-commands',{id,includeGroups:g('ccExportGroups')?.checked===true});const url=URL.createObjectURL(new Blob([JSON.stringify(pack,null,2)],{type:'application/json;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download='Koukou-指令'+(id?'-'+id:'')+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}))
     if(g('ccImportFile'))g('ccImportFile').onchange=safely(async ev=>{const f=ev.target.files[0];if(!f)return;if(!/\.json$/i.test(f.name)||f.size>262144)throw Error('请选择不超过256 KB的JSON文件');importContent=await f.text();preview=await api('/api/action/preview-commands',{content:importContent});rerender();g('ccImportPreview')?.scrollIntoView({behavior:'smooth'})})

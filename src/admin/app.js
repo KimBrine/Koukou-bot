@@ -8,6 +8,9 @@ const PAGES = [
   ['report','▤  群聊报告'],
   ['memory','▤  记忆浏览'],
   ['stickers','☺  表情包'],
+  ['metrics','▤  运行概览'],
+  ['selfcheck','✓  自检'],
+  ['errors','⚠  错误'],
   ['logs','≡  运行日志'],
 ]
 let page = location.hash.replace('#','') || 'overview'
@@ -60,7 +63,17 @@ let joinedGroups = []
 let friendList = []
 let memoryOverview = []
 let memoryDetail = null
-let memoryFold = { group: false, private: true }
+let memoryFold = { group: false, private: false }
+let stickerCardOpen = new Set()
+let apiCardsOpen = { model: false, vision: false, search: false }
+let backupInfo = { items: [], root: '' }
+let selfCheckInfo = null
+let errorInfo = []
+let pokeReplies = []
+let tasksInfo = null
+let metricsInfo = []
+let metricsRange = 7
+let stickerFold = { rules: false, learn: false, manual: false, blacklist: false, similar: false, library: true }
 let customCommands = []
 let commandBuiltins = []
 let pokeDiagnostics = {}
@@ -78,7 +91,9 @@ let stickerSettings = {}
 const $ = (h) => { const d = document.createElement('div'); d.innerHTML = h.trim(); return d.firstElementChild }
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
 const api = async (path, body) => {
-  const opt = body ? { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) } : {}
+  // 动作接口只接受 POST；没带 body 也自动按 POST + {} 发送，避免误发成 GET 变 404
+  const action = typeof path === 'string' && path.startsWith('/api/action/')
+  const opt = body !== undefined || action ? { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body ?? {}) } : {}
   const r = await fetch(path, opt)
   const j = await r.json().catch(() => ({}))
   if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status))
@@ -171,14 +186,34 @@ function paintUpdates(){
   const link=document.getElementById('versionLink');if(link){link.hidden=u?.status!=='available';if(u?.url)link.href=u.url}
 }
 async function refreshUpdates(force=false){
-  if(updateChecking)return;updateChecking=true;
-  const button=document.getElementById('checkUpdate');if(button)button.disabled=true;
-  try{updateInfo=await api(force?'/api/action/check-update':'/api/updates',force?{}:undefined)}catch(e){updateInfo={...updateInfo,status:'error',message:e.message}}
-  finally{updateChecking=false;paintUpdates();if(button)button.disabled=false}
+  if(updateChecking)return
+  updateChecking=true
+  const button=document.getElementById('checkUpdate')
+  const status=document.getElementById('versionStatus')
+  if(button){button.disabled=true;button.textContent='检查中…'}
+  if(force&&status)status.textContent='正在检查…'
+  if(force)toast('正在检查更新…')
+  try{
+    const timeout=new Promise(function(_,reject){setTimeout(function(){reject(new Error('检查超时（网络不通）'))},25000)})
+    updateInfo=await Promise.race([api(force?'/api/action/check-update':'/api/updates',force?{}:undefined),timeout])
+  }catch(e){updateInfo={...updateInfo,status:'error',message:e.message}}
+  finally{
+    updateChecking=false
+    if(button){button.disabled=false;button.textContent='检查更新'}
+    paintUpdates()
+    if(force)toast(updateStatusText())
+  }
 }
-function versionCard(){return '<section class="card"><h2>版本与更新</h2><p>当前版本：<strong id="currentVersion">v'+esc(updateInfo?.currentVersion||state?.version||'读取中')+'</strong></p><p id="versionStatus">'+esc(updateStatusText())+'</p><p id="versionChecked" class="mut">'+(updateInfo?.checkedAt?'上次检查：'+esc(new Date(updateInfo.checkedAt).toLocaleString()):'')+'</p><div class="flexbar"><button class="btn" id="checkUpdate">检查更新</button><a class="btn primary" id="versionLink" href="'+esc(updateInfo?.url||'https://github.com/KimBrine/Koukou-bot/tags')+'" target="_blank" rel="noopener noreferrer"'+(updateInfo?.status==='available'?'':' hidden')+'>查看新版</a></div><p class="mut">自动检查GitHub正式标签（最多100个），缓存6小时；手动检查间隔至少30秒。检查失败不代表已是最新。更新前请备份私有配置与数据；这里不会自动安装。</p></section>'}
+function versionCard(){
+  const ver = updateInfo?.currentVersion || state?.version || ''
+  const checked = updateInfo?.checkedAt ? ('上次检查 ' + new Date(updateInfo.checkedAt).toLocaleTimeString('zh-CN',{hour12:false})) : ''
+  return '<section class="card version-card"><div class="version-row">' +
+    '<div class="version-main"><span class="badge">当前版本</span> <strong id="currentVersion">v' + esc(ver || '读取中') + '</strong> <span id="versionStatus" class="version-status">' + esc(updateStatusText()) + '</span></div>' +
+    '<div class="version-actions"><button class="btn sm" id="checkUpdate">检查更新</button><a class="btn sm primary" id="versionLink" href="' + esc(updateInfo?.url || 'https://github.com/KimBrine/Koukou-bot/tags') + '" target="_blank" rel="noopener noreferrer"' + (updateInfo?.status === 'available' ? '' : ' hidden') + '>查看新版</a></div>' +
+    '</div><div class="version-foot"><span id="versionChecked" class="mut">' + esc(checked) + '</span><details class="version-help"><summary>更新说明</summary><p class="mut">自动检查 GitHub 正式标签（最多 100 个），缓存 6 小时；手动检查间隔至少 30 秒。检查失败不代表已是最新。更新前请备份私有配置与数据；这里不会自动安装。</p></details></div></section>'
+}
 
-function pageOverview(){
+function overviewCards(){
   const b = state?.bot ?? {}
   const c = state?.counters ?? {}
   const t = state?.today ?? {}
@@ -192,13 +227,21 @@ function pageOverview(){
     ['已运行', fmtUptime(state?.uptimeSec || 0), 'PID ' + (state?.pid ?? '—')],
     ['今日已记录消息', (t.total ?? 0) + ' 条', '自本次启动：收到 ' + (c.received||0) + ' / 回复 ' + (c.replied||0)],
   ]
-  const perGroup = (t.perGroup || []).map(g => {
+  return '<div class="grid g3" id="kpiGrid">' + cards.map(([k,v,s]) => '<div class="card"><h3>' + k + '</h3><div class="kpi">' + v + '</div><div class="note">' + (s || '') + '</div></div>').join('') + '</div>'
+}
+function overviewTodayRows(){
+  const t = state?.today ?? {}
+  return (t.perGroup || []).map(g => {
     const chat = chats.find(x => String(x.id) === String(g.groupId))
     return '<tr><td>' + esc(chat?.name || ('群 ' + g.groupId)) + '</td><td class="mut">' + g.groupId + '</td><td>' + g.count + '</td></tr>'
-  }).join('')
+  }).join('') || '<tr><td colspan="3" class="mut">今天还没有记录到消息</td></tr>'
+}
+function pageOverview(){
+  const b = state?.bot ?? {}
+  const dot = (ok) => '<span class="dot ' + (ok ? 'ok' : 'bad') + '"></span>'
   const quickCard = [
     '<section class="card" style="margin-bottom:18px"><h2>常用开关</h2>',
-    '<div class="note"><b>/Q 解题模式（单次启用）</b><br>私聊发送 /Q 问题，或在群里 @机器人并带 /Q。认真讲解过程，支持题目图片；下一条未带 /Q 的消息恢复普通聊天。</div>',
+    '<div class="note"><b>/Q 解题模式（单次启用）</b><br>私聊发送 /Q 问题，或在群里 @机器人 并带 /Q。认真讲解过程，支持题目图片；下一条未带 /Q 的消息恢复普通聊天。</div>',
     '<div style="display:flex;align-items:center;gap:12px;margin:10px 0">',
       '<label class="switch"><input type="checkbox" id="quickTiming"' + (configFlag('REPLY_TIMING_ENABLED') ? ' checked' : '') + '><i></i></label>',
       '<div><b>显示思考耗时</b><div class="mut" style="font-size:12px">仅 /Q 解题回复末尾附「（想了 X.X 秒）」；普通聊天不显示</div></div>',
@@ -223,26 +266,21 @@ function pageOverview(){
     '<div class="mut" style="margin-top:8px">当前管理员：' + (admins.length ? admins.map(esc).join('、') : '未配置（群总结等沿用公开范围；清除记忆须显式配置管理员）') + '</div>',
     '</section>'
   ].join('')
-    return quickCard + adminCard + versionCard() + `
-  <div class="hero"><span class="hero-status">${dot(b.online === true)} ${accountStatusText(b)}</span>
-    <h1>机器人工作台</h1><div class="sub"><span id="updatedAt">${new Date().toLocaleTimeString('zh-CN',{hour12:false})}</span> 更新 · 集中管理运行状态与操作</div></div>
-  <div class="grid g3">${cards.map(([k,v,s]) => `<div class="card"><h3>${k}</h3><div class="kpi">${v}</div><div class="note">${s||''}</div></div>`).join('')}</div>
-  <div class="section-head"><h2>常用操作</h2><span class="note">操作作用于当前机器人</span></div>
-  <div class="card">
-    <div class="toolgroup"><button class="btn primary" data-act="poke-target">检查盯人目标</button>
-      <button class="btn" data-act="summary">生成群聊报告</button>
-      <button class="btn" data-act="clear-alert">清除掉线提醒</button></div>
-    <details class="advanced-box"><summary>维护与定时指令</summary>
-      <div class="toolgroup advanced"><button class="btn" data-act="restart-bot">重启机器人</button>
-        <button class="btn" data-act="restart-napcat">重启 NapCat</button>
-        <button class="btn" data-act="daily-ping">立即发定时指令 (@示例机器人)</button></div>
-    </details>
-  </div>
-  <div class="section-head"><h2>今日各群已记录消息</h2><span class="note">本地记录，供运行监测</span></div>
-  <div class="card">${perGroup ? `<table><tr><th>群聊</th><th>群号</th><th>已记录</th></tr>${perGroup}</table>` : '<div class="empty">今天还没有捕获到群消息</div>'}</div>`
+  return '<div class="hero"><span class="hero-status" id="heroStatus">' + dot(b.online === true) + ' ' + accountStatusText(b) + '</span>' +
+    '<h1>机器人工作台</h1><div class="sub"><span id="updatedAt">' + new Date().toLocaleTimeString('zh-CN',{hour12:false}) + '</span> 更新 · 集中管理运行状态与操作</div></div>' +
+    overviewCards() +
+    '<div class="section-head"><h2>常用操作</h2><span class="note">操作作用于当前机器人</span></div>' +
+    '<div class="card"><div class="toolgroup"><button class="btn primary" data-act="poke-target">检查盯人目标</button>' +
+      '<button class="btn" data-act="summary">生成群聊报告</button>' +
+      '<button class="btn" data-act="clear-alert">清除掉线提醒</button></div>' +
+    '<details class="advanced-box"><summary>维护与定时指令</summary><div class="toolgroup advanced"><button class="btn" data-act="restart-bot">重启机器人</button>' +
+      '<button class="btn" data-act="restart-napcat">重启 NapCat</button>' +
+      '<button class="btn" data-act="daily-ping">立即发定时指令 (@示例机器人)</button></div></details></div>' +
+    quickCard +
+    adminCard +
+    '<details class="card"><summary><b class="api-card-title">今日各群已记录消息</b> <span class="api-card-meta">本地记录</span></summary><div class="api-card-body"><table class="tbl"><thead><tr><th>群</th><th>群号</th><th>条数</th></tr></thead><tbody id="todayGroups">' + overviewTodayRows() + '</tbody></table></div></details>' +
+    versionCard()
 }
-
-// ── 页面：会话 ──────────────────────────────────────────
 function proactiveSettingsPatch(box){
   const enabled=box.querySelector('[data-f="proactiveEnabled"]')
   if(!enabled)return {}
@@ -437,6 +475,7 @@ function pagePersona(){
     <button class="btn" id="createPersona">新建</button>
     <button class="btn danger" id="delPersona">删除当前选中</button>
   </div>
+  <div class="flexbar"><button class="btn" id="personaCheck">一致性检查</button><span id="personaCheckResult" class="mut"></span></div>
   <div class="card">
     <h3>人格 prompt（保存到人格库，点击“切换使用”后生效）</h3>
     <textarea id="personaText" style="min-height:340px;font-size:13.5px">${esc(cur ? (personaCache[cur.name] ?? '') : '')}</textarea>
@@ -544,18 +583,18 @@ function webSearchCard(){
   if (presets.indexOf(cur) < 0) presets.unshift(cur)
   const label = { deepseek: 'DeepSeek 搜索（自带引擎）', bing: '必应网页（免密钥兜底）' }
   const opts = presets.map(function(m){ return '<option value="' + esc(m) + '"' + (m === cur ? ' selected' : '') + '>' + esc(label[m] || m) + '</option>' }).join('')
-  return '<section class="card"><h2>联网搜索</h2>'
-    + '<div class="note">在允许工具调用的问答中由模型判断是否搜索。自动模式按已配置 Key 选择：千帆 → DeepSeek → 通义 → 必应；明确指定渠道时缺少 Key 会报错。</div>'
-    + '<label>搜索渠道<select id="wsProvider">'+[['auto','自动'],['deepseek','DeepSeek'],['dashscope','通义千问'],['baidu','百度千帆'],['bing','必应网页'],['off','关闭']].map(x=>'<option value="'+x[0]+'"'+((info.configuredProvider||'auto')===x[0]?' selected':'')+'>'+x[1]+'</option>').join('')+'</select></label>'
+  return '<details class="card" data-apicard="search"' + (apiCardsOpen.search ? ' open' : '') + '><summary><b class="api-card-title">联网搜索</b> <span class="api-card-meta">'
+    + (info.enabled ? '已开启' : '已关闭') + ' · ' + esc(providerName[info.provider] || '—') + '</span></summary>'
+    + '<div class="note" style="margin-top:8px">由模型判断要不要搜。模型下拉里选 DeepSeek / 通义模型 / 必应，保存即时生效。</div>'
     + '<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:10px 0"><input type="checkbox" id="wsEnabled"' + (info.enabled ? ' checked' : '') + '> 允许联网搜索</label>'
     + '<div class="frow"><label>搜索模型</label><div><select id="wsModel">' + opts + '</select>'
-    + '<div class="mut" style="font-size:12px;margin-top:3px">当前实际：' + esc(providerName[info.provider] || info.provider || '—') + ' · ' + esc(cur) + '</div></div></div>'
-    + '<div class="flexbar"><button class="btn primary" id="wsSave">保存（即时生效）</button><span class="mut" id="wsHint"></span></div></section>'
+    + '<div class="mut" style="font-size:12px;margin-top:3px">当前实际：' + esc(providerName[info.provider] || info.provider || '—') + '</div></div></div>'
+    + '<div class="flexbar"><button class="btn primary" id="wsSave">保存（即时生效）</button><span class="mut" id="wsHint"></span></div></details>'
 }
 function pageApi(){
   return modelPickerCard() + visionCard() + webSearchCard() + `<h1>模型与接口</h1><div class="sub">对话模型、思考强度改完立刻生效；下方视觉模型与其它项按标注生效。</div>
   <div class="card"><strong>当前生效的识图模型：</strong>${esc(state?.bot?.visionModel || '未启用')}<div class="mut" style="margin-top:5px">图片识别与群聊报告分别配置；下方的 DashScope 模型只有切换识图服务商后才会用于读图。</div></div>
-  <div class="card">${configForm(['TEMPERATURE','MAX_TOKENS','DASHSCOPE_API_KEY','BAIDU_QIANFAN_API_KEY','WEB_SEARCH_PROVIDER','WEB_SEARCH_MODEL','LOG_LEVEL'],'已设置的密钥不会显示；留空保持原值。')}</div>`
+  <div class="card">${configForm(['TEMPERATURE','MAX_TOKENS','DASHSCOPE_API_KEY','BAIDU_QIANFAN_API_KEY','LOG_LEVEL'],'已设置的密钥不会显示；留空保持原值。')}</div>`
 }
 function pageReport(){
   return `<h1>群聊报告</h1><div class="sub">每日自动生成「群聊日常分析报告」，也可以在这里随时手动生成</div>
@@ -580,7 +619,13 @@ function pageLogs(){
   </div>
   <div class="logbox mono" id="logBot" style="max-height:420px"></div>`
 }
-function pageCommands(){ return CommandCenterUI.render({custom:customCommands,builtins:commandBuiltins,poke:pokeDiagnostics,groups:joinedGroups}) }
+function pokeCorpusCard(){
+  return '<section class="card"><h2>拍一拍语库 <span class="pill">' + pokeReplies.length + ' 条</span></h2>' +
+    '<div class="note">一行一条；<code>#</code> 开头的行不生效；<code>{name}</code> 会替换成拍你的人。保存后立即生效，随机抽取且不会连续重复。</div>' +
+    '<textarea id="pokeText" rows="10" style="width:100%;margin-top:8px">' + esc(pokeReplies.join('\n')) + '</textarea>' +
+    '<div class="flexbar"><button class="btn primary" id="pokeSave">保存语库</button><span class="mut" id="pokeHint"></span></div></section>'
+}
+function pageCommands(){ return CommandCenterUI.render({custom:customCommands,builtins:commandBuiltins,poke:pokeDiagnostics,groups:joinedGroups}) + commandTestCard() + pokeCorpusCard() }
 // ── 渲染 ───────────────────────────────────────────────
 function pageMemory(){
   const nameOf = function(key){
@@ -608,30 +653,52 @@ function pageMemory(){
   const d = memoryDetail
   const fmtTime = function(ts){ if(!ts) return ''; try { return new Date(ts).toLocaleString('zh-CN',{hour12:false}) } catch(e){ return '' } }
   const key = d ? d.key : ''
-  const recentRows = d ? (d.recent||[]).map(function(m, idx){
-    return '<div style="margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--line,#eee)">' +
+  const dayKeyOf = function(m){ return m.time ? new Date(m.time).toLocaleDateString('zh-CN') : '时间未知' }
+  const memRow = function(m, idx){
+    return '<div data-mem-row style="margin-bottom:10px;padding:8px 0 8px 12px;border-left:2px solid rgba(148,163,184,.25)">' +
       '<div style="display:flex;gap:8px;align-items:center;margin-bottom:4px">' +
       '<span class="badge">' + (m.role === 'assistant' ? '机器人' : '对方') + '</span>' +
       '<span class="mut" style="font-size:12px">' + esc(fmtTime(m.time)) + '</span>' +
       '<button class="btn sm" data-mem-edit="' + idx + '">改</button>' +
       '<button class="btn sm" data-mem-del="' + idx + '">删</button>' +
       '</div><div>' + esc(m.content) + '</div></div>'
-  }).join('') : ''
-  const pendingRows = d ? (d.pending||[]).map(function(p, idx){
-    return '<div style="margin-bottom:10px;padding-bottom:8px;border-bottom:1px solid var(--line,#eee)">' +
-      '<div style="display:flex;gap:8px;align-items:center;margin-bottom:4px">' +
-      '<span class="badge">' + esc(p.name || p.userId || '群友') + '</span>' +
-      '<span class="mut" style="font-size:12px">' + esc(fmtTime(p.time)) + '</span>' +
-      '<button class="btn sm" data-pending-del="' + idx + '">删</button>' +
-      '</div><div>' + esc(p.text) + '</div></div>'
-  }).join('') : ''
+  }
+  const groupByDay = function(list){
+    const out = []
+    for (let i = 0; i < list.length; i += 1) {
+      const day = dayKeyOf(list[i])
+      const last = out[out.length - 1]
+      if (last && last.day === day) last.items.push({ item: list[i], idx: i })
+      else out.push({ day, items: [{ item: list[i], idx: i }] })
+    }
+    return out
+  }
+  const todayKey = new Date().toLocaleDateString('zh-CN')
+  const recentGroups = d ? groupByDay(d.recent || []) : []
+  const recentRows = recentGroups.map(function(g){
+    return '<details class="mem-day"' + (g.day === todayKey ? ' open' : '') + '><summary><b>' + esc(g.day) + '</b> <span class="pill">' + g.items.length + ' 条</span></summary>' +
+      '<div class="mem-day-body">' + g.items.map(function(x){ return memRow(x.item, x.idx) }).join('') + '</div></details>'
+  }).join('')
+  const pendingGroups = d ? groupByDay(d.pending || []) : []
+  const pendingRows = pendingGroups.map(function(g){
+    return '<details class="mem-day"' + (g.day === todayKey ? ' open' : '') + '><summary><b>' + esc(g.day) + '</b> <span class="pill">' + g.items.length + ' 条</span></summary>' +
+      '<div class="mem-day-body">' + g.items.map(function(x){
+        const p = x.item
+        return '<div data-mem-row style="margin-bottom:10px;padding:8px 0 8px 12px;border-left:2px solid rgba(148,163,184,.25)"><div style="display:flex;gap:8px;align-items:center;margin-bottom:4px">' +
+          '<span class="badge">' + esc(p.name || p.userId || '群友') + '</span>' +
+          '<span class="mut" style="font-size:12px">' + esc(fmtTime(p.time)) + '</span>' +
+          '<button class="btn sm" data-pending-del="' + x.idx + '">删</button></div><div>' + esc(p.text) + '</div></div>'
+      }).join('') + '</div></details>'
+  }).join('')
   const extraCards = [
     '<section class="card"><h2>长期记忆检索</h2><div class="note">按话题找回旧原话；也可以直接看某个会话的长期摘要。</div>' +
       '<div class="row"><select id="lmKey">' + chats.map(function(c){ return '<option value="' + esc(c.key) + '">' + esc(c.name) + '（' + esc(c.key) + '）</option>' }).join('') + '</select>' +
       '<input id="lmQuery" placeholder="可选：输入话题，找回相关旧原话" aria-label="长期记忆检索话题">' +
       '<button class="btn" id="loadLm">查看 / 检索</button></div>' +
       '<div class="mono" id="lmBox" style="max-height:240px;overflow:auto;margin-top:10px">—</div></section>',
-    '<section class="card"><h2>日报原始文件</h2><div class="note">每天按群保存的原始消息，用于追溯。</div><div id="dailyFiles"></div></section>'
+    '<section class="card"><h2>日报原始文件</h2><div class="note">每天按群保存的原始消息，用于追溯。</div><div id="dailyFiles"></div></section>',
+    backupCard(),
+    '<section class="card"><h2>导出 / 导入</h2><div class="note">导出会下载一个 JSON 文件（保存位置由浏览器弹窗选择）；导入前会自动备份当前记忆。</div><div class="flexbar"><button class="btn" id="exportMemory">导出 JSON</button><button class="btn" id="exportMemoryMd">导出 Markdown</button><label class="btn" style="cursor:pointer">导入记忆<input type="file" id="memoryImport" accept="application/json,.json" style="display:none"></label></div></section>'
   ].join('')
   return [
     '<h1>记忆浏览</h1><div class="sub">当前人格 <b>' + esc(state?.config?.activePersona || '默认') + '</b>。近期、长期、待整理分开显示，都可以单条修改或删除。</div>',
@@ -641,7 +708,8 @@ function pageMemory(){
     d ? [
       '<section class="card"><h2>近期记忆 <span class="pill">' + (d.recent||[]).length + ' 条</span> <span class="mut" style="font-size:12px">' + esc(nameOf(key)) + '（' + esc(key) + '）</span></h2>',
       '<div class="note">每条都能改正文或单条删除；删除只影响这一条。</div>',
-      '<div style="max-height:360px;overflow:auto;margin-top:8px">' + (recentRows || '<div class="mut">这个会话没有近期记忆。</div>') + '</div>',
+      '<input id="memSearch" placeholder="搜索这段记忆的内容" style="width:100%;margin-top:8px">' +
+      '<div id="memList" style="margin-top:8px">' + (recentRows || '<div class="mut">这个会话没有近期记忆。</div>') + '</div>',
       '</section>',
       '<section class="card"><h2>长期记忆 <span class="pill">' + (d.longTerm||'').length + ' 字</span>' + (d.updatedAt ? ' <span class="mut" style="font-size:12px">更新于 ' + esc(fmtTime(d.updatedAt)) + '</span>' : '') + '</h2>',
       '<div class="note">' + (d.paused ? '自动整理已暂停，可编辑。保存后保持暂停，新原文继续存档；恢复后才基于新摘要整理。' : (d.running ? '后台正在整理。请先暂停再编辑，旧任务会取消，迟到结果不会回写。' : '请先暂停自动整理再编辑。')) + '</div>',
@@ -651,7 +719,7 @@ function pageMemory(){
       '</section>',
       '<section class="card"><h2>待整理 <span class="pill">' + (d.pending||[]).length + ' 条</span></h2>',
       '<div class="note">从近期窗口挤出来的原文，攒够会自动压缩进长期记忆；不想留的可以单条删掉。</div>',
-      '<div style="max-height:360px;overflow:auto;margin-top:8px">' + (pendingRows || '<div class="mut">没有待整理的原文。</div>') + '</div>',
+      '<div style="margin-top:8px">' + (pendingRows || '<div class="mut">没有待整理的原文。</div>') + '</div>',
       '</section>'
     ].join('') : '<section class="card"><div class="mut">点上面「查看」，会同时显示近期、长期和待整理三块内容。</div></section>'
   ].join('') + extraCards
@@ -682,7 +750,7 @@ function modelPickerCard(){
     ? known.map(function(id){ return '<option value="' + esc(id) + '"' + (id === cur.model ? ' selected' : '') + '>' + esc(id) + '</option>' }).join('')
     : '<option value="' + esc(cur.model || '') + '">' + esc(cur.model || '（先点自动检测）') + '</option>'
   return [
-    '<section class="card"><h2>对话模型</h2>',
+    '<details class="card" data-apicard="model"' + (apiCardsOpen.model ? ' open' : '') + '><summary><b class="api-card-title">对话模型</b> <span class="api-card-meta">' + esc(cur.provider || '') + ' · ' + esc(cur.model || '') + '</span></summary><div class="api-card-body">',
     '<div class="note">选供应商 → 点「自动检测模型」→ 从下拉里选型号。选完立刻生效，不用再点保存。</div>',
     '<div class="frow"><label>供应商</label><div><select id="mpProvider">' + opts + '</select></div></div>',
     '<div class="frow"><label>接口地址</label><div><input id="mpBaseUrl" value="' + esc(cur.baseUrl || '') + '" placeholder="https://api.deepseek.com"><div class="mut" style="font-size:12px;margin-top:4px">需要兼容 OpenAI 的 /chat/completions 与 /models</div></div></div>',
@@ -691,7 +759,7 @@ function modelPickerCard(){
     '<div class="frow"><label>思考强度</label><div><select id="mpReason">' + lvls + '</select><div class="mut" style="font-size:12px;margin-top:4px">不是所有服务商都支持；报错就改回「关闭」</div></div></div>',
     '<div class="flexbar"><button class="btn" id="mpDetect">自动检测模型</button><button class="btn" id="mpSaveBase">保存地址/密钥</button></div>',
     '<div class="mut" id="mpStatus" style="margin-top:8px">当前：' + esc(cur.provider || '-') + ' · ' + esc(cur.model || '-') + ' · 思考 ' + esc(cur.reasoning || '关闭') + '</div>',
-    '</section>'
+    '</div></details>'
   ].join('')
 }
 function visionCard(){
@@ -715,7 +783,7 @@ function visionCard(){
     return '<div style="display:flex;align-items:center;gap:8px;margin:4px 0"><span class="pill">' + esc(x.name) + '</span><span class="mut" style="font-size:12px">' + esc(x.baseUrl) + '</span><span class="mut" style="font-size:12px">' + esc(x.model || '未选模型') + '</span><button class="btn sm" data-vp-del="' + esc(x.id) + '">删除</button></div>'
   }).join('') : '<div class="mut">还没有自定义接口</div>'
   return [
-    '<section class="card"><h2>识图设置</h2>',
+    '<details class="card" data-apicard="vision"' + (apiCardsOpen.vision ? ' open' : '') + '><summary><b class="api-card-title">识图设置</b> <span class="api-card-meta">' + esc(provider) + ' · ' + esc(currentModel || '未选模型') + '</span></summary><div class="api-card-body">',
     '<div class="note">聊天读图与表情包打标都用这里的模型。可以添加多个自定义接口（OpenAI 兼容），在服务商里直接切换。</div>',
     row('服务商', '<select id="vcProvider">' + providerOptions + '</select>'),
     row('识图模型', '<div class="row" style="display:flex;gap:8px"><select id="vcModel" style="flex:1">' +
@@ -739,8 +807,177 @@ function visionCard(){
     row('模型名', '<input id="vpModel" placeholder="例如 gpt-4o-mini（可稍后检测再选）">'),
     '<div class="flexbar"><button class="btn" id="vpAdd">添加自定义接口</button><span class="mut" id="vpHint" style="font-size:12px"></span></div>',
     '</details>',
-    '</section>'
+    '</div></details>'
   ].join('')
+}
+function selfCheckCard(){
+  const info = selfCheckInfo
+  const rows = (info && info.items ? info.items : []).map(function(x){
+    return '<div class="frow"><label>' + esc(x.label) + '</label><div>' + (x.ok ? '✅' : '❌') + ' <span class="mut">' + esc(x.detail || '') + '</span></div></div>'
+  }).join('')
+  return '<section class="card"><h2>自检 ' + (info ? (info.failed ? '<span class="pill" style="background:#a33;color:#fff">' + info.failed + ' 项异常</span>' : '<span class="pill">全部正常</span>') : '') + '</h2>' +
+    (rows || '<div class="mut">点下面按钮运行一次自检</div>') +
+    '<div class="flexbar"><button class="btn" id="runSelfcheck">重新检查</button></div></section>'
+}
+function backupCard(){
+  const items = (backupInfo.items || []).slice(0, 7)
+  const rows = items.map(function(x){ return '<tr><td class="mono">' + esc(x.name) + '</td><td>' + (x.size / 1024 / 1024).toFixed(1) + ' MB</td><td style="text-align:right"><button class="btn sm" data-restore="' + esc(x.name) + '">还原</button> <button class="btn sm" data-delbackup="' + esc(x.name) + '">删除</button></td></tr>' }).join('')
+  return '<section class="card"><h2>备份</h2><div class="note">每天自动备份一次，保留最近 7 份。位置：' + esc(backupInfo.root || 'data/backups') + '</div>' +
+    (rows ? '<table class="tbl"><thead><tr><th>备份</th><th>大小</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' : '<div class="mut">还没有备份</div>') +
+    '<div class="flexbar"><button class="btn primary" id="doBackup">立即备份</button></div></section>'
+}
+function svgChart(list, series, { mode = 'line', height = 160, percent = false } = {}){
+  const w = 580, padL = 34, padR = 10, padT = 12, padB = 24
+  const innerW = w - padL - padR, innerH = height - padT - padB
+  const maxRaw = Math.max(0, ...list.flatMap(function(d){ return series.map(function(s){ return s.get(d) || 0 }) }))
+  // 取“好看”的整数上限：1/2/5 × 10^n；百分比至少留到 100，超过 100 时跟着放大
+  const niceMax = function(v){
+    if (!(v > 0)) return 1
+    const exp = Math.pow(10, Math.floor(Math.log10(v)))
+    const n = v / exp
+    return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * exp
+  }
+  const max = percent ? niceMax(Math.max(100, maxRaw)) : niceMax(maxRaw * 1.05)
+  const step = list.length > 1 ? innerW / (list.length - 1) : innerW
+  const x = function(i){ return padL + (list.length > 1 ? i * step : innerW / 2) }
+  const y = function(v){ return Math.max(padT, Math.min(padT + innerH, padT + innerH - ((Number(v) || 0) / max) * innerH)) }
+  const grid = [0, 0.25, 0.5, 0.75, 1].map(function(r){
+    const yy = padT + innerH * (1 - r)
+    return '<line x1="' + padL + '" y1="' + yy + '" x2="' + (w - padR) + '" y2="' + yy + '" stroke="rgba(148,163,184,.18)" stroke-width="1"></line>' +
+      '<text x="' + (padL - 6) + '" y="' + (yy + 3) + '" font-size="10" text-anchor="end" fill="#9aabc0">' + Math.round(max * r) + (percent ? '%' : '') + '</text>'
+  }).join('')
+  const labelEvery = Math.max(1, Math.ceil(list.length / 7))
+  const labels = list.map(function(d, i){
+    if (i % labelEvery !== 0 && i !== list.length - 1) return ''
+    return '<text x="' + x(i) + '" y="' + (height - 6) + '" font-size="10" text-anchor="middle" fill="#9aabc0">' + esc(d.date.slice(5)) + '</text>'
+  }).join('')
+  const paths = series.map(function(s){
+    if (mode === 'bar') {
+      const bw = Math.max(4, Math.min(18, innerW / Math.max(1, list.length) / (series.length + 1)))
+      const idx = series.indexOf(s)
+      return list.map(function(d, i){
+        const v = s.get(d) || 0
+        const bx = x(i) - (series.length * bw) / 2 + idx * bw
+        return '<rect x="' + bx + '" y="' + y(v) + '" width="' + bw + '" height="' + Math.max(0, padT + innerH - y(v)) + '" fill="' + s.color + '" rx="2"><title>' + esc(d.date + ' ' + s.name + '：' + v) + '</title></rect>'
+      }).join('')
+    }
+    const points = list.map(function(d, i){ return x(i) + ',' + y(s.get(d) || 0) }).join(' ')
+    const area = list.length > 1 ? 'M' + x(0) + ',' + (padT + innerH) + ' L' + list.map(function(d, i){ return x(i) + ',' + y(s.get(d) || 0) }).join(' L') + ' L' + x(list.length - 1) + ',' + (padT + innerH) + ' Z' : ''
+    return (s.fill ? '<path d="' + area + '" fill="' + s.color + '" opacity="0.10"></path>' : '') +
+      '<polyline points="' + points + '" fill="none" stroke="' + s.color + '" stroke-width="2" stroke-linejoin="round"></polyline>'
+  }).join('')
+  const legend = series.map(function(s){ return '<span style="margin-right:14px"><i style="display:inline-block;width:10px;height:10px;border-radius:2px;background:' + s.color + ';margin-right:5px"></i>' + esc(s.name) + '</span>' }).join('')
+  return '<div class="mut" style="font-size:12px;margin-bottom:4px">' + legend + '</div><svg viewBox="0 0 ' + w + ' ' + height + '" style="width:100%;height:auto">' + grid + paths + labels + '</svg>'
+}
+function downloadText(filename, text, type){
+  const blob = new Blob([text], { type: type || 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = filename
+  document.body.appendChild(a); a.click(); a.remove()
+  setTimeout(function(){ URL.revokeObjectURL(url) }, 1000)
+}
+function memoryMarkdown(data){
+  const lines = ['# 记忆导出', '', '导出时间：' + new Date(data.exportedAt || Date.now()).toLocaleString(), '']
+  const mem = data.memory || {}, long = data.longMemory || {}
+  const keys = Array.from(new Set(Object.keys(mem).concat(Object.keys(long))))
+  for (const k of keys) {
+    lines.push('## ' + k, '')
+    const l = long[k]
+    if (l && l.summary) lines.push('### 长期记忆', '', l.summary, '')
+    const rows = mem[k] || []
+    if (rows.length) {
+      lines.push('### 近期消息（' + rows.length + ' 条）', '')
+      for (const m of rows) lines.push('- [' + (m.time ? new Date(m.time).toLocaleString() : '') + '] ' + m.role + '：' + String(m.content || '').replace(/\n/g, ' '))
+      lines.push('')
+    }
+  }
+  return lines.join('\n')
+}
+function metricsCsv(list){
+  const head = ['date', 'received', 'replied', 'skipped', 'errors', 'stickers', 'searches', 'llmCount', 'llmMs', 'groups']
+  const rows = (list || []).map(function(d){ return head.map(function(k){ return d[k] == null ? 0 : d[k] }).join(',') })
+  return head.join(',') + '\n' + rows.join('\n')
+}
+function pageMetrics(){
+  const list = metricsInfo || []
+  const sum = function(k){ return list.reduce(function(n, d){ return n + (Number(d[k]) || 0) }, 0) }
+  const received = sum('received'), replied = sum('replied'), errors = sum('errors')
+  const rate = received ? Math.round(replied / received * 100) : 0
+  const fail = received ? Math.round(errors / received * 100) : 0
+  const avg = sum('llmCount') ? (sum('llmMs') / sum('llmCount') / 1000).toFixed(1) : '—'
+  const rangeBtns = [[7, '7 天'], [14, '14 天'], [30, '30 天']].map(function(x){
+    return '<button class="btn sm' + (metricsRange === x[0] ? ' primary' : '') + '" data-mrange="' + x[0] + '">' + x[1] + '</button>'
+  }).join(' ')
+  const chartCard = function(title, inner){ return '<details class="card"><summary><b class="api-card-title">' + title + '</b> <span class="api-card-meta">点开查看</span></summary><div class="api-card-body">' + inner + '</div></details>' }
+  return '<h1>运行概览</h1><div class="sub">按天统计，用来判断机器人是"在正常工作"还是"在空转"；数据每 30 秒落盘。</div>' +
+    '<div class="flexbar">' + rangeBtns + '<button class="btn" id="metricsCsv" style="margin-left:auto">导出 CSV</button></div>' +
+    '<div class="grid g3">' +
+      '<div class="card"><h3>收到消息</h3><div class="kpi">' + received + '</div><div class="note">' + list.length + ' 天合计</div></div>' +
+      '<div class="card"><h3>已回复</h3><div class="kpi">' + replied + '</div><div class="note">回复率 ' + rate + '%</div></div>' +
+      '<div class="card"><h3>错误</h3><div class="kpi">' + errors + '</div><div class="note">占收到的 ' + fail + '%</div></div>' +
+      '<div class="card"><h3>表情包</h3><div class="kpi">' + sum('stickers') + '</div><div class="note">发送次数</div></div>' +
+      '<div class="card"><h3>联网搜索</h3><div class="kpi">' + sum('searches') + '</div><div class="note">调用次数</div></div>' +
+      '<div class="card"><h3>跳过未回复</h3><div class="kpi">' + sum('skipped') + '</div><div class="note">跳过率 ' + (received ? Math.round(sum('skipped') / received * 100) : 0) + '%</div></div>' +
+      '<div class="card"><h3>模型调用</h3><div class="kpi">' + sum('llmCount') + '</div><div class="note">生成次数</div></div>' +
+      '<div class="card"><h3>平均生成耗时</h3><div class="kpi">' + avg + 's</div><div class="note">模型端到端</div></div>' +
+    '</div>' +
+    chartCard('消息与回复', svgChart(list, [
+      { name: '收到', color: '#3b6ea5', get: function(d){ return d.received } },
+      { name: '已回复', color: '#4aa3a3', get: function(d){ return d.replied } }
+    ], { mode: 'bar' })) +
+    chartCard('回复率 / 跳过率 / 错误率', svgChart(list, [
+      { name: '回复率', color: '#4aa3a3', get: function(d){ return d.received ? d.replied / d.received * 100 : 0 }, fill: true },
+      { name: '跳过率', color: '#b8860b', get: function(d){ return d.received ? d.skipped / d.received * 100 : 0 } },
+      { name: '错误率', color: '#d9534f', get: function(d){ return d.received ? d.errors / d.received * 100 : 0 } }
+    ], { mode: 'line', percent: true })) +
+    chartCard('表情包与搜索', svgChart(list, [
+      { name: '表情包发送', color: '#b8860b', get: function(d){ return d.stickers } },
+      { name: '联网搜索', color: '#7a5cd6', get: function(d){ return d.searches } }
+    ], { mode: 'bar' })) +
+    chartCard('活跃群数', svgChart(list, [
+      { name: '有消息的群', color: '#7a5cd6', get: function(d){ return d.groups || 0 }, fill: true }
+    ], { mode: 'line' })) +
+    chartCard('模型调用次数', svgChart(list, [
+      { name: '生成次数', color: '#3b6ea5', get: function(d){ return d.llmCount || 0 } }
+    ], { mode: 'bar' })) +
+    chartCard('平均生成耗时（秒）', svgChart(list, [
+      { name: '平均耗时', color: '#4aa3a3', get: function(d){ return d.llmCount ? d.llmMs / d.llmCount / 1000 : 0 }, fill: true }
+    ], { mode: 'line' }))
+}
+function pageErrors(){
+  const items = errorInfo || []
+  const rows = items.map(function(e){
+    const warn = e.level === 'warn'
+    const color = warn ? '#c9973b' : '#e05555'
+    return '<div style="padding:10px 0 10px 10px;border-bottom:1px dashed rgba(148,163,184,.2);border-left:3px solid ' + color + '">' +
+      '<div class="mut" style="font-size:12px;display:flex;gap:8px;align-items:center">' +
+      '<span style="display:inline-block;padding:1px 8px;border-radius:999px;background:' + color + ';color:#fff;font-size:11px">' + (warn ? '警告' : '错误') + '</span>' +
+      esc(new Date(e.time).toLocaleString()) + ' · ' + esc(e.scope || 'bot') + '</div>' +
+      '<pre class="mono" style="white-space:pre-wrap;word-break:break-all;margin:6px 0;font-size:12px;color:' + (warn ? 'var(--text)' : color) + '">' + esc(e.message || '') + '</pre></div>'
+  }).join('')
+  return '<h1>错误中心</h1><div class="sub">最近 ' + items.length + ' 条错误；只记录，不影响运行。</div>' +
+    '<div class="flexbar"><button class="btn" id="errorsRefresh">刷新</button><button class="btn" id="errorsClear">清空</button></div>' +
+    (rows || '<div class="card mut">还没有错误记录</div>')
+}
+function tasksCard(){
+  const t = tasksInfo
+  if (!t) return ''
+  const fmt = function(ts){ return ts ? new Date(ts).toLocaleString() : '还没有' }
+  return '<details class="card"><summary><b class="api-card-title">定时任务</b> <span class="api-card-meta">不占地方</span></summary><div class="api-card-body">' +
+    '<div class="frow"><label>自动备份</label><div class="mut">每 6 小时检查，最近：' + esc(fmt(t.backup && t.backup.last)) + '</div></div>' +
+    '<div class="frow"><label>群总结</label><div class="mut">' + (t.summary && t.summary.enabled ? '已启用 · 每天 ' + esc(t.summary.times) : '未启用') + '</div></div>' +
+    '<div class="frow"><label>长期记忆整理</label><div class="mut">' + (t.longMemory && t.longMemory.enabled ? '每 ' + t.longMemory.everyMinutes + ' 分钟' : '未启用') + '</div></div>' +
+    '<div class="frow"><label>表情包学习</label><div class="mut">' + (t.stickersLearn && t.stickersLearn.enabled ? '每小时最多 ' + t.stickersLearn.perHour + ' 张' : '未启用') + '</div></div>' +
+    '</div></details>'
+}
+function commandTestCard(){
+  return '<section class="card"><h2>指令测试台</h2><div class="note">输入一句话，看会命中哪条指令、会回什么；<b>不会真的发送</b>，也不调用 AI。</div>' +
+    '<div class="flexbar"><input id="ctText" placeholder="例如：/help 或 早安" style="flex:1;min-width:200px"><select id="ctWhere"><option value="group">群里</option><option value="private">私聊</option></select><button class="btn" id="ctRun">测试</button></div>' +
+    '<div id="ctResult" style="margin-top:10px"></div></section>'
+}
+function pageSelfCheck(){
+  return '<h1>自检</h1><div class="sub">检查机器人能不能正常跑：Key、连接、目录、磁盘、备份与记忆文件。</div>' + selfCheckCard() + tasksCard()
 }
 function pageStickers(){
   const items = stickerList || []
@@ -764,18 +1001,20 @@ function pageStickers(){
     const badge = s.origin === 'learned' ? '<span class="pill" style="background:#2a7;color:#fff">学习</span>' : ''
     return '<article data-stk-card="' + esc(s.id) + '" style="border:1px solid var(--line,#ddd);border-radius:14px;padding:16px;flex:1 1 300px;min-width:260px;max-width:420px">' +
       '<button class="btn" data-stk-preview="' + esc(s.id) + '" style="width:100%;padding:0" aria-label="预览 ' + esc(s.name) + '"><img data-stk-thumb="' + esc(s.id) + '" src="/api/sticker-file?id=' + encodeURIComponent(s.id) + '&scope=' + encodeURIComponent(stickerPersona?.token || '') + '&hash=' + encodeURIComponent(s.hash || '') + '" style="width:100%;height:180px;object-fit:contain;border-radius:10px;background:#0002" alt="' + esc(s.name) + '"></button>' +
-      '<div style="margin:10px 0">' + badge + ' <span class="mut">' + Math.ceil((s.size || 0)/1024) + ' KB · ' + esc(s.mime) + ' · 用过 ' + (s.usage || 0) + ' 次</span></div>' +
+      '<div style="margin:10px 0">' + badge + ' <b style="font-size:15px">' + esc(s.name) + '</b> <span class="mut">' + Math.ceil((s.size || 0)/1024) + ' KB · 用过 ' + (s.usage || 0) + ' 次</span></div>' +
+      '<details style="margin-top:6px" data-stk-detail="' + esc(s.id) + '"' + (stickerCardOpen.has(String(s.id)) ? ' open' : '') + '><summary style="cursor:pointer">详情 / 编辑</summary>' +
       '<label>名称<input data-stk-name="' + esc(s.id) + '" value="' + esc(s.name) + '" maxlength="40" style="width:100%;margin:6px 0"></label>' +
       '<label>标签<input data-stk-kw="' + esc(s.id) + '" value="' + esc((s.keywords || []).join(' ')) + '" placeholder="空格或逗号分隔" style="width:100%;margin:6px 0"></label>' +
       '<label>描述<textarea data-stk-desc="' + esc(s.id) + '" maxlength="1000" rows="3" placeholder="画面内容、适合什么时候用；会供模型参考" style="width:100%;margin:6px 0">' + esc(s.description || '') + '</textarea></label>' +
       '<details style="margin:8px 0"><summary>适用场景</summary><div style="line-height:1.8">' + boxes + '</div></details>' +
       '<label>替换图片<input data-stk-file="' + esc(s.id) + '" type="file" accept="image/png,image/jpeg,image/webp,image/gif" style="width:100%;margin:6px 0"></label><div class="mut">选择后点击保存；保留条目，重新计算哈希。最多4MB。</div>' +
       '<label style="display:block;margin-top:8px">SHA-256<input readonly data-stk-hash="' + esc(s.id) + '" value="' + esc(s.hash || '') + '" style="width:100%;font-family:monospace;font-size:12px;margin:6px 0"></label>' +
-      '<div class="flexbar"><button class="btn primary" data-stk-save="' + esc(s.id) + '">保存修改</button><button class="btn" data-stk-copy="' + esc(s.id) + '">复制哈希</button><button class="btn" data-stk-del="' + esc(s.id) + '">仅删除</button><button class="btn" data-stk-block="' + esc(s.id) + '">拉入黑名单并删除</button></div></article>'
+      '<div class="flexbar"><button class="btn primary" data-stk-save="' + esc(s.id) + '">保存修改</button><button class="btn" data-stk-copy="' + esc(s.id) + '">复制哈希</button><button class="btn" data-stk-del="' + esc(s.id) + '">仅删除</button><button class="btn" data-stk-block="' + esc(s.id) + '">拉入黑名单并删除</button></div>' +
+      '</details></article>'
   }).join('')
   return [
-    '<h1>表情包</h1><p class="note">当前图库：' + esc(stickerPersona?.name || '默认人格') + ' · 图库、标签、使用记录和黑名单按人格分开；自动学习与配图跟随会话人格。切换后不会混用，原图库保留。</p><div class="sub">给每张图起名、打关键词和语境；机器人按语境挑图，模型也能用 [贴纸: 名称] 点名要。</div>',
-    '<section class="card"><h2>表情包设置</h2>',
+    '<h1>表情包</h1><div class="flexbar" style="margin:8px 0"><button class="btn" id="retagAll">一键生成标签</button><button class="btn" id="retagMissing">只补缺失标签</button><span class="mut" id="retagHint"></span></div><p class="note">当前图库：' + esc(stickerPersona?.name || '默认人格') + ' · 图库、标签、使用记录和黑名单按人格分开；自动学习与配图跟随会话人格。切换后不会混用，原图库保留。</p><div class="sub">给每张图起名、打关键词和语境；机器人按语境挑图，模型也能用 [贴纸: 名称] 点名要。</div>',
+    '<details class="card" data-stkfold="rules"' + (stickerFold.rules ? ' open' : '') + '><summary><b class="api-card-title">发送规则</b> <span class="api-card-meta">概率 ' + Math.round(settings.autoRate ?? 35) + '% · 每次最多 ' + (settings.maxPerReply || 1) + ' 张</span></summary><div class="api-card-body">',
     '<label style="display:flex;align-items:center;gap:8px;font-size:14px"><input type="checkbox" id="stkEnabled"' + (settings.enabled !== false ? ' checked' : '') + '> 启用表情包（关闭后模型不会发图）</label>',
     '<div class="note">表情包必须跟随已成功发送的普通聊天文字回复。用户明确要求发表情包时直接尝试发送，不抽概率；普通聊天的自动配图（含模型主动选图）遵守下方概率；语境模式未选中合适图片时不随机补图。仍遵守开关、范围、黑名单及冷却；群总结、指令回执和 /Q 解题不自动配图。</div>',
     '<label style="display:block;margin:12px 0">文字回复配图概率 <input id="stkAutoRange" type="range" min="0" max="100" value="' + (settings.autoRate ?? 35) + '"> <input id="stkAutoRate" type="number" min="0" max="100" value="' + (settings.autoRate ?? 35) + '" style="width:90px"> %</label>',
@@ -786,32 +1025,40 @@ function pageStickers(){
     '<div id="stkSendGroups"' + (settings.scope === 'selected' ? '' : ' hidden') + '>' + groups.map(g=>'<label style="display:block;margin:8px 0"><input type="checkbox" data-stk-send-group="'+esc(g.id)+'"'+((settings.groups || []).map(String).includes(String(g.id))?' checked':'')+'> '+esc(g.name)+' ('+esc(g.id)+')</label>').join('') + '<div class="mut">留空不配图；这些设置不会扩大机器人原本允许回复的范围。</div></div>',
     '<label style="display:block;margin:12px 0">同一会话配图间隔 <input id="stkCooldown" type="number" min="0" max="86400" value="' + (settings.cooldownSeconds || 0) + '" style="width:100px"> 秒（0不额外限制）</label>',
     '<button class="btn primary" id="stkRulesSave">保存发送规则</button>',
-    '<div style="height:1px;background:var(--line,#e5e5e5);margin:10px 0"></div>',
-    '<label style="display:flex;align-items:center;gap:8px;font-size:14px"><input type="checkbox" id="stkLearnToggle"' + (learn.enabled ? ' checked' : '') + '> 自动收藏群里别人发的表情包</label>',
-    '<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin-top:6px"><input type="checkbox" id="stkLearnPrivate"' + (learn.private ? ' checked' : '') + '> 私聊里发来的图片也收藏</label>',
-    '<div class="mut" style="margin-top:6px">只学习下方选中的群，可选择非白名单群；不改变聊天回复范围。DeepSeek Flash初筛，Qwen复核并打标签；无法确认的图不收录。已学习 ' + (stickerLearned || 0) + ' 张 / 共 ' + items.length + ' 张。</div>',
-    '<div class="note">学习群（可多选；留空不学习）</div>',
-    (groups || []).map(function(g) { return '<label style="display:block;margin:8px 0"><input type="checkbox" data-stk-learn-group="' + esc(g.id) + '"' + ((learn.groups || []).map(String).includes(String(g.id)) ? ' checked' : '') + '> ' + esc(g.name || g.id) + ' (' + esc(g.id) + ')</label>' }).join(''),
+    '</div></details>',
+    '<details class="card" data-stkfold="learn"' + (stickerFold.learn ? ' open' : '') + '><summary><b class="api-card-title">自动学习</b> <span class="api-card-meta">群 ' + ((learn.groups || []).length) + ' 个 · 私聊 ' + (learn.private ? '已开' : '未开') + '</span></summary><div class="api-card-body">',
+    '<div class="mut" style="margin-top:6px">DeepSeek Flash 初筛，Qwen 复核并打标签；无法确认的图不收录。已学习 ' + (stickerLearned || 0) + ' 张 / 共 ' + items.length + ' 张。</div>',
+    '<details class="learn-box"><summary><b>群聊学习</b> <span class="pill">' + ((learn.groups || []).length) + ' 个群</span></summary>',
+    '<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:10px 0"><input type="checkbox" id="stkLearnToggle"' + (learn.enabled ? ' checked' : '') + '> 启用群聊表情包学习</label>',
+    '<div class="note">只学习下面勾选的群，可选非白名单群；不改变聊天回复范围。</div>',
+    '<input id="stkLearnSearch" placeholder="搜索群名或群号" style="width:100%;margin:8px 0">',
+    '<div id="stkLearnGroupList" style="max-height:220px;overflow:auto">' + (groups || []).map(function(g) { return '<label style="display:block;margin:6px 0"><input type="checkbox" data-stk-learn-group="' + esc(g.id) + '"' + ((learn.groups || []).map(String).includes(String(g.id)) ? ' checked' : '') + '> ' + esc(g.name || g.id) + ' (' + esc(g.id) + ')</label>' }).join('') + '</div>',
+    '</details>',
+    '<details class="learn-box"><summary><b>私聊学习</b> <span class="pill">' + (learn.private ? '已开启' : '未开启') + '</span></summary>',
+    '<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:10px 0"><input type="checkbox" id="stkLearnPrivate"' + (learn.private ? ' checked' : '') + '> 私聊里发来的图片也收藏</label>',
+    '<div class="note">开启后，所有和机器人私聊的人发来的图片都会尝试收藏；仍受每小时上限约束。群聊与私聊可以单独开关。</div>',
+    '</details>',
     '<div class="row" style="margin-top:8px;display:flex;gap:8px;align-items:center">',
     '<span class="mut">每小时最多</span><input id="stkLearnPerHour" type="number" min="0" max="60" value="' + (learn.perHour || 0) + '" style="width:90px"><span class="mut">张</span>',
     '<button class="btn" id="stkLearnSave">保存学习设置</button>',
-    '</div></section>',
+    '</div></details>',
     window.StickerUploadUI?.render(sceneList) || '',
-    '<section class="card"><h2>手动发送文字＋表情包</h2><div class="note">这里会真实发送到所选群；手动发送不抽取概率，但同样必须有伴随文字。</div>',
+    '<details class="card" data-stkfold="manual"' + (stickerFold.manual ? ' open' : '') + '><summary><b class="api-card-title">手动发送</b> <span class="api-card-meta">文字 + 表情包</span></summary><div class="api-card-body"><div class="note">这里会真实发送到所选群；手动发送不抽取概率，但同样必须有伴随文字。</div>',
     '<div class="row" style="display:flex;gap:8px;flex-wrap:wrap">',
     '<select id="stkSendGroup">' + (gopts || '<option value="">没有群可发</option>') + '</select>',
     '<input id="stkSendText" placeholder="必填：伴随文字" maxlength="1000" style="flex:1;min-width:160px">',
     '<input id="stkSendKw" placeholder="留空 = 随机一张" style="flex:1;min-width:160px">',
     '<button class="btn" id="stkSend">发送</button>',
-    '</div></section>',
-    '<section class="card"><h2>表情包黑名单 <span class="pill">' + stickerBlacklist.length + ' 张</span></h2><div class="note">这些图片不会被学习或发送。解除后允许重新学习或上传，不会自动放回表情包库。按原图哈希识别；重新压缩或裁剪后的图片不视为同一张。</div><input id="stkBlockedSearch" placeholder="搜索黑名单名称、标签、描述或哈希" aria-label="搜索表情包黑名单" style="width:100%;margin-bottom:16px">' + (stickerBlacklist.length ? '<div style="display:flex;flex-wrap:wrap;gap:12px">'+stickerBlacklist.map(s=>'<article data-stk-blocked-card="'+esc(s.hash)+'" style="border:1px solid var(--line,#ddd);border-radius:14px;padding:16px;flex:1 1 300px;min-width:260px;max-width:420px">'+
+    '</div></details>',
+    '<details class="card" data-stkfold="blacklist"' + (stickerFold.blacklist ? ' open' : '') + '><summary><b class="api-card-title">黑名单</b> <span class="api-card-meta">' + stickerBlacklist.length + ' 张</span></summary><div class="api-card-body"><div class="note">这些图片不会被学习或发送。解除后允许重新学习或上传，不会自动放回表情包库。按原图哈希识别；重新压缩或裁剪后的图片不视为同一张。</div><input id="stkBlockedSearch" placeholder="搜索黑名单名称、标签、描述或哈希" aria-label="搜索表情包黑名单" style="width:100%;margin-bottom:16px">' + (stickerBlacklist.length ? '<div style="display:flex;flex-wrap:wrap;gap:12px">'+stickerBlacklist.map(s=>'<article data-stk-blocked-card="'+esc(s.hash)+'" style="border:1px solid var(--line,#ddd);border-radius:14px;padding:16px;flex:1 1 300px;min-width:260px;max-width:420px">'+
       (s.hasPreview?'<button class="btn" data-stk-blocked-preview="'+esc(s.hash)+'" style="width:100%;padding:0" aria-label="预览黑名单 '+esc(s.name)+'"><img loading="lazy" src="/api/sticker-blacklist-file?hash='+encodeURIComponent(s.hash)+'&scope='+encodeURIComponent(stickerPersona?.token || '')+'" alt="'+esc(s.name)+'" style="width:100%;height:180px;object-fit:contain;border-radius:10px;background:#0002"></button>':'<div style="height:180px;display:grid;place-content:center;text-align:center;border-radius:10px;background:#0002"><strong>暂无图片预览</strong><span class="mut">旧版图片已删除，黑名单仍然有效</span></div>')+
       '<div style="margin:10px 0"><span class="pill">已屏蔽</span> <span class="mut">'+(s.blockedAt?esc(new Date(s.blockedAt).toLocaleString()):'记录时间未知')+'</span></div><h3>'+esc(s.name||'未命名表情包')+'</h3>'+
       ((s.keywords||[]).length?'<div class="mut">标签：'+esc(s.keywords.join(' · '))+'</div>':'')+(s.description?'<p>'+esc(s.description)+'</p>':'')+
-      '<details style="margin:12px 0"><summary>查看 SHA-256</summary><input readonly aria-label="黑名单哈希" value="'+esc(s.hash)+'" style="width:100%;font-family:monospace;font-size:12px;margin:8px 0"></details><div class="flexbar"><button class="btn primary" data-stk-unblock="'+esc(s.hash)+'">解除黑名单</button><button class="btn" data-stk-blocked-copy="'+esc(s.hash)+'">复制哈希</button></div></article>').join('')+'</div><div id="stkBlockedEmpty" class="mut" hidden>没有匹配的黑名单图片</div>' : '<div class="mut">暂无黑名单</div>') + '</section>',
-    '<section class="card"><h2>表情包库 <span class="pill">' + items.length + ' 张</span></h2><input id="stkSearch" placeholder="搜索名称、标签、描述或哈希" style="width:100%;margin-bottom:16px">',
+      '<details style="margin:12px 0"><summary>查看 SHA-256</summary><input readonly aria-label="黑名单哈希" value="'+esc(s.hash)+'" style="width:100%;font-family:monospace;font-size:12px;margin:8px 0"></details><div class="flexbar"><button class="btn primary" data-stk-unblock="'+esc(s.hash)+'">解除黑名单</button><button class="btn" data-stk-blocked-copy="'+esc(s.hash)+'">复制哈希</button></div></article>').join('')+'</div><div id="stkBlockedEmpty" class="mut" hidden>没有匹配的黑名单图片</div>' : '<div class="mut">暂无黑名单</div>') + '</div></details>',
+    '<details class="card" data-stkfold="similar"' + (stickerFold.similar ? ' open' : '') + '><summary><b class="api-card-title">相似图检测</b> <span class="api-card-meta">找出重复收录</span></summary><div class="api-card-body"><div class="note">按图片指纹比较，重新压缩或裁剪过的近似图也能找出来；只提示，不会自动删。</div><div class="flexbar"><button class="btn" id="simRun">开始检测</button></div><div id="simList"></div></div></details>',
+    '<details class="card" data-stkfold="library"' + (stickerFold.library ? ' open' : '') + '><summary><b class="api-card-title">表情包库</b> <span class="api-card-meta">' + items.length + ' 张</span></summary><div class="api-card-body"><input id="stkSearch" placeholder="搜索名称、标签、描述或哈希" style="width:100%;margin-bottom:16px">',
     items.length ? ('<div style="display:flex;flex-wrap:wrap;gap:12px">' + cards + '</div>') : '<div class="mut">还没有表情包，先上传几张，或者打开上面的群聊学习。</div>',
-    '</section>',
+    '</div></details>',
     '<dialog id="stkPreviewDialog" style="max-width:90vw;max-height:90vh;background:var(--card,#15243a);color:inherit;border:1px solid #567;border-radius:16px;padding:20px"><h2 id="stkPreviewTitle"></h2><img id="stkPreviewImage" style="display:block;max-width:80vw;max-height:65vh;object-fit:contain" alt="表情包预览"><button class="btn" id="stkPreviewClose">关闭预览</button></dialog>'
   ].join('')
 }
@@ -827,6 +1074,9 @@ function render(){
   else if (page === 'report') html = pageReport()
   else if (page === 'memory') html = pageMemory()
   else if (page === 'stickers') html = pageStickers()
+  else if (page === 'metrics') html = pageMetrics()
+  else if (page === 'selfcheck') html = pageSelfCheck()
+  else if (page === 'errors') html = pageErrors()
   else if (page === 'logs') html = pageLogs()
   else html = pageMemory()
   main.innerHTML = html
@@ -840,6 +1090,20 @@ async function bind(){
   const checkUpdate=document.getElementById('checkUpdate');if(checkUpdate)checkUpdate.onclick=()=>refreshUpdates(true)
   if(page==='stickers'){
     stickerControlsDirty=false
+    document.querySelectorAll('[data-stkfold]').forEach(function(el){
+      el.addEventListener('toggle', function(){ stickerFold[el.dataset.stkfold] = el.open })
+    })
+    document.querySelectorAll('[data-stk-detail]').forEach(function(el){
+      el.addEventListener('toggle', function(){
+        if (el.open) stickerCardOpen.add(String(el.dataset.stkDetail))
+        else stickerCardOpen.delete(String(el.dataset.stkDetail))
+      })
+    })
+    const learnSearch = document.getElementById('stkLearnSearch')
+    if (learnSearch) learnSearch.oninput = function(){
+      const q = learnSearch.value.trim().toLowerCase()
+      document.querySelectorAll('#stkLearnGroupList label').forEach(function(l){ l.style.display = l.textContent.toLowerCase().includes(q) ? '' : 'none' })
+    }
     document.querySelectorAll('#stkEnabled,#stkAutoRange,#stkAutoRate,#stkMax,#stkPickMode,#stkSendScope,#stkCooldown,#stkLearnToggle,#stkLearnPrivate,#stkLearnPerHour,[data-stk-send-group],[data-stk-learn-group]').forEach(el=>el.addEventListener('input',()=>{stickerControlsDirty=true}))
   }
   const cleanGroups = document.getElementById('cleanGroups')
@@ -859,13 +1123,226 @@ async function bind(){
     wsSave.disabled = true
     try {
       const chosen=document.getElementById('wsModel').value
-      const r = await api('/api/action/set-websearch', { enabled: document.getElementById('wsEnabled').checked, model: chosen, provider: ['deepseek','bing'].includes(chosen)?chosen:document.getElementById('wsProvider').value })
+      const r = await api('/api/action/set-websearch', { enabled: document.getElementById('wsEnabled').checked, model: chosen })
       webSearchInfo = { enabled: r.enabled, model: r.model, provider: r.provider }
       toast('已保存：' + (r.enabled ? '允许联网' : '关闭联网') + '，模型 ' + r.model)
       await load()
     } catch(e) { toast('保存失败：' + e.message, true) }
     finally { wsSave.disabled = false }
   }
+  document.querySelectorAll('[data-apicard]').forEach(el => {
+    el.addEventListener('toggle', () => { apiCardsOpen[el.dataset.apicard] = el.open })
+  })
+  const exportMemory = document.getElementById('exportMemory')
+  if (exportMemory) exportMemory.onclick = async function(){
+    try {
+      const data = await api('/api/memory-export')
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const now = new Date(); const pad = function(n){ return String(n).padStart(2,'0') }
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'koukou-memory-' + now.getFullYear() + pad(now.getMonth()+1) + pad(now.getDate()) + '.json'
+      document.body.appendChild(a); a.click(); a.remove()
+      setTimeout(function(){ URL.revokeObjectURL(url) }, 1000)
+      toast('已导出记忆文件')
+    } catch(e){ toast('导出失败：' + e.message, true) }
+  }
+  const memSearch = document.getElementById('memSearch')
+  if (memSearch) memSearch.oninput = function(){
+    const q = memSearch.value.trim().toLowerCase()
+    document.querySelectorAll('#memList .mem-day').forEach(function(day){
+      if (q) day.open = true
+      let visible = 0
+      day.querySelectorAll('[data-mem-row]').forEach(function(row){
+        const hit = !q || row.textContent.toLowerCase().includes(q)
+        row.style.display = hit ? '' : 'none'
+        if (hit) visible += 1
+      })
+      day.style.display = visible ? '' : 'none'
+    })
+  }
+  const personaCheck = document.getElementById('personaCheck')
+  if (personaCheck) personaCheck.onclick = async function(){
+    const box = document.getElementById('personaCheckResult')
+    personaCheck.disabled = true
+    try {
+      const r = await api('/api/action/persona-check', {})
+      if (box) box.textContent = r.warnings.length ? ('发现 ' + r.warnings.length + ' 条：' + r.warnings.join('；')) : ('未发现明显矛盾（' + r.length + ' 字，' + r.lines + ' 段）')
+      toast(r.warnings.length ? '发现 ' + r.warnings.length + ' 条可疑表述' : '未发现明显矛盾')
+    } catch(e){ toast('检查失败：' + e.message, true) }
+    finally { personaCheck.disabled = false }
+  }
+  const errorsRefresh = document.getElementById('errorsRefresh')
+  if (errorsRefresh) errorsRefresh.onclick = async function(){
+    errorInfo = (await api('/api/errors').catch(function(){ return { items: [] } })).items || []
+    pokeReplies = (await api('/api/poke-replies').catch(function(){ return { lines: [] } })).lines || []
+    render()
+  }
+  const errorsClear = document.getElementById('errorsClear')
+  if (errorsClear) errorsClear.onclick = async function(){
+    if (!await ask('清空错误记录？', '只清空显示历史，不影响机器人运行。', '清空')) return
+    await api('/api/action/clear-errors', {})
+    errorInfo = []
+    render()
+  }
+  const ctRun = document.getElementById('ctRun')
+  if (ctRun) ctRun.onclick = async function(){
+    const text = document.getElementById('ctText').value.trim()
+    const box = document.getElementById('ctResult')
+    if (!text) { box.innerHTML = '<div class="mut">先输入一句话</div>'; return }
+    ctRun.disabled = true
+    try {
+      const r = await api('/api/action/test-command', { text, isPrivate: document.getElementById('ctWhere').value === 'private' })
+      const parts = []
+      if (r.builtin) parts.push('<div><b>内置：' + esc(r.builtin.name) + '</b> <span class="pill">' + (r.builtin.enabled ? (r.builtin.allowed ? '可执行' : '被权限/范围挡住') : '已关闭') + '</span></div>')
+      if (r.custom.length) for (const c of r.custom) parts.push('<div style="margin-top:6px"><b>自定义：' + esc(c.name) + '</b> <span class="mut">触发词 ' + esc(c.trigger) + '</span><pre class="mono" style="white-space:pre-wrap;margin:4px 0">' + esc(c.reply) + '</pre></div>')
+      if (!parts.length) parts.push('<div class="mut">没有命中任何指令，会走普通聊天。</div>')
+      box.innerHTML = parts.join('')
+    } catch(e){ box.innerHTML = '<div class="mut">测试失败：' + esc(e.message) + '</div>' }
+    finally { ctRun.disabled = false }
+  }
+  const exportMemoryMd = document.getElementById('exportMemoryMd')
+  if (exportMemoryMd) exportMemoryMd.onclick = async function(){
+    try {
+      const data = await api('/api/memory-export')
+      const now = new Date(); const pad = function(n){ return String(n).padStart(2,'0') }
+      downloadText('koukou-memory-' + now.getFullYear() + pad(now.getMonth()+1) + pad(now.getDate()) + '.md', memoryMarkdown(data), 'text/markdown;charset=utf-8')
+      toast('已导出 Markdown')
+    } catch(e){ toast('导出失败：' + e.message, true) }
+  }
+  const metricsCsvBtn = document.getElementById('metricsCsv')
+  if (metricsCsvBtn) metricsCsvBtn.onclick = function(){
+    downloadText('koukou-metrics-' + metricsRange + 'd.csv', metricsCsv(metricsInfo), 'text/csv;charset=utf-8')
+    toast('已导出 CSV')
+  }
+  const retagMissing = document.getElementById('retagMissing')
+  if (retagMissing) retagMissing.onclick = async function(){
+    const hint = document.getElementById('retagHint')
+    retagMissing.disabled = true
+    try {
+      const r = await stickerApi('/api/action/retag-stickers', { onlyMissing: true })
+      if (hint) hint.textContent = '待补 ' + r.total + ' 张…'
+      const timer = setInterval(async function(){
+        try {
+          const st = await api('/api/stickers/retag-status?scope='+encodeURIComponent(boundStickerScope || ''))
+          if (hint) hint.textContent = st.running ? ('补标中 ' + st.done + '/' + st.total) : ('完成 ' + st.done + '/' + st.total + '，跳过 ' + (st.skipped || 0) + '，失败 ' + st.errors + (st.cancelled ? '（人格切换已取消）' : ''))
+          if (!st.running) { clearInterval(timer); retagMissing.disabled = false; await load() }
+        } catch(e){ clearInterval(timer); retagMissing.disabled = false }
+      }, 2000)
+    } catch(e){ toast('启动失败：' + e.message, true); retagMissing.disabled = false }
+  }
+  const memoryImport = document.getElementById('memoryImport')
+  if (memoryImport) memoryImport.onchange = async function(){
+    const file = memoryImport.files && memoryImport.files[0]
+    if (!file) return
+    if (!await ask('导入记忆？', '会先用当前数据做一份备份，然后覆盖文件里同名会话的记忆。', '导入')) { memoryImport.value = ''; return }
+    try {
+      const data = JSON.parse(await file.text())
+      const r = await api('/api/action/memory-import', { data })
+      toast('已导入：近期 ' + r.recentKeys + ' 个会话，长期 ' + r.longKeys + ' 个')
+      await load()
+    } catch(e){ toast('导入失败：' + e.message, true) }
+    finally { memoryImport.value = '' }
+  }
+  const simRun = document.getElementById('simRun')
+  if (simRun) simRun.onclick = async function(){
+    const box = document.getElementById('simList')
+    simRun.disabled = true
+    if (box) box.innerHTML = '<div class="mut">正在计算图片指纹…</div>'
+    try {
+      const r = await stickerApi('/api/action/detect-similar', {})
+      if (!box) return
+      if (!r.groups.length) { box.innerHTML = '<div class="mut">检查了 ' + r.checked + ' 张，没有发现相似图</div>'; return }
+      box.innerHTML = '<div class="mut" style="margin:8px 0">检查 ' + r.checked + ' 张，发现 ' + r.groups.length + ' 组相似</div>' + r.groups.map(function(g){
+        const fig = function(x){
+          return '<figure style="margin:0;text-align:center"><img src="/api/sticker-file?id=' + encodeURIComponent(x.id) + '&scope=' + encodeURIComponent(stickerPersona?.token || '') + '" style="width:110px;height:110px;object-fit:contain;border-radius:10px;background:#0002"><figcaption class="mut" style="font-size:12px;margin:4px 0">' + esc(x.name) + '</figcaption><button class="btn sm" data-simdel="' + esc(x.id) + '">删这张</button></figure>'
+        }
+        return '<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:10px 0;border-bottom:1px dashed rgba(148,163,184,.2)">' + fig(g.a) + '<span class="mut">≈</span>' + fig(g.b) + '<span class="mut" style="font-size:12px">差异 ' + g.distance + '</span></div>'
+      }).join('')
+      box.querySelectorAll('[data-simdel]').forEach(function(b){
+        b.onclick = async function(){
+          if (!await ask('删除这张表情包？', '删除后不可恢复，可以重新上传。', '删除')) return
+          try { await api('/api/action/sticker-delete', { id: b.dataset.simdel }); b.closest('figure').remove(); toast('已删除') }
+          catch(e){ toast('删除失败：' + e.message, true) }
+        }
+      })
+    } catch(e){ if (box) box.innerHTML = '<div class="mut">检测失败：' + esc(e.message) + '</div>' }
+    finally { simRun.disabled = false }
+  }
+  const pokeSave = document.getElementById('pokeSave')
+  if (pokeSave) pokeSave.onclick = async function(){
+    const box = document.getElementById('pokeText')
+    const hint = document.getElementById('pokeHint')
+    pokeSave.disabled = true
+    try {
+      const r = await api('/api/action/save-poke-replies', { text: box.value })
+      pokeReplies = box.value.split(/\r?\n/).map(function(s){ return s.trim() }).filter(function(s){ return s && s[0] !== '#' })
+      if (hint) hint.textContent = '已保存 ' + r.count + ' 条，立即生效'
+      toast('拍一拍语库已更新：' + r.count + ' 条')
+    } catch(e){ toast('保存失败：' + e.message, true) }
+    finally { pokeSave.disabled = false }
+  }
+  const retagAll = document.getElementById('retagAll')
+  if (retagAll) retagAll.onclick = async function(){
+    const hint = document.getElementById('retagHint')
+    retagAll.disabled = true
+    try {
+      const r = await stickerApi('/api/action/retag-stickers', {})
+      if (hint) hint.textContent = '开始处理 ' + r.total + ' 张…'
+      const timer = setInterval(async function(){
+        try {
+          const st = await api('/api/stickers/retag-status?scope='+encodeURIComponent(boundStickerScope || ''))
+          if (hint) hint.textContent = st.running ? ('处理中 ' + st.done + '/' + st.total + '，跳过 ' + (st.skipped || 0) + '，失败 ' + st.errors + (st.cancelled ? '（人格切换已取消）' : '')) : ('完成 ' + st.done + '/' + st.total + '，跳过 ' + (st.skipped || 0) + '，失败 ' + st.errors + (st.cancelled ? '（人格切换已取消）' : ''))
+          if (!st.running) { clearInterval(timer); retagAll.disabled = false; await load() }
+        } catch(e) { clearInterval(timer); retagAll.disabled = false }
+      }, 2000)
+    } catch(e){ toast('启动失败：' + e.message, true); retagAll.disabled = false }
+  }
+  document.querySelectorAll('[data-restore]').forEach(function(b){
+    b.onclick = async function(){
+      if (!await ask('还原到 ' + b.dataset.restore + '？', '会先备份当前数据，并固定选中的备份副本；重启后在读取记忆前应用还原。必须与备份使用同一人格。', '还原')) return
+      b.disabled = true
+      try {
+        const r = await api('/api/action/restore-backup', { name: b.dataset.restore })
+        toast('还原任务已准备：' + r.restored + '，正在重启后应用…')
+        await api('/api/action/restart-bot', {})
+      } catch(e){ toast('还原失败：' + e.message, true); b.disabled = false }
+    }
+  })
+  document.querySelectorAll('[data-delbackup]').forEach(function(b){
+    b.onclick = async function(){
+      if (!await ask('删除备份 ' + b.dataset.delbackup + '？', '只删这一份备份文件，当前记忆和配置不受影响。', '删除')) return
+      b.disabled = true
+      try {
+        await api('/api/action/delete-backup', { name: b.dataset.delbackup })
+        backupInfo = await api('/api/backups')
+        toast('已删除备份')
+        render()
+      } catch(e){ toast('删除失败：' + e.message, true); b.disabled = false }
+    }
+  })
+  const doBackup = document.getElementById('doBackup')
+  if (doBackup) doBackup.onclick = async function(){
+    doBackup.disabled = true
+    try { const r = await api('/api/action/backup', {}); toast('已备份：' + r.name); await load() }
+    catch(e){ toast('备份失败：' + e.message, true) }
+    finally { doBackup.disabled = false }
+  }
+  const runSelfcheck = document.getElementById('runSelfcheck')
+  if (runSelfcheck) runSelfcheck.onclick = async function(){
+    runSelfcheck.disabled = true
+    try { selfCheckInfo = await api('/api/selfcheck'); render() }
+    catch(e){ toast('自检失败：' + e.message, true) }
+    finally { runSelfcheck.disabled = false }
+  }
+  document.querySelectorAll('[data-mrange]').forEach(function(b){
+    b.onclick = async function(){
+      metricsRange = Number(b.dataset.mrange) || 7
+      metricsInfo = (await api('/api/metrics?days=' + metricsRange).catch(function(){ return { items: [] } })).items || []
+      render()
+    }
+  })
   document.querySelectorAll('[data-act]').forEach(b => b.onclick = async () => {
     const act = b.dataset.act
     if (act === 'summary') { await doSummary(); return }
@@ -1225,7 +1702,12 @@ async function bind(){
   }
   // 记忆浏览：查看 / 单条改删 / 摘要编辑 / 清空
   const reloadMemoryDetail = async (key) => {
-    memoryDetail = await api('/api/memory-detail?key=' + encodeURIComponent(key))
+    let lastErr = null
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try { memoryDetail = await api('/api/memory-detail?key=' + encodeURIComponent(key)); lastErr = null; break }
+      catch (err) { lastErr = err; await new Promise(function(resolve){ setTimeout(resolve, 300) }) }
+    }
+    if (lastErr) throw lastErr
     render()
   }
   document.querySelectorAll('[data-memfold]').forEach(el => el.onclick = () => {
@@ -1651,6 +2133,12 @@ async function load(){
     stickerLearn = stk.learn || {}
     stickerSettings = stk.settings || {}
     webSearchInfo = await api('/api/websearch').catch(function(){ return {} })
+    backupInfo = await api('/api/backups').catch(function(){ return { items: [], root: '' } })
+    selfCheckInfo = await api('/api/selfcheck').catch(function(){ return null })
+    errorInfo = (await api('/api/errors').catch(function(){ return { items: [] } })).items || []
+    pokeReplies = (await api('/api/poke-replies').catch(function(){ return { lines: [] } })).lines || []
+    tasksInfo = await api('/api/tasks').catch(function(){ return null })
+    metricsInfo = (await api('/api/metrics?days=' + metricsRange).catch(function(){ return { items: [] } })).items || []
     updateSideStatus(s.bot)
     // 预取人格内容与附加说明
     for (const item of personas) {
@@ -1690,19 +2178,15 @@ async function refreshStateUI() {
     if(page==='chats')refreshSummaryControls()
     if (page === 'commands') { const r=await api('/api/custom-commands'); CommandCenterUI.updateDiagnostics(r.poke) }
     if (page === 'overview') {
-      // 正在输入时不要重绘：每 3 秒一次的全页重绘会把还没保存的输入清掉
-      const mainEl = document.getElementById('main')
-      const focused = document.activeElement
-      const typing = focused && mainEl?.contains(focused) && /^(INPUT|TEXTAREA|SELECT)$/.test(focused.tagName)
-      const adminBox = document.getElementById('adminUsersInput')
-      const dirtyAdmin = adminBox && adminBox.value.trim() !== (state?.config?.adminUsers || []).join(',')
-      if (typing || dirtyAdmin) return
-      const oldY = window.scrollY
-      const detailsOpen = document.querySelector('.advanced-box')?.open
-      render()
-      const details = document.querySelector('.advanced-box')
-      if (details) details.open = Boolean(detailsOpen)
-      window.scrollTo(0, oldY)
+      // 只原位更新数字，不整页重绘：整页重绘会把输入框、展开的折叠块和滚动位置全部冲掉
+      const grid = document.getElementById('kpiGrid')
+      if (grid) grid.outerHTML = overviewCards()
+      const tbody = document.getElementById('todayGroups')
+      if (tbody) tbody.innerHTML = overviewTodayRows()
+      const updated = document.getElementById('updatedAt')
+      if (updated) updated.textContent = new Date().toLocaleTimeString('zh-CN',{hour12:false})
+      const hero = document.getElementById('heroStatus')
+      if (hero) hero.innerHTML = '<span class="dot ' + (state.bot.online === true ? 'ok' : 'bad') + '"></span> ' + accountStatusText(state.bot)
     }
   } catch(e) {
     state = { ...state, bot:{ ...state?.bot, online:false, connected:false, onebotConnected:false, qqOnline:null, statusError:'控制台未响应' } }
