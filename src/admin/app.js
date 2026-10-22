@@ -1383,13 +1383,26 @@ async function bind(){
   })
   document.querySelectorAll('[data-pytoggle]').forEach(function(b){
     b.onclick = async function(){
+      const id = b.dataset.pytoggle
       const on = b.dataset.next === '1'
-      syncPyOpen()
+      b.disabled = true
       try {
-        await api('/api/action/toggle-python-script', { id: b.dataset.pytoggle, enabled: on })
-        toast((on ? '已启用 ' : '已停用 ') + b.dataset.pytoggle)
-        await load(); render()
+        await api('/api/action/toggle-python-script', { id: id, enabled: on })
+        // 就地更新，不触发整页重绘，展开状态自然不会丢
+        b.dataset.next = on ? '0' : '1'
+        b.textContent = on ? '停用' : '启用'
+        const row = b.closest('details')
+        const sum = row ? row.querySelector('summary') : null
+        if (sum) {
+          let pill = sum.querySelector('.pill')
+          if (on) { if (pill) pill.remove() }
+          else if (!pill) { pill = document.createElement('span'); pill.className = 'pill'; pill.textContent = '已停用'; sum.appendChild(pill) }
+        }
+        const it = (pythonScripts || []).find(function(x){ return x.id === id })
+        if (it) it.enabled = on
+        toast((on ? '已启用 ' : '已停用 ') + id)
       } catch(e){ toast('操作失败：' + e.message, true) }
+      finally { b.disabled = false }
     }
   })
   document.querySelectorAll('[data-pyedit]').forEach(function(b){
@@ -1408,16 +1421,16 @@ async function bind(){
   })
   document.querySelectorAll('[data-pysave]').forEach(function(b){
     b.onclick = async function(){
-      syncPyOpen()
       const id = b.dataset.pysave
       const box = document.getElementById('pyEditor-' + id)
       const msg = document.getElementById('pyMsg-' + id)
+      b.disabled = true
       try {
         await api('/api/action/import-python-script', { filename: id + '.py', content: box.querySelector('[data-pysrc]').value })
         if (msg) msg.textContent = '已保存'
         toast('已保存 ' + id + '.py')
-        await load(); render()
       } catch(e){ if (msg) msg.textContent = '保存失败：' + e.message; toast('保存失败：' + e.message, true) }
+      finally { b.disabled = false }
     }
   })
   document.querySelectorAll('[data-pycancel]').forEach(function(b){
