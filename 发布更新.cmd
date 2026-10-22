@@ -35,9 +35,11 @@ if errorlevel 1 goto fail
 
 :push
 echo.
-echo [3/4] 推送到自己的仓库 origin ...
-git push origin HEAD:dev
+echo [3/4] 推送到上游 upstream/dev（协作者渠道）...
+git push upstream HEAD:dev
 if errorlevel 1 goto fail
+echo       同步一份到自己的 fork origin（镜像，失败不影响）...
+git push origin HEAD:dev >nul 2>&1
 
 :done
 echo.
