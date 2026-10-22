@@ -97,9 +97,13 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
   }
   function setSettings(patch) {
     const data = readSettingsRaw()
-    if (patch && patch.recallSeconds !== undefined) {
-      const n = Number(patch.recallSeconds)
-      if (!Number.isFinite(n) || n < 5 || n > 7200) throw new Error('撤回秒数需在 5~7200 之间')
+    // 兼容还没刷新页面的旧控制台：老字段是分钟
+    const raw = patch && patch.recallSeconds !== undefined
+      ? patch.recallSeconds
+      : patch && patch.recallMinutes !== undefined ? Number(patch.recallMinutes) * 60 : undefined
+    if (raw !== undefined) {
+      const n = Number(raw)
+      if (!Number.isFinite(n) || n < 5 || n > 7200) throw new Error('撤回秒数需在 5~7200 之间（0.1~120 分钟）')
       data.recallSeconds = Math.round(n)
     }
     try { mkdirSync(dir, { recursive: true }); writeFileSync(SETTINGS_FILE, JSON.stringify(data, null, 1), 'utf8') } catch {}
