@@ -22,7 +22,13 @@ async function main() {
   await sleep(1200)
   if (!alive(botPid)) throw new Error('Bot exited before restart')
   process.kill(botPid, 'SIGTERM')
-  for (let i = 0; i < 20 && alive(botPid); i++) await sleep(250)
+  // 关停会等正在写的报告收尾（最多 4 秒），这里留出余量；等不到再强杀，不能让重启卡住。
+  for (let i = 0; i < 40 && alive(botPid); i++) await sleep(250)
+  if (alive(botPid)) {
+    log(`SIGTERM 后仍在运行，强制结束 botPid=${botPid}`)
+    try { process.kill(botPid, 'SIGKILL') } catch { /* 可能刚好退出 */ }
+    for (let i = 0; i < 20 && alive(botPid); i++) await sleep(250)
+  }
   if (alive(botPid)) throw new Error('Bot did not stop')
   await sleep(800)
   const taskTool = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'schtasks.exe')

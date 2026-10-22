@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, cpSync } from 'node:fs'
@@ -221,12 +221,27 @@ function validateGroupConfig(key, value) {
   }
 }
 
-export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, quietGreetings, personaGreetings, bot, customCommands, commandCenter, llm, stickers, stickerTagLLM, updateChecker=createUpdateChecker({currentVersion:APP_VERSION}), switchVision, visionProviders, restartBot, webSearch, switchWebSearch, backup, selfcheck, metrics, errors, pokeReplies, pythonPlugins }) {
+export function createAdminServer({ config, logger, onebot, memory, chatSettings, dailySummary, targetWatch, longMemory, runtimeStats, dailyPing, quietGreetings, personaGreetings, bot, customCommands, commandCenter, llm, stickers, stickerTagLLM, updateChecker=createUpdateChecker({currentVersion:APP_VERSION}), switchVision, visionProviders, restartBot, webSearch, switchWebSearch, backup, selfcheck, metrics, errors, pokeReplies, pythonPlugins, llbotWebui }) {
   // 本实例自己的 .env（并行跑两个实例时，写死 rootDir\.env 会改到另一个实例的配置上）
   const envFile = config.envFile || path.join(config.rootDir, '.env')
   const logFile = path.join(config.logDir || path.join(config.rootDir, 'logs'), 'bot.log')
   const personaDir = config.personaDir || path.join(config.dataDir, 'personas')
   const dailyDir = path.join(config.dataDir, 'daily')
+  // 控制台令牌：只注入到本机页面，页面发出的写请求必须带这个头。
+  // 防跨站伪造与 DNS 重绑定；有权读取本机页面的进程不在此保护边界内。
+  const adminToken = randomBytes(16).toString('hex')
+  let hostedPort = config.adminPort || 8787
+  const allowedHosts = () => [`127.0.0.1:${hostedPort}`, `localhost:${hostedPort}`, `[::1]:${hostedPort}`]
+  const hostAllowed = (req) => {
+    const host = String(req.headers.host || '').toLowerCase()
+    // 没有 Host 头的非浏览器客户端（本机脚本）放行；浏览器/DNS 重绑一律要求 Host 精确匹配
+    return !host || allowedHosts().includes(host)
+  }
+  const originAllowed = (req) => {
+    const origin = String(req.headers.origin || '').toLowerCase()
+    if (!origin) return true
+    return [`http://127.0.0.1:${hostedPort}`, `http://localhost:${hostedPort}`, `http://[::1]:${hostedPort}`].includes(origin)
+  }
   let batchingConfig=false,visionNeedsRebuild=false
   function refreshVision(){if(batchingConfig)visionNeedsRebuild=true;else switchVision?.()}
   function validateVisionPatch(patch){
@@ -245,6 +260,28 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       if(!item?.apiKey||!item.model||!item.baseUrl)throw Error('自定义识图需要先配置完整地址、Key 和模型')
       url(item.baseUrl)
     }
+  }
+
+  /** 配置项校验：批量与单值两个入口共用，避免单值入口绕过范围检查。 */
+  function validateConfigEntry(field, key, value) {
+    if (/[\r\n]/.test(value)) throw new Error(`${field.label} 不能包含换行`)
+    validateGroupConfig(key, value)
+    if (key === 'STICKER_LEARN_ENABLED' && /^(1|true)$/i.test(String(value).trim()) && stickers?.learningStatus?.().full) throw new Error('当前人格图库已满60张，请先人工清理后再开启学习')
+    if (key === 'DEEPSEEK_REASONING_EFFORT' && !['', 'none', 'low', 'high', 'max'].includes(value)) throw new Error('DeepSeek 思考强度应为默认、关闭、low、high或max')
+    if (field.type === 'rate' && (!Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 1)) throw new Error(`${field.label} 应在 0～1 之间`)
+    if (field.type === 'number' && !Number.isFinite(Number(value))) throw new Error(`${field.label} 需要填写数字`)
+    if (key === 'STICKER_SEND_SCOPE' && !['all', 'whitelist', 'selected', 'private'].includes(value)) throw new Error('配图范围无效')
+    if (key === 'STICKER_PICK_MODE' && !['context', 'model', 'random'].includes(value)) throw new Error('选图方式无效')
+    if (key === 'STICKER_MAX_PER_REPLY' && (!Number.isInteger(Number(value)) || Number(value) < 1 || Number(value) > 3)) throw new Error('每次最多1到3张')
+    if (key === 'MAX_TOKENS' && (!Number.isInteger(Number(value)) || Number(value) < 256 || Number(value) > 200000)) throw new Error('单次回复 token 上限应为 256～200000')
+    if (key === 'STICKER_AUTO_RATE' && (Number(value) < 0 || Number(value) > 100)) throw new Error('配图概率应为0到100')
+    if (key === 'STICKER_COOLDOWN_SECONDS' && (Number(value) < 0 || Number(value) > 86400)) throw new Error('配图间隔应为0到86400秒')
+    if (key === 'SUMMARY_MAX_TOKENS' && (!Number.isInteger(Number(value)) || Number(value) < 500 || Number(value) > 16000)) throw new Error('总结输出 token 上限应为 500～16000 的整数')
+    if (key === 'SUMMARY_REQUEST_TIMEOUT_SECONDS' && (!Number.isInteger(Number(value)) || Number(value) < 60 || Number(value) > 3600)) throw new Error('单次模型等待应为60～3600秒的整数')
+    if (key === 'SUMMARY_CONCURRENCY' && (!Number.isInteger(Number(value)) || Number(value) < 1 || Number(value) > 3)) throw new Error('同时生成的群数应为 1～3 的整数')
+    if (key === 'SUMMARY_TASK_TIMEOUT_MINUTES' && (!Number.isInteger(Number(value)) || Number(value) < 2 || Number(value) > 30)) throw new Error('单群准备时限应为 2～30 分钟的整数')
+    if (key === 'SUMMARY_REFERENCE_MAX_IMAGES' && (!Number.isInteger(Number(value)) || Number(value) < 0 || Number(value) > 12)) throw new Error('每份总结参考图片上限应为 0～12 的整数')
+    if (key === 'SUMMARY_TIMES' && value.split(',').some((v) => !/^([01]?\d|2[0-3]):[0-5]\d$/.test(v.trim()))) throw new Error('报告时间应为 HH:mm，多个时间用逗号分隔')
   }
 
   let groupListCache = { at: 0, items: [] }
@@ -467,6 +504,10 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         visionProvider: config.visionProvider,
         visionReasoning: config.visionProvider==='deepseek'&&/^deepseek.*flash/i.test(config.visionModel||'deepseek-flash')?'max':config.visionReasoning || 'none',
         visionMaxTokens: Math.min(config.maxTokens,config.visionProvider==='deepseek'&&/^deepseek.*flash/i.test(config.visionModel||'deepseek-flash')?Math.max(2048,config.visionMaxTokens||300):config.visionMaxTokens || 300),
+        // 上面两个是"实际生效值"（会被 flash 规则夹紧）；表单回填必须用原值，
+        // 否则用户什么都不改点一下保存，就会把 .env 里的 300/none 改成 2048/max。
+        rawVisionReasoning: config.visionReasoning || '',
+        rawVisionMaxTokens: config.visionMaxTokens,
         privateWhitelist: [...(config.privateWhitelist || [])],
         visionCustomModel: config.visionCustomModel,
         visionModelDeepseek: config.visionModel || '',
@@ -923,28 +964,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         const field = EDITABLE.find((f) => f.key === key)
         if (!field) throw new Error(`不认识的配置项：${key}`)
         const value = String(raw ?? '')
-        if (/[\r\n]/.test(value)) throw new Error(`${field.label} 不能包含换行`)
-        validateGroupConfig(key, value)
-        if (key === 'STICKER_LEARN_ENABLED' && /^(1|true)$/i.test(String(value).trim()) && stickers?.learningStatus?.().full) throw new Error('当前人格图库已满60张，请先人工清理后再开启学习')
-        if (key === 'DEEPSEEK_REASONING_EFFORT' && !['','none','low','high','max'].includes(value)) throw new Error('DeepSeek 思考强度应为默认、关闭、low、high或max')
-        if (field.type === 'rate' && (!Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 1)) {
-          throw new Error(`${field.label} 应在 0～1 之间`)
-        }
-        if (field.type === 'number' && !Number.isFinite(Number(value))) throw new Error(`${field.label} 需要填写数字`)
-        if (key==='STICKER_SEND_SCOPE'&&!['all','whitelist','selected','private'].includes(value))throw new Error('配图范围无效')
-        if (key==='STICKER_PICK_MODE'&&!['context','model','random'].includes(value))throw new Error('选图方式无效')
-        if (key==='STICKER_MAX_PER_REPLY'&&(!Number.isInteger(Number(value))||Number(value)<1||Number(value)>3))throw new Error('每次最多1到3张')
-        if (key==='MAX_TOKENS'&&(!Number.isInteger(Number(value))||Number(value)<256||Number(value)>200000))throw new Error('单次回复 token 上限应为 256～200000')
-        if (key==='STICKER_AUTO_RATE'&&(Number(value)<0||Number(value)>100))throw new Error('配图概率应为0到100')
-        if (key==='STICKER_COOLDOWN_SECONDS'&&(Number(value)<0||Number(value)>86400))throw new Error('配图间隔应为0到86400秒')
-        if (key === 'SUMMARY_MAX_TOKENS' && (!Number.isInteger(Number(value)) || Number(value) < 500 || Number(value) > 16000)) throw new Error('总结输出 token 上限应为 500～16000 的整数')
-        if (key === 'SUMMARY_REQUEST_TIMEOUT_SECONDS' && (!Number.isInteger(Number(value)) || Number(value) < 60 || Number(value) > 3600)) throw new Error('单次模型等待应为60～3600秒的整数')
-        if (key === 'SUMMARY_CONCURRENCY' && (!Number.isInteger(Number(value)) || Number(value) < 1 || Number(value) > 3)) throw new Error('同时生成的群数应为 1～3 的整数')
-        if (key === 'SUMMARY_TASK_TIMEOUT_MINUTES' && (!Number.isInteger(Number(value)) || Number(value) < 2 || Number(value) > 30)) throw new Error('单群准备时限应为 2～30 分钟的整数')
-        if (key === 'SUMMARY_REFERENCE_MAX_IMAGES' && (!Number.isInteger(Number(value)) || Number(value) < 0 || Number(value) > 12)) throw new Error('每份总结参考图片上限应为 0～12 的整数')
-        if (key === 'SUMMARY_TIMES' && value.split(',').some((v) => !/^([01]?\d|2[0-3]):[0-5]\d$/.test(v.trim()))) {
-          throw new Error('报告时间应为 HH:mm，多个时间用逗号分隔')
-        }
+        validateConfigEntry(field, key, value)
         clean[key] = value
       }
       validateVisionPatch(clean)
@@ -963,12 +983,12 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       const { key, value } = payload
       const field = EDITABLE.find((f) => f.key === key)
       if (!field) throw new Error(`不认识的配置项：${key}`)
-      validateGroupConfig(key, String(value ?? ''))
-      if (key === 'STICKER_LEARN_ENABLED' && /^(1|true)$/i.test(String(value).trim()) && stickers?.learningStatus?.().full) throw new Error('当前人格图库已满60张，请先人工清理后再开启学习')
-      validateVisionPatch({[key]:String(value??'')})
-      writeEnvFile(envFile, { [key]: String(value ?? '') })
-      const live = applyLive(key, value)
-      logger?.info?.(`[控制台] 修改配置 ${key}=${field.type === 'secret' ? '[已更新]' : String(value).slice(0, 40)}${live ? '（已即时生效）' : '（需重启生效）'}`)
+      const raw = String(value ?? '')
+      validateConfigEntry(field, key, raw)
+      validateVisionPatch({ [key]: raw })
+      writeEnvFile(envFile, { [key]: raw })
+      const live = applyLive(key, raw)
+      logger?.info?.(`[控制台] 修改配置 ${key}=${field.type === 'secret' ? '[已更新]' : raw.slice(0, 40)}${live ? '（已即时生效）' : '（需重启生效）'}`)
       return { ok: true, live, needRestart: !live }
     },
     async 'update-whitelist'(payload) {
@@ -1665,6 +1685,50 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       logger?.info?.(`[控制台] 已重启 NapCat（${dir} / 任务 ${task}，先结束旧实例再启动新实例）`)
       return { ok: true, killed: 'old-instances-then-start', dir, task }
     },
+    // ===== QQ 登录（换号/扫码）：真正登录的是 LLBot，这里只是转发 =====
+    async 'qq-login-state'() {
+      const st = llbotWebui?.status?.() || { available: false }
+      if (!st.available) return { ok: true, available: false, current: null, accounts: [], tried: st.tried || [] }
+      const [current, accounts] = await Promise.all([
+        llbotWebui.info(),
+        llbotWebui.accounts().catch(() => ({ LocalLoginInfoList: [] })),
+      ])
+      const list = (accounts?.LocalLoginInfoList || []).map((a) => ({
+        uin: String(a.uin || ''),
+        nick: String(a.nickName || a.nick || ''),
+        face: String(a.faceUrl || ''),
+        current: String(a.uin || '') === String(current?.uin || ''),
+      }))
+      return {
+        ok: true,
+        available: true,
+        current: current ? { uin: String(current.uin || ''), nick: String(current.nick || ''), online: current.online === true } : null,
+        accounts: list,
+        baseUrl: st.baseUrl,
+        tokenFile: st.tokenFile,
+      }
+    },
+    async 'qq-login-qrcode'() {
+      if (!llbotWebui?.status?.().available) throw new Error('没找到 LLBot 的 WebUI 密码文件，请配置 LLBOT_WEBUI_TOKEN_FILE')
+      // 已经登录时 LLBot 不给二维码；先退出再取（前端顺序：qq-logout → 这里）
+      const qr = await llbotWebui.qrcode()
+      return { ok: true, ...qr }
+    },
+    async 'qq-switch-account'(payload) {
+      const uin = String(payload?.uin || '').trim()
+      if (!/^\d{5,12}$/.test(uin)) throw new Error('QQ 号无效')
+      if (!llbotWebui?.status?.().available) throw new Error('没找到 LLBot 的 WebUI 密码文件，请配置 LLBOT_WEBUI_TOKEN_FILE')
+      await llbotWebui.logout().catch((err) => logger?.warn?.('[QQ登录] 退出当前账号失败（可能本来未登录）：' + err.message))
+      await llbotWebui.quickLogin(uin)
+      logger?.info?.(`[QQ登录] 已切换到 QQ ${uin}`)
+      return { ok: true, uin }
+    },
+    async 'qq-logout'() {
+      if (!llbotWebui?.status?.().available) throw new Error('没找到 LLBot 的 WebUI 密码文件，请配置 LLBOT_WEBUI_TOKEN_FILE')
+      await llbotWebui.logout()
+      logger?.info?.('[QQ登录] 已退出当前 QQ 账号（重新登录前机器人收不到消息）')
+      return { ok: true }
+    },
     async summary(payload) {
       if(payload?.groupId!=null&&payload.groupId!==''&&(!/^\d{1,15}$/.test(String(payload.groupId))||!Number.isSafeInteger(Number(payload.groupId))||Number(payload.groupId)<=0))throw new Error('群号无效')
       if (payload?.missingOnly === true) {
@@ -1760,6 +1824,20 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store' })
       res.end(body)
     }
+    // 写入口的三道门：Host 必须指向本机控制台、Origin 必须同源、必须是 JSON 且带页面令牌。
+    // 只靠 127.0.0.1 挡不住本地恶意网页（CSRF / DNS 重绑）。
+    if (url.pathname.startsWith('/api/') && !hostAllowed(req)) {
+      return send(403, JSON.stringify({ error: '控制台只接受本机访问' }))
+    }
+    if (req.method === 'POST') {
+      if (!originAllowed(req)) return send(403, JSON.stringify({ error: '请求来源不被允许' }))
+      if (!/^application\/json\b/i.test(String(req.headers['content-type'] || ''))) {
+        return send(415, JSON.stringify({ error: '写操作必须使用 application/json' }))
+      }
+      if (String(req.headers['x-admin-token'] || '') !== adminToken) {
+        return send(401, JSON.stringify({ error: '控制台令牌无效，请刷新页面后重试' }))
+      }
+    }
     try {
       if (req.method==='GET'&&url.pathname==='/command-center.js') return send(200,readFileSync(path.join(__dirname,'commandCenter.js')),'text/javascript; charset=utf-8')
       if (req.method==='GET'&&url.pathname==='/ui.css') return send(200,readFileSync(path.join(__dirname,'ui.css')),'text/css; charset=utf-8')
@@ -1767,7 +1845,12 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       if (req.method==='GET'&&url.pathname==='/sticker-upload.js') return send(200,readFileSync(path.join(__dirname,'stickerUpload.js')),'text/javascript; charset=utf-8')
       if (url.pathname === '/' || url.pathname === '/index.html') {
         if (!existsSync(UI_FILE)) return send(500, '控制台界面文件缺失', 'text/plain; charset=utf-8')
-        return send(200, readFileSync(UI_FILE), 'text/html; charset=utf-8')
+        // 令牌只随页面下发，外部网页拿不到，因此没法伪造带令牌的写请求。
+        const html = readFileSync(UI_FILE, 'utf8').replace(
+          /<head(\s[^>]*)?>/i,
+          (m) => `${m}<script>window.__ADMIN_TOKEN__=${JSON.stringify(adminToken)}</script>`,
+        )
+        return send(200, html, 'text/html; charset=utf-8')
       }
       // 表情包图片（控制台预览用）
       if (req.method === 'GET' && url.pathname === '/api/sticker-blacklist-file') {
@@ -1832,13 +1915,16 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
   server.keepAliveTimeout = 5000
 
   function start(port = 8787) {
+    hostedPort = port
     return new Promise((resolve) => {
       server.on('error', (err) => {
         logger?.warn?.(`控制台启动失败（端口 ${port}）：${err.message}`)
         resolve(null)
       })
       server.listen(port, '127.0.0.1', () => {
-        logger?.info?.(`机器人控制台已启动：http://127.0.0.1:${port}`)
+        // port=0 时由系统分配，Host 校验必须用实际端口
+        hostedPort = server.address()?.port || port
+        logger?.info?.(`机器人控制台已启动：http://127.0.0.1:${hostedPort}`)
         resolve(server)
       })
     })

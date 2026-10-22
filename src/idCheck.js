@@ -62,7 +62,11 @@ export function canKickNow({
   isBotAdmin = false,
   windowMs = ID_CHECK_KICK_WINDOW_MS,
 }) {
-  if (!canRunIdCheck(userId, operators)) {
+  // 踢人是破坏性操作：授权名单为空时一律拒绝（fail-closed）。
+  // /id_check 本身可以留开放默认，但"按结果批量移出成员"不能：默认配置下全群都能让机器人踢人。
+  const allowed = (Array.isArray(operators) ? operators : []).map((s) => String(s ?? '').trim()).filter(Boolean)
+  if (allowed.length === 0) return { ok: false, reason: '未配置 ID_CHECK_OPERATORS，踢人已禁用' }
+  if (!allowed.includes(String(userId ?? '').trim())) {
     return { ok: false, reason: `QQ ${userId} 不在授权名单里` }
   }
   if (!isBotAdmin) {

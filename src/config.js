@@ -47,7 +47,10 @@ function parseEnvFile(filePath) {
 const env = { ...parseEnvFile(envFile), ...process.env }
 
 const num = (key, fallback) => {
-  const v = Number(env[key])
+  // 空值（`.env` 里写了 KEY= 但没填数）不能当 0：那会把限流、预算静默归零/砍半。
+  const raw = env[key]
+  if (raw === undefined || raw === null || String(raw).trim() === '') return fallback
+  const v = Number(raw)
   return Number.isFinite(v) ? v : fallback
 }
 
@@ -136,6 +139,10 @@ export function loadConfig() {
     // 否则在新控制台点一下会把旧号重启掉（旧号正跑着生产流量）。
     napcatDir: String(env.NAPCAT_DIR ?? '').trim(),
     napcatTaskName: String(env.NAPCAT_TASK_NAME ?? 'NapCatQQ').trim(),
+
+    // LLBot（LuckyLillia）WebUI：控制台「QQ 登录」页通过它换号/扫码
+    llbotWebuiUrl: (String(env.LLBOT_WEBUI_URL ?? 'http://127.0.0.1:3080').trim() || 'http://127.0.0.1:3080').replace(/\/+$/, ''),
+    llbotWebuiTokenFile: env.LLBOT_WEBUI_TOKEN_FILE ? path.resolve(path.dirname(envFile), env.LLBOT_WEBUI_TOKEN_FILE) : '',
 
     // 静音群：在这些群里**完全不出声，连被 @ 也不回**。
     // 换号迁移期间用：新号接管的群，旧号必须彻底闭嘴 —— 白名单只管"主动搭话"，

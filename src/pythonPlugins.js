@@ -98,7 +98,8 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
     const data = readSettingsRaw()
     const n = Number(data.recallSeconds ?? (data.recallMinutes !== undefined ? Number(data.recallMinutes) * 60 : NaN))
     const names = data.names && typeof data.names === 'object' && !Array.isArray(data.names) ? data.names : {}
-    return { recallSeconds: Number.isFinite(n) ? Math.min(7200, Math.max(5, Math.round(n))) : 300, names }
+    const recallEnabled = data.recallEnabled === undefined ? true : Boolean(data.recallEnabled)
+    return { recallSeconds: Number.isFinite(n) ? Math.min(7200, Math.max(5, Math.round(n))) : 300, recallEnabled, names }
   }
   function setSettings(patch) {
     const data = readSettingsRaw()
@@ -111,6 +112,7 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
       if (!Number.isFinite(n) || n < 5 || n > 7200) throw new Error('撤回秒数需在 5~7200 之间（0.1~120 分钟）')
       data.recallSeconds = Math.round(n)
     }
+    if (patch && patch.recallEnabled !== undefined) data.recallEnabled = Boolean(patch.recallEnabled)
     mkdirSync(dir, { recursive: true }); writeJsonAtomic(SETTINGS_FILE, data)
     return getSettings()
   }

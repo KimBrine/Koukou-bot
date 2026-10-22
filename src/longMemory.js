@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { writeJsonAtomic } from './stateFile.js'
+import { writeJsonAtomic, quarantineCorrupt } from './stateFile.js'
 import { createMemoryArchive } from './memoryArchive.js'
 
 /** 分会话摘要 + 私有原文档案。人格切换用独立分区，旧分区只供备份恢复。 */
@@ -8,17 +8,32 @@ export function createLongMemory({ file, logger, llm, maxChars = 1500, intervalM
   let store = new Map(), epoch = 'legacy', keyEpochs = {}, generation = 0, timer = null
   const running = new Map(), edits = new Map()
   const archive = createMemoryArchive(`${file}.records`)
+  let state = {}
+  if (existsSync(`${file}.state.json`)) {
+    try { state = JSON.parse(readFileSync(`${file}.state.json`, 'utf8')) || {} }
+    catch (err) {
+      const kept = quarantineCorrupt(`${file}.state.json`,undefined,{preserveSource:true})
+      throw new Error(`长期记忆分区边界损坏，已留档于 ${kept}；请修复后启动，避免混入旧人格记忆`, {cause:err})
+    }
+  }
   try {
-    const state = existsSync(`${file}.state.json`) ? JSON.parse(readFileSync(`${file}.state.json`, 'utf8')) : {}
     epoch = state.epoch || 'legacy'
     keyEpochs = state.keyEpochs || {}
-    if (!state.resetPending && existsSync(file)) for (const [key, value] of Object.entries(JSON.parse(readFileSync(file, 'utf8')) || {})) {
-      if (!(state.clearedKeys || []).includes(key) && value && typeof value === 'object') store.set(key, {
-        summary: String(value.summary || ''), pending: Array.isArray(value.pending) ? value.pending : [], updatedAt: Number(value.updatedAt) || 0, paused: value.paused === true, retry: value.retry || null,
-      })
+    if (!state.resetPending && existsSync(file)) {
+      let data = null
+      try { data = JSON.parse(readFileSync(file, 'utf8')) }
+      catch (err) {
+        const kept = quarantineCorrupt(file)
+        logger?.warn?.(`长期记忆内容损坏${kept ? '，已另存为 ' + kept : ''}，本次以空摘要开始：${err.message}`)
+      }
+      for (const [key, value] of Object.entries(data || {})) {
+        if (!(state.clearedKeys || []).includes(key) && value && typeof value === 'object') store.set(key, {
+          summary: String(value.summary || ''), pending: Array.isArray(value.pending) ? value.pending : [], updatedAt: Number(value.updatedAt) || 0, paused: value.paused === true, retry: value.retry || null,
+        })
+      }
     }
     logger?.info?.(`已载入长期记忆：${store.size} 个会话`)
-  } catch (err) { logger?.warn?.(`长期记忆读取失败：${err.message}`) }
+  } catch (err) { if(err.code==='STATE_QUARANTINE_FAILED')throw err;logger?.warn?.(`长期记忆读取失败：${err.message}`) }
 
   function version(key) { return `${generation}:${keyEpochs[key] || epoch}:${edits.get(key) || 0}` }
   function archiveEpoch(key) { return keyEpochs[key] || epoch }

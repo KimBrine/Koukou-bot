@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
-import { writeJsonAtomic } from './stateFile.js'
+import { writeJsonAtomic, quarantineCorrupt } from './stateFile.js'
 
 /**
  * 自定义指令：在控制台里配「触发词 → 固定回复」，不调用模型、不花钱。
@@ -40,15 +40,23 @@ export function createCustomCommands({ file, logger }) {
   const MAX = 200
 
   function load() {
+    if (!existsSync(file)) return
+    let data
     try {
-      if (!existsSync(file)) return
-      const data = JSON.parse(readFileSync(file, 'utf8'))
+      data = JSON.parse(readFileSync(file, 'utf8'))
+    } catch (err) {
+      // 先留档，否则下一次保存会把损坏的指令文件整个覆盖掉。
+      const kept = quarantineCorrupt(file)
+      logger?.warn?.(`自定义指令读取失败${kept ? '，已另存为 ' + kept : ''}：${err.message}`)
+      return
+    }
+    try {
       if (Array.isArray(data)) {
         list = data.slice(0, MAX).map(clean)
       }
       if (list.length > 0) logger?.info?.(`已载入 ${list.length} 条自定义指令`)
     } catch (err) {
-      logger?.warn?.(`自定义指令读取失败：${err.message}`)
+      logger?.warn?.(`自定义指令格式不正确：${err.message}`)
     }
   }
 

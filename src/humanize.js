@@ -60,9 +60,11 @@ export function stripDecoration(text) {
   s = s.replace(EMOJI_RE, '')
   s = s.replace(new RegExp(COMBINING_MARKS, 'g'), '')
   s = s.replace(TIC_RE, '')
-  // 清理颜文字残留：空括号、连续括号、结尾/开头孤立的括号
+  // 清理颜文字残留：只删空括号、首尾孤立括号、连续括号，
+  // 含正文的括号要保留（「他说（明天）可以」不能变成「他说明天可以」）
   s = s.replace(/[（(]\s*[)）]/g, '')
-  s = s.replace(/[（(]{1,}/g, '').replace(/[)）]{1,}/g, '')
+  s = s.replace(/^[\s，。！？～…、·]*[)）]+/, '').replace(/[（(]+[\s，。！？～…、·]*$/, '')
+  s = s.replace(/[（(]+(?=\s*[)）])/g, '').replace(/[)）]+(?=[（(])/g, '')
   // 修整：多余空格、空格前置标点、首尾标点
   s = s
     .replace(/\s{2,}/g, ' ')

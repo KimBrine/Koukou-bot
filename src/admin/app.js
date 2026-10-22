@@ -12,6 +12,7 @@ const PAGES = [
   ['selfcheck','✓  自检'],
   ['errors','⚠  错误'],
   ['logs','≡  运行日志'],
+  ['login','☰  QQ 登录'],
 ]
 let page = location.hash.replace('#','') || 'overview'
 if (!PAGES.some(p => p[0] === page)) page = 'overview'
@@ -22,7 +23,7 @@ function summaryControlsHTML(groupId){
   const job=(state?.summaryProgress||[]).find(j=>Number(j.groupId)===Number(groupId))||{status:'idle'}
   const busy=summaryRequests.has(Number(groupId))||job.status==='generating'
   const status=job.status||'idle',terminal=['success','failed'].includes(status)
-  const label=summaryRequests.has(Number(groupId))?'正在启动…':({idle:'空闲中',generating:'生成中',success:'生成成功',failed:'生成失败'}[status]||'空闲中')
+  const label=summaryRequests.has(Number(groupId))?'正在启动…':status==='success'&&job.resultKind==='statistics'?'仅统计版':({idle:'空闲中',generating:'生成中',success:'生成成功',failed:'生成失败'}[status]||'空闲中')
   const time=terminal&&job.finishedAt?new Date(job.finishedAt).toLocaleString('zh-CN',{hour12:false}):''
   return `<button class="btn sm" data-summary-start="${Number(groupId)}" ${busy?'disabled':''} title="生成今天截至当前的群总结，完成后直接发送到本群">${busy?'正在生成…':'生成今日总结'}</button><span class="summary-state ${esc(status)}" role="status">${label}</span>${terminal?`<button class="summary-dismiss" data-summary-ack="${Number(groupId)}" data-job-id="${esc(job.jobId)}" aria-label="已阅读并关闭本群总结结果" title="已阅读，关闭此结果">×</button>`:''}<small class="summary-detail">${esc(job.message||'生成完成后会直接发送到本群。')}${time?' · '+esc(time):''}</small>`
 }
@@ -71,7 +72,7 @@ let selfCheckInfo = null
 let errorInfo = []
 let pokeReplies = []
 let pythonScripts = []
-let pythonSettings = { recallSeconds: 300 }
+let pythonSettings = { recallSeconds: 300, recallEnabled: true }
 let pythonDir = ''
 let pyOpen = { card: false, rows: [], editors: [] }
 const pyDrafts = Object.create(null)
@@ -100,9 +101,12 @@ const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&l
 const api = async (path, body) => {
   // 动作接口只接受 POST；没带 body 也自动按 POST + {} 发送，避免误发成 GET 变 404
   const action = typeof path === 'string' && path.startsWith('/api/action/')
-  const opt = body !== undefined || action ? { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body ?? {}) } : {}
+  const opt = body !== undefined || action
+    ? { method:'POST', headers:{'Content-Type':'application/json','X-Admin-Token':window.__ADMIN_TOKEN__||''}, body: JSON.stringify(body ?? {}) }
+    : {}
   const r = await fetch(path, opt)
   const j = await r.json().catch(() => ({}))
+  if (r.status === 401) throw new Error('控制台令牌已失效，请关闭页面重新打开控制台')
   if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status))
   return j
 }
@@ -649,6 +653,7 @@ async function loadPythonScripts(){
 function pythonCard(){
   const items = pythonScripts || []
   const recall = (pythonSettings && pythonSettings.recallSeconds) || 300
+  const recallOn = !pythonSettings || pythonSettings.recallEnabled !== false
   const rows = items.map(function(s){
     const id = esc(s.id)
     return '<details class="frow" data-pyrow="' + id + '"' + (pyOpen.rows.indexOf(s.id) >= 0 ? ' open' : '') + '><summary><b>' + esc(s.name) + '</b> <span class="mut">/' + id + '</span>' +
@@ -674,7 +679,7 @@ function pythonCard(){
   return '<details class="card"' + (pyOpen.card ? ' open' : '') + ' data-pycard><summary><b>Python 脚本</b> <span class="pill">' + items.length + ' 个</span> <span class="mut">点开管理、编辑内容</span></summary>' +
     '<div class="note">放在 plugins/python 下的白名单脚本，用 <code>/py 脚本名 参数</code> 运行，默认仅管理员。脚本以机器人权限执行，只导入可信文件。保存会留一份 .bak。</div>' +
     '<div class="flexbar" style="margin:8px 0;gap:8px;flex-wrap:wrap"><span class="mut">脚本目录</span><code style="font-size:12px;word-break:break-all">' + esc(pythonDir || 'plugins/python') + '</code><button class="btn sm" data-pycopy="' + esc(pythonDir || '') + '">复制路径</button><button class="btn sm" data-pyopen="">打开文件夹</button></div>' +
-    '<div class="flexbar" style="margin:10px 0"><label class="mut">打包默认撤回（秒）</label><input id="pyRecall" type="number" min="5" max="7200" step="5" value="' + recall + '" style="width:90px"><button class="btn sm" id="pyRecallSave">保存</button><span class="mut" id="pyRecallHint"></span></div>' +
+    '<div class="flexbar" style="margin:10px 0"><label class="chk"><input type="checkbox" id="pyRecallOn"' + (recallOn ? ' checked' : '') + '> 发送后自动撤回</label><label class="mut" style="margin-left:10px">保留时长（秒）</label><input id="pyRecall" type="number" min="5" max="7200" step="5" value="' + recall + '" style="width:90px"><button class="btn sm" id="pyRecallSave">保存</button><span class="mut" id="pyRecallHint"></span></div>' +
     (rows || '<div class="mut">还没有脚本</div>') +
     '<details class="frow" style="margin-top:10px"><summary><b>＋ 新建脚本</b> <span class="mut">自己写，或让 AI 起草</span></summary>' +
       '<div class="mut" style="margin:8px 0 6px">三种填法，效果一样：① 点「插入模板」拿骨架自己改；② 写一句需求让「AI 生成草稿」；③ 直接把完整代码粘进来。保存后会写成 plugins/python/文件名.py，不用重启，立刻能用 <code>/py 文件名</code> 调用。</div>' +
@@ -861,8 +866,8 @@ function visionCard(){
     row('识图模型', '<div class="row" style="display:flex;gap:8px"><select id="vcModel" style="flex:1">' +
       '<option value="' + esc(currentModel) + '"' + (currentModel ? ' selected' : '') + '>' + esc(currentModel || '（先点自动检测）') + '</option>' +
       '</select><button class="btn" type="button" id="vcDetect">自动检测模型</button></div><div class="mut" id="vcDetectHint" style="font-size:12px;margin-top:4px">' + (isCustom ? '自定义：点检测拿型号列表' : '点「自动检测模型」拿型号列表') + '</div>'),
-    row('识图思考强度', '<select id="vcReasoning">' + [['none','关闭（默认）'],['low','低'],['high','高'],['max','最高']].map(function(x){ return '<option value="' + x[0] + '"' + (x[0] === (s.visionReasoning || 'none') ? ' selected' : '') + '>' + x[1] + '</option>' }).join('') + '</select><div class="mut">DeepSeek Flash 固定使用 max，识图预算至少2048（仍受总预算限制）；其他模型使用独立设置。</div>'),
-    row('识图 token 预算', '<input id="vcTokens" type="number" min="64" max="4000" value="' + (s.visionMaxTokens || 300) + '" style="width:120px"><div class="mut" style="font-size:12px;margin-top:3px">越大越能读复杂图，也越慢；默认 300</div>'),
+    row('识图思考强度', '<select id="vcReasoning">' + [['none','关闭（默认）'],['low','低'],['high','高'],['max','最高']].map(function(x){ return '<option value="' + x[0] + '"' + (x[0] === (s.rawVisionReasoning || s.visionReasoning || 'none') ? ' selected' : '') + '>' + x[1] + '</option>' }).join('') + '</select><div class="mut">DeepSeek Flash 固定使用 max，识图预算至少2048（仍受总预算限制）；其他模型使用独立设置。</div>'),
+    row('识图 token 预算', '<input id="vcTokens" type="number" min="64" max="4000" value="' + (s.rawVisionMaxTokens || s.visionMaxTokens || 300) + '" style="width:120px"><div class="mut" style="font-size:12px;margin-top:3px">越大越能读复杂图，也越慢；默认 300</div>'),
     row('表情包打标模型', '<select id="vcTag">' +
       '<option value="auto"' + sel('auto', tagProvider) + '>自动（有通义用通义，否则 DeepSeek）</option>' +
       '<option value="deepseek"' + sel('deepseek', tagProvider) + '>DeepSeek</option>' +
@@ -1173,8 +1178,57 @@ function restoreOpenDetails(list){
     if (k && want.has(k)) d.open = true
   })
 }
+// ===== QQ 登录（换号/扫码）：登录态在 LLBot，这里只调它的接口 =====
+let qqPollTimer = null
+function stopQqPoll(){ if (qqPollTimer) { clearInterval(qqPollTimer); qqPollTimer = null } }
+function qqMask(uin){ const s = String(uin || ''); return s ? s.slice(0, 4) + '***' + s.slice(-2) : '—' }
+function pageLogin(){
+  return `<section class="card"><h2>当前 QQ 账号</h2>
+    <p class="mut">真正登录的是 LLBot（LuckyLillia）。换号会让机器人短暂离线，重新登录成功后自动恢复收消息。</p>
+    <div id="qqLoginBody" class="mut">正在读取…</div>
+    <div class="flexbar"><button class="btn" id="qqRefresh">刷新状态</button><button class="btn" id="qqLogout">退出当前账号</button></div>
+  </section>
+  <section class="card"><h2>切换已保存账号</h2><p class="mut">LLBot 本机保存过登录态的账号，切换不需要扫码。</p><div id="qqAccounts" class="mut">正在读取…</div></section>
+  <section class="card"><h2>扫码登录新账号</h2><p class="mut">会先退出当前账号，再用手机 QQ 扫码登录；二维码约两分钟有效。</p>
+  <div class="flexbar"><button class="btn primary" id="qqQr">显示登录二维码</button></div><div id="qqQrArea"></div></section>`
+}
+async function loadQqLogin(){
+  const body = document.getElementById('qqLoginBody'), acc = document.getElementById('qqAccounts')
+  if (!body) return
+  try {
+    const s = await api('/api/action/qq-login-state')
+    if (!s.available) {
+      body.innerHTML = '<span class="bad">没找到 LLBot 的 WebUI 密码文件</span><div class="mut" style="margin-top:6px">请在 .env 配置 LLBOT_WEBUI_TOKEN_FILE（LLBot 数据目录下的 webui_token.txt）' + (s.tried && s.tried.length ? '；已尝试：' + esc(s.tried.join('、')) : '') + '</div>'
+      acc.textContent = '—'
+      return
+    }
+    const c = s.current
+    body.innerHTML = c
+      ? `<div><strong>${esc(c.nick || '')}</strong>（QQ ${qqMask(c.uin)}）· ${c.online ? '<span class="ok">在线</span>' : '<span class="bad">离线</span>'}</div><div class="mut" style="margin-top:4px">LLBot：${esc(s.baseUrl || '')}</div>`
+      : '<div class="bad">当前没有登录任何 QQ</div>'
+    acc.innerHTML = (s.accounts || []).length
+      ? s.accounts.map(a => `<div class="flexbar" style="justify-content:space-between;align-items:center;gap:8px;margin:6px 0"><div>${a.face ? `<img src="${esc(a.face)}" alt="" style="width:24px;height:24px;border-radius:50%;vertical-align:middle;margin-right:6px">` : ''}${esc(a.nick || '')}（QQ ${qqMask(a.uin)}）${a.current ? ' · 当前' : ''}</div>${a.current ? '<span class="mut">使用中</span>' : `<button class="btn" data-qq-uin="${esc(a.uin)}">切换到它</button>`}</div>`).join('')
+      : '<span class="mut">LLBot 里还没有保存过其他账号</span>'
+  } catch (err) {
+    body.innerHTML = '<span class="bad">读取失败：' + esc(err.message) + '</span>'
+  }
+}
+function startQqPoll(){
+  stopQqPoll()
+  let ticks = 0
+  qqPollTimer = setInterval(async () => {
+    ticks++
+    if (ticks > 60) { stopQqPoll(); return }
+    try {
+      const s = await api('/api/action/qq-login-state')
+      if (s.current && s.current.online) { stopQqPoll(); toast('已登录：' + (s.current.nick || s.current.uin)); loadQqLogin() }
+    } catch {}
+  }, 3000)
+}
+
 function render(){
   const main = document.getElementById('main')
+  if (page !== 'login') stopQqPoll()
   syncPyOpen()
   if(renderedPage !== null)detailOpenByPage.set(renderedPage,captureOpenDetails())
   const keepOpen = detailOpenByPage.get(page) || []
@@ -1193,6 +1247,7 @@ function render(){
   else if (page === 'selfcheck') html = pageSelfCheck()
   else if (page === 'errors') html = pageErrors()
   else if (page === 'logs') html = pageLogs()
+  else if (page === 'login') html = pageLogin()
   else html = pageMemory()
   main.innerHTML = html
   restoreOpenDetails(keepOpen)
@@ -1204,6 +1259,47 @@ function render(){
 async function bind(){
   refreshSummaryControls()
   const checkUpdate=document.getElementById('checkUpdate');if(checkUpdate)checkUpdate.onclick=()=>refreshUpdates(true)
+  if (page === 'login') {
+    loadQqLogin()
+    const refresh = document.getElementById('qqRefresh')
+    if (refresh) refresh.onclick = () => loadQqLogin()
+    const out = document.getElementById('qqLogout')
+    if (out) out.onclick = async () => {
+      if (!await ask('退出当前 QQ？', '退出后机器人收不到消息，需要用扫码或切换账号重新登录。')) return
+      try {
+        await api('/api/action/qq-logout')
+        toast('已退出登录')
+        loadQqLogin()
+        startQqPoll()
+      } catch (err) { toast(err.message, true) }
+    }
+    document.getElementById('qqAccounts').onclick = async (event) => {
+      const el = event.target.closest('[data-qq-uin]')
+      if (!el) return
+      const uin = el.dataset.qqUin
+      if (!await ask('切换到 QQ ' + uin + '？', '会先退出当前账号，再快速登录这个账号，期间机器人短暂离线。')) return
+      try {
+        toast('正在切换…')
+        await api('/api/action/qq-switch-account', { uin })
+        startQqPoll()
+        setTimeout(loadQqLogin, 1500)
+      } catch (err) { toast(err.message, true) }
+    }
+    const qr = document.getElementById('qqQr')
+    if (qr) qr.onclick = async () => {
+      if (!await ask('退出当前账号并显示二维码？', '扫码登录前必须先退出当前账号，期间机器人离线。')) return
+      const area = document.getElementById('qqQrArea')
+      area.innerHTML = '<div class="mut">正在退出并获取二维码…</div>'
+      try {
+        await api('/api/action/qq-logout').catch(() => {})
+        const r = await api('/api/action/qq-login-qrcode')
+        area.innerHTML = '<div style="margin-top:10px"><img alt="QQ 登录二维码" src="' + esc(r.image) + '" style="width:200px;height:200px;image-rendering:pixelated;background:#fff;padding:6px;border-radius:8px"></div><div class="mut" style="margin-top:6px">用手机 QQ 扫码登录，成功后这里会自动刷新</div>'
+        startQqPoll()
+      } catch (err) {
+        area.innerHTML = '<div class="bad">' + esc(err.message) + '</div>'
+      }
+    }
+  }
   if(page==='stickers'){
     stickerControlsDirty=false
     document.querySelectorAll('[data-stkfold]').forEach(function(el){
@@ -1478,10 +1574,11 @@ async function bind(){
   if (pyRecallSave) pyRecallSave.onclick = async function(){
     const hint = document.getElementById('pyRecallHint')
     try {
-      const r = await api('/api/action/save-python-settings', { recallSeconds: Number(document.getElementById('pyRecall').value) })
+      const r = await api('/api/action/save-python-settings', { recallSeconds: Number(document.getElementById('pyRecall').value), recallEnabled: document.getElementById('pyRecallOn').checked })
       pythonSettings = r.settings || pythonSettings
-      if (hint) hint.textContent = '已保存：' + pythonSettings.recallSeconds + ' 秒'
-      toast('默认撤回已设为 ' + pythonSettings.recallSeconds + ' 秒')
+      const on = pythonSettings.recallEnabled !== false
+      if (hint) hint.textContent = '已保存：' + (on ? '自动撤回 ' + pythonSettings.recallSeconds + ' 秒' : '不自动撤回')
+      toast(on ? ('默认撤回已设为 ' + pythonSettings.recallSeconds + ' 秒') : '已关闭自动撤回')
     } catch(e){ if (hint) hint.textContent = e.message; toast('保存失败：' + e.message, true) }
   }
   const pyDraftBtn = document.getElementById('pyDraftBtn')

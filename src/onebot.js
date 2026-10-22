@@ -109,9 +109,13 @@ export class OneBotClient extends EventEmitter {
       this.probeVerified = false
       this.probeError = ''
 
-      const cleanup = () => {
-        if (this.healthTimer) clearInterval(this.healthTimer)
-        this.healthTimer = null
+      // clearHealth=false 用于"旧 socket 迟到的 close"：此时定时器和在途请求已经属于新连接，
+      // 不能替别人清掉，否则新连接的健康检查会消失、在途发送被误判成"连接已断开"。
+      const cleanup = (clearHealth = true) => {
+        if (clearHealth) {
+          if (this.healthTimer) clearInterval(this.healthTimer)
+          this.healthTimer = null
+        }
         ws.removeEventListener('open', onOpen)
         ws.removeEventListener('message', onMessage)
         ws.removeEventListener('close', onClose)
@@ -119,8 +123,10 @@ export class OneBotClient extends EventEmitter {
       }
 
       const onOpen = () => {
+        // 已被新连接取代的旧 socket 即使握手成功也不能接管状态
+        if (this.ws !== ws) { try { ws.close() } catch { /* ignore */ } return }
         this.messageTimeline.begin()
-        this.logger.info(`已连接 OneBot：${this.url}`)
+        this.logger.info(`已连接 OneBot：${String(this.url).replace(/([?&]access_token=)[^&]*/i, '$1***')}`)
         this.reconnectDelay = 1000
         this.refreshStatus({ maxAgeMs: 0 }).catch(() => {})
         this.healthTimer = setInterval(() => this.refreshStatus({ maxAgeMs: 0 }).catch(() => {}), 5000)
@@ -173,9 +179,16 @@ export class OneBotClient extends EventEmitter {
       }
 
       const onClose = (event) => {
+        const current = this.ws === ws
+        if (!current) {
+          // 旧连接迟到的 close：只摘自己的监听，别碰新连接的定时器与在途请求
+          cleanup(false)
+          if (!settled) { settled = true; reject(new Error(`连接关闭（code=${event?.code} reason=${event?.reason || '无'}）`)) }
+          return
+        }
         this.messageTimeline.end()
         cleanup()
-        if (this.ws === ws) this.ws = null
+        this.ws = null
         this.qqOnline = null
         this.qqGood = null
         this.statusCheckedAt = 0
@@ -199,6 +212,8 @@ export class OneBotClient extends EventEmitter {
           settled = true
           reject(new Error(`WebSocket 错误（${event?.message || 'unknown'}）`))
         }
+        // 主动关掉出错的 socket：否则它可能延迟很久才 close，届时会误伤新连接
+        try { ws.close() } catch { /* ignore */ }
       }
 
       ws.addEventListener('open', onOpen)

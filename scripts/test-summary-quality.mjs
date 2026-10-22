@@ -97,3 +97,21 @@ for(const initialTopics of [3,5]) {
   assert.ok(parts[7].includes('第二行不会拆开。'))
 }
 console.log('Summary quality checks passed: dynamic full-window ranges, busy-group underfill repair, upper bounds, sparse groups, bounded retries and preserved message boundaries')
+
+// A provider rejection during optional detail repair must not discard a valid first draft.
+{
+ const detailContext={...context,contentProfile:{...profileSummaryContent(records),evidenceChars:10000}}
+ const thin=report({body:'有依据的讨论。'}),q=inspectSummaryQuality(thin,detailContext)
+ assert.equal(q.ok,false);assert.equal(q.fatalIssues.length,0)
+ let calls=0
+ const llm={async chat(){if(++calls===1)return thin;const e=Error('内容检查未通过');e.code='data_inspection_failed';throw e}}
+ assert.equal(await generateCheckedSummary({llm,prompt:'p',messages:[],...detailContext,logger}),thin)
+ assert.equal(calls,2)
+ calls=0
+ const bad={async chat(){if(++calls===1)return incomplete;const e=Error('拒绝');e.code='content_filter';throw e}}
+ await assert.rejects(generateCheckedSummary({llm:bad,prompt:'p',messages:[],...detailContext,logger}),e=>e.code==='content_filter'&&e.summaryPhase==='repair')
+ calls=0
+ const first={async chat(){calls++;const e=Error('拒绝');e.code='content_filter';throw e}}
+ await assert.rejects(generateCheckedSummary({llm:first,prompt:'p',messages:[],...detailContext,logger}),e=>e.summaryPhase==='initial')
+ assert.equal(calls,1)
+}

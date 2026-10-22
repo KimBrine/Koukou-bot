@@ -1,6 +1,6 @@
 import { parseSummaryFormat, summarySectionHeading } from './summaryFormat.js'
 import { profileSummaryContent, summaryTopicPolicy, summaryDetailPolicy } from './summaryContent.js'
-import {isSummaryTransientError} from './summaryFailure.js'
+import {isSummaryTransientError,isSummaryContentRefusal} from './summaryFailure.js'
 import {setTimeout as pause} from 'node:timers/promises'
 
 /** 去除内部来源标记；过长参考整句省略，保留完整的群内讨论句子。 */
@@ -106,13 +106,17 @@ export function inspectSummaryQuality(text, { records = [], stats = {}, contentP
 }
 
 export async function generateCheckedSummary({ llm, prompt, messages, records, stats, contentProfile = profileSummaryContent(records), logger, signal }) {
-  async function model(input){
-    try{return await llm.chat(prompt,input,{rejectTruncated:true,signal})}
+  async function model(input, phase='initial'){
+    const request=async()=>{
+      try{return await llm.chat(prompt,input,{rejectTruncated:true,signal})}
+      catch(error){error.summaryPhase=phase;throw error}
+    }
+    try{return await request()}
     catch(error){
       signal?.throwIfAborted();if(!isSummaryTransientError(error))throw error
       logger.warn('总结模型临时故障，未进入发送阶段，短暂等待后额外恢复一次')
       await pause(700,undefined,{signal});signal?.throwIfAborted()
-      return llm.chat(prompt,input,{rejectTruncated:true,signal})
+      return request()
     }
   }
   signal?.throwIfAborted()
@@ -122,12 +126,22 @@ export async function generateCheckedSummary({ llm, prompt, messages, records, s
   let quality = inspectSummaryQuality(reply, {records, stats, contentProfile})
   logger.info(`总结正文校验：${reply.length} 字，话题 ${quality.counts.topics} 项 / 群友称号 ${quality.counts.members} 项 / 群圣经 ${quality.counts.quotes} 项`)
   if (!quality.ok) {
+    const acceptedDraft=reply, acceptedQuality=quality
     logger.warn(`总结正文不完整，自动修正一次：${quality.issues.join('；')}`)
-    reply = await model([
+    try { reply = await model([
       ...messages,
       {role:'assistant',content:reply},
       {role:'user',content:`上面的报告没有满足格式要求：${quality.issues.join('；')}。请基于前面同一份真实聊天记录完整重写报告，不能只补一段。保留三个小节的标题，${contentProfile.forwardOnly ? '没有有效群内交流，热门话题和群圣经不列条目，说明暂无足够依据。' : `话题写 ${Number.isFinite(quality.topicPolicy.max)?`${quality.min.topics}～${quality.topicPolicy.max} 项`:`至少${quality.min.topics}项，不设固定条数上限`}，优先${quality.topicPolicy.target}项；有效普通文字样本为${quality.topicPolicy.meaningful}条。群圣经写 ${quality.min.quotes}～5 项。`}群友称号写 ${quality.min.members}～5 项。每个条目及不同小节之间空一行，条目内部正常换行。覆盖不同日期及不同讨论，也检查重要信息、通知、决定与安排，不要把其他话题并入一个大话题；两个活跃时段不等于两个话题。先重新检索整个窗口的独立事件与不同问题，再按重要性选题；高消息量时五项不是上限，也不能为了达到数量拆碎同一事件。转发记录不单独成题，最多用60字且不超过话题正文20%补充本群真实交流，内层人物和原话不得混入本群统计、参与者与群圣经。只写记录确实支持的内容，不能为了凑数编造话题或原话，也不能用少量例行打卡凑主要话题；如果证据不足，请如实说明。`},
-    ])
+    ], 'repair') } catch(error) {
+      signal?.throwIfAborted()
+      // 初稿已经由服务返回且结构、证据校验通过，只因篇幅建议修订失败时保留它。
+      // 不使用被过滤的输出，不再提交拒绝内容，也不放行缺少小节或有虚构参与者的初稿。
+      if(isSummaryContentRefusal(error)&&acceptedQuality.fatalIssues.length===0){
+        logger.warn('总结润色请求内容检查未通过；保留此前已返回且通过必要校验的正文，不再次请求')
+        return acceptedDraft
+      }
+      throw error
+    }
     signal?.throwIfAborted()
     reply = limitSummaryReferenceWeight(reply, logger)
     quality = inspectSummaryQuality(reply, {records, stats, contentProfile})

@@ -10,7 +10,7 @@ export function createSummaryProgress({file=null,logger,now=Date.now}={}){
   const data=file&&existsSync(file)?JSON.parse(readFileSync(file,'utf8')):{}
   for(const [id,v]of Object.entries(data)){
    if(!/^\d{1,15}$/.test(id)||!v||!['idle','generating','success','failed'].includes(v.status))continue
-   items.set(id,{...v,groupId:Number(id),...(v.status==='generating'?{status:'failed',stage:'interrupted',message:'机器人已重启，上次任务已中断；请核对群内是否已发送后再重试。',finishedAt:now()}: {})})
+   items.set(id,{...v,...(v.status==='success'&&/统计版/.test(v.message||'')?{resultKind:'statistics'}:{}),groupId:Number(id),...(v.status==='generating'?{status:'failed',stage:'interrupted',message:'机器人已重启，上次任务已中断；请核对群内是否已发送后再重试。',finishedAt:now()}: {})})
   }
   if([...items.values()].some(v=>v.stage==='interrupted'))save()
  }catch(e){logger?.warn?.(`群总结进度读取失败：${e.message}`)}

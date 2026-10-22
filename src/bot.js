@@ -860,7 +860,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       const pyMatch = PY_CMD_RE.exec(String(parsed.text || '').trim())
       if (pyMatch) {
         if (!commandCenter || !commandCenter.allows('python', commandContext)) {
-          if (directReply) await sendTo(evt, '这个指令需要机器人管理员权限。')
+          if (directReply) await sendTo(evt, '这个指令需要机器人管理员权限。管理员可在控制台「指令中心 → 已有功能 → 运行 Python 脚本」里关掉「额外要求机器人管理员」后对所有人开放。')
           return
         }
         if (!pythonPlugins) { await sendTo(evt, 'Python 插件未启用。'); return }

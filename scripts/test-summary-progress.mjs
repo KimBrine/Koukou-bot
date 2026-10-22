@@ -35,7 +35,7 @@ try{
  releaseHistory({messages:rows});for(let i=0;i<100&&!releaseSend;i++)await new Promise(r=>setTimeout(r,20))
  assert.equal(daily.progress.get(G).stage,'sending');assert.equal(daily.progress.get(G).status,'generating');assert.equal(sends,1)
  releaseSend({message_id:99});await task
- assert.equal(daily.progress.get(G).status,'success');assert.match(daily.progress.get(G).message,/统计版/)
+ assert.equal(daily.progress.get(G).resultKind,'statistics');assert.equal(daily.progress.get(G).status,'success');assert.match(daily.progress.get(G).message,/统计版/)
  assert.equal(daily.isRunning(G),false)
  const api=createAdminServer({config,logger,onebot,memory:{},dailySummary:daily})
  assert.equal((await api.actions['summary-ack']({groupId:G,jobId:current})).acknowledged,true)
@@ -53,6 +53,7 @@ try{
  assert.match(html('idle'),/空闲中/);assert.doesNotMatch(html('idle'),/data-summary-ack/)
  assert.match(html('generating'),/disabled/);assert.match(html('generating'),/生成中/)
  assert.match(html('success'),/生成成功/);assert.match(html('success'),/data-summary-ack/)
+ vm.runInContext("state={summaryProgress:[{groupId:101,status:'success',resultKind:'statistics'}]}",context);assert.match(vm.runInContext('summaryControlsHTML(101)',context),/仅统计版/);
  assert.match(html('failed'),/生成失败/);assert.match(html('failed'),/已阅读并关闭/)
  assert.doesNotMatch(html('failed','<img src=x>'),/<img/)
  console.log('群总结进度通过：独立任务、发送后成功、重复启动保护、失败、持久化、重启中断、按任务确认及前端状态。无真实QQ或模型调用。')

@@ -37,6 +37,7 @@ import { createPersonaGreetingLibrary } from './personaGreetings.js'
 import { createAdminServer } from './admin/server.js'
 import { createRateLimiter } from './humanize.js'
 import { createChatPromptBuilder } from './chatPrompt.js'
+import { createLlbotWebui } from './llbotWebui.js'
 
 const config = loadConfig()
 const logger = createLogger(config.logLevel, config.logFile)
@@ -255,6 +256,8 @@ const summaryLLM = new DeepSeekClient({
 const wsUrl = config.onebotAccessToken
   ? `${config.onebotWsUrl}${config.onebotWsUrl.includes('?') ? '&' : '?'}access_token=${encodeURIComponent(config.onebotAccessToken)}`
   : config.onebotWsUrl
+// 日志里不能出现完整 token
+const wsDisplay = wsUrl.replace(/([?&]access_token=)[^&]*/i, '$1***')
 
 const onebot = new OneBotClient({ url: wsUrl, logger, probeUserId: config.idCheckOperators?.[0] || config.dailyPingTarget })
 // 备份 / 自检 / 异常通知
@@ -477,12 +480,29 @@ const personaGreetings=createPersonaGreetingLibrary({file:path.join(config.dataD
 const quietGreetings=createQuietGreetings({config,onebot,chatSettings,memory,logger,library:personaGreetings,
   file:path.join(config.dataDir,'quiet-greetings-state.json')})
 
+// 控制台的「QQ 登录」页要操作 LLBot（登录态在它手里）；密码文件默认按常见部署位置找，
+// 找不到就由 LLBOT_WEBUI_TOKEN_FILE 指定，页面上会显示实际尝试过的路径。
+const llbotWebui = createLlbotWebui({
+  baseUrl: config.llbotWebuiUrl,
+  tokenFile: config.llbotWebuiTokenFile,
+  candidates: [
+    path.join(config.dataDir, '..', 'llbot', 'data', 'webui_token.txt'),
+    path.join(config.dataDir, '..', '..', 'llbot', 'data', 'webui_token.txt'),
+    path.join(config.dataDir, '..', '..', 'luckylillia', 'bin', 'llbot', 'data', 'webui_token.txt'),
+    path.join(config.rootDir, '..', 'llbot', 'data', 'webui_token.txt'),
+    path.join(config.rootDir, '..', 'luckylillia', 'bin', 'llbot', 'data', 'webui_token.txt'),
+    path.join(config.rootDir, 'llbot', 'data', 'webui_token.txt'),
+  ],
+  logger,
+})
+
 // 本地控制台：机器人自己托管界面，用 Edge/Chrome 的 app 模式窗口打开就像一个桌面应用
 let adminServer = null
 if (config.adminEnabled) {
   adminServer = createAdminServer({
     config,
     logger,
+    llbotWebui,
     onebot,
     memory,
     chatSettings,
@@ -586,22 +606,44 @@ onebot.on('ready', ({ selfId, nickname }) => {
   logger.info(`机器人就绪：${nickname}（${selfId}），开始监听消息…`)
 })
 
+// 关停最多等这么久让正在写的报告收尾；重启辅助进程的等待上限比它长，见 bot-restart-worker.mjs
+const SHUTDOWN_GRACE_MS = 4000
 let shuttingDown = false
-function shutdown() {
+async function shutdown(signal = 'SIGTERM') {
   if (shuttingDown) return
   shuttingDown = true
-  logger.info('正在关闭，保存记忆…')
-  memory.flush()
-  metricsService.flush()
-  bot.flush()
-  quietGreetings.stop()
-  customSchedule.stop()
-  dailySummary.stop()
-  onebot.stop()
-  setTimeout(() => process.exit(0), 300).unref()
+  logger.info(`正在关闭（${signal}）：先停调度，等收尾最多 ${SHUTDOWN_GRACE_MS / 1000} 秒…`)
+  const hardExit = setTimeout(() => {
+    logger.warn('[关闭] 收尾超时，强制退出')
+    process.exit(0)
+  }, SHUTDOWN_GRACE_MS + 3000)
+  hardExit.unref?.()
+  // 每一步单独兜底：任何一步抛错都不能让后面的保存/退出被跳过
+  const safe = async (name, fn) => {
+    try { return await fn() } catch (err) { logger.warn(`[关闭] ${name} 失败：${err?.message || err}`); return undefined }
+  }
+  // 1) 停止接收新的定时任务；正在生成/发送的报告留给第 2 步收尾
+  await safe('停止固定语库', () => quietGreetings.stop())
+  await safe('停止定时指令', () => customSchedule.stop())
+  await safe('停止盯人', () => targetWatch.stop?.())
+  await safe('停止每日总结调度', () => dailySummary.stop())
+  await safe('停止定时补偿', () => dailyPing.stop?.())
+  // 2) 等正在写/正在发的报告结束；超时就继续关，不能让进程挂死
+  const idle = await safe('等待报告收尾', () => dailySummary.whenIdle?.({ timeoutMs: SHUTDOWN_GRACE_MS }))
+  if (idle === false) logger.warn(`[关闭] 报告在 ${SHUTDOWN_GRACE_MS / 1000} 秒内没收尾，仍然退出；未发出的报告按既有补发规则重试`)
+  // 3) 落盘（同步原子写，失败只记日志）
+  await safe('保存记忆', () => memory.flush())
+  await safe('保存长期记忆', () => longMemory.save?.())
+  await safe('保存运行指标', () => metricsService.flush())
+  await safe('保存会话状态', () => bot.flush())
+  // 4) 断开连接后正常退出
+  await safe('断开 OneBot', () => onebot.stop())
+  clearTimeout(hardExit)
+  logger.info('收尾完成，退出。')
+  process.exit(0)
 }
-process.on('SIGINT', shutdown)
-process.on('SIGTERM', shutdown)
+process.on('SIGINT', () => shutdown('SIGINT'))
+process.on('SIGTERM', () => shutdown('SIGTERM'))
 
 process.on('unhandledRejection', (err) => { logger.error(`未处理的 Promise 拒绝：${err?.stack || err}`); notifier.notify('crash', '未处理的 Promise 拒绝：' + String(err?.message || err).slice(0, 200)).catch(() => {}) })
 process.on('uncaughtException', (err) => { logger.error(`未捕获异常：${err?.stack || err}`); notifier.notify('crash', '未捕获异常：' + String(err?.message || err).slice(0, 200)).catch(() => {}) })
@@ -654,7 +696,7 @@ logger.info(`总结转发资料：先筛选群内关联再展开嵌套记录，�
 logger.info(config.replyLengthMatch
   ? `回复长度自适应：跟着对方长度走｜最多 ${config.replyMaxLines} 行、单行 ≤${config.replyLineMaxChars} 字｜行间补句间隔 ${config.lineGapMinMs}-${config.lineGapMaxMs}ms｜多行时逐行分条发送`
   : '回复长度自适应已关闭（固定单行）')
-logger.info(`OneBot 地址：${wsUrl}`)
+logger.info(`OneBot 地址：${wsDisplay}`)
 logger.info(config.adminEnabled
   ? `机器人控制台：http://127.0.0.1:${config.adminPort}（双击桌面的「Koukou 控制台」即可打开）`
   : '机器人控制台未启用（ADMIN_ENABLED=0）')
@@ -666,6 +708,9 @@ if (config.idCheckEnabled) {
   const who =
     config.idCheckOperators.length > 0 ? `仅限 QQ ${config.idCheckOperators.join('、')}` : '⚠ 任何人都能触发（ID_CHECK_OPERATORS 为空）'
   logger.info(`群名片核对已启用：群 ${where}｜${who}`)
+}
+if (config.idCheckKickEnabled && config.idCheckOperators.length === 0) {
+  logger.warn('ID_CHECK_OPERATORS 未配置：/id_check_kick 已禁用（避免群里任何人让机器人批量移出成员）')
 }
 logger.info(`管理员（ADMIN_USERS）：${config.adminUsers.length ? config.adminUsers.join('、') : '未配置（群总结等沿用公开范围；QQ 清除记忆指令不可用）'}`)
 {

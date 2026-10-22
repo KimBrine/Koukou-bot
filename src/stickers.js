@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
-import { writeJsonAtomic } from './stateFile.js'
+import { writeJsonAtomic, quarantineCorrupt } from './stateFile.js'
 
 /** 单张表情包上限 4MB：QQ 图片接口对超大图不友好，也避免把磁盘撑爆 */
 /** 常用语境标签：既方便手动分类，也让模型按语境挑图 */
@@ -69,7 +69,17 @@ export function createStickers({ dir, logger, now = () => Date.now() }) {
   }
   items = items.map(normalizeItem).filter(x => !isBlocked(x.hash))
   const learningFile = path.join(dir, 'learning-state.json')
-  let pausedByCapacity = existsSync(learningFile) && JSON.parse(readFileSync(learningFile, 'utf8')).pausedByCapacity === true
+  // 学习状态读坏了不能让整只机器人起不来：按"未暂停"继续，坏文件留档。
+  let pausedByCapacity = false
+  if (existsSync(learningFile)) {
+    try { pausedByCapacity = JSON.parse(readFileSync(learningFile, 'utf8')).pausedByCapacity === true }
+    catch (err) {
+      const kept = quarantineCorrupt(learningFile)
+      logger?.warn?.(`表情包学习状态损坏${kept ? '，已另存为 ' + kept : ''}，暂停学习，需人工检查后重新开启：${err.message}`)
+      pausedByCapacity = true
+      writeJsonAtomic(learningFile,{pausedByCapacity:true})
+    }
+  }
   function lockLearning() {
     if (!pausedByCapacity) { writeJsonAtomic(learningFile, { pausedByCapacity: true }); pausedByCapacity = true }
   }
