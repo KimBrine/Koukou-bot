@@ -73,6 +73,7 @@ let pokeReplies = []
 let pythonScripts = []
 let pythonSettings = { recallSeconds: 300 }
 let pythonDir = ''
+let pyOpen = { card: false, rows: [], editors: [] }
 let tasksInfo = null
 let metricsInfo = []
 let metricsRange = 7
@@ -639,7 +640,7 @@ function pythonCard(){
   const recall = (pythonSettings && pythonSettings.recallSeconds) || 300
   const rows = items.map(function(s){
     const id = esc(s.id)
-    return '<details class="frow"><summary><b>' + esc(s.name) + '</b> <span class="mut">/' + id + '</span>' +
+    return '<details class="frow"' + (pyOpen.rows.indexOf(s.id) >= 0 ? ' open' : '') + '><summary><b>' + esc(s.name) + '</b> <span class="mut">/' + id + '</span>' +
       (s.enabled === false ? ' <span class="pill">已停用</span>' : '') + '</summary>' +
       '<div class="mut" style="margin:6px 0 4px">' + esc(s.description || '') + '</div>' +
       '<div class="mut" style="font-size:12px">用法：' + esc(s.usage || ('/py ' + s.id)) + '</div>' +
@@ -653,12 +654,12 @@ function pythonCard(){
         '<button class="btn sm" data-pytoggle="' + id + '" data-next="' + (s.enabled === false ? '1' : '0') + '">' + (s.enabled === false ? '启用' : '停用') + '</button>' +
         '<button class="btn sm" data-pydel="' + id + '">删除</button>' +
       '</div>' +
-      '<div id="pyEditor-' + id + '" style="display:none;margin-top:8px">' +
+      '<div id="pyEditor-' + id + '" style="display:' + (pyOpen.editors.indexOf(s.id) >= 0 ? '' : 'none') + ';margin-top:8px">' +
         '<textarea data-pysrc="' + id + '" spellcheck="false" style="width:100%;min-height:240px;font-family:Consolas,monospace;font-size:12px"></textarea>' +
         '<div class="flexbar" style="margin-top:6px"><button class="btn primary sm" data-pysave="' + id + '">保存</button><button class="btn sm" data-pycancel="' + id + '">取消</button><span class="mut" id="pyMsg-' + id + '"></span></div>' +
       '</div></details>'
   }).join('')
-  return '<details class="card"><summary><b>Python 脚本</b> <span class="pill">' + items.length + ' 个</span> <span class="mut">点开管理、编辑内容</span></summary>' +
+  return '<details class="card"' + (pyOpen.card ? ' open' : '') + ' data-pycard><summary><b>Python 脚本</b> <span class="pill">' + items.length + ' 个</span> <span class="mut">点开管理、编辑内容</span></summary>' +
     '<div class="note">放在 plugins/python 下的白名单脚本，用 <code>/py 脚本名 参数</code> 运行，默认仅管理员。脚本以机器人权限执行，只导入可信文件。保存会留一份 .bak。</div>' +
     '<div class="flexbar" style="margin:8px 0;gap:8px;flex-wrap:wrap"><span class="mut">脚本目录</span><code style="font-size:12px;word-break:break-all">' + esc(pythonDir || 'plugins/python') + '</code><button class="btn sm" data-pycopy="' + esc(pythonDir || '') + '">复制路径</button><button class="btn sm" data-pyopen="">打开文件夹</button></div>' +
     '<div class="flexbar" style="margin:10px 0"><label class="mut">打包默认撤回（秒）</label><input id="pyRecall" type="number" min="5" max="7200" step="5" value="' + recall + '" style="width:90px"><button class="btn sm" id="pyRecallSave">保存</button><span class="mut" id="pyRecallHint"></span></div>' +
@@ -1338,7 +1339,10 @@ async function bind(){
   document.querySelectorAll('[data-pydel]').forEach(function(b){
     b.onclick = async function(){
       if (!await ask('删除脚本 ' + b.dataset.pydel + '？', '会同时删除备份文件 .bak。', '删除')) return
-      try { await api('/api/action/delete-python-script', { id: b.dataset.pydel }); toast('已删除'); await load(); render() }
+      const did = b.dataset.pydel
+      pyOpen.rows = pyOpen.rows.filter(function(x){ return x !== did })
+      pyOpen.editors = pyOpen.editors.filter(function(x){ return x !== did })
+      try { await api('/api/action/delete-python-script', { id: did }); toast('已删除'); await load(); render() }
       catch(e){ toast('删除失败：' + e.message, true) }
     }
   })
@@ -1357,7 +1361,8 @@ async function bind(){
       const id = b.dataset.pyedit
       const box = document.getElementById('pyEditor-' + id)
       if (!box) return
-      if (box.style.display !== 'none') { box.style.display = 'none'; return }
+      if (box.style.display !== 'none') { box.style.display = 'none'; pyOpen.editors = pyOpen.editors.filter(function(x){ return x !== id }); return }
+      if (pyOpen.editors.indexOf(id) < 0) pyOpen.editors.push(id)
       try {
         const r = await api('/api/action/read-python-script', { id })
         box.querySelector('[data-pysrc]').value = r.content || ''
@@ -1380,8 +1385,10 @@ async function bind(){
   })
   document.querySelectorAll('[data-pycancel]').forEach(function(b){
     b.onclick = function(){
-      const box = document.getElementById('pyEditor-' + b.dataset.pycancel)
+      const cid = b.dataset.pycancel
+      const box = document.getElementById('pyEditor-' + cid)
       if (box) box.style.display = 'none'
+      pyOpen.editors = pyOpen.editors.filter(function(x){ return x !== cid })
     }
   })
   const pyRecallSave = document.getElementById('pyRecallSave')
@@ -1464,7 +1471,9 @@ async function bind(){
       const id = b.dataset.pyopen || ''
       try {
         const r = await api('/api/action/open-python-folder', id ? { id } : {})
-        toast('已打开：' + r.path)
+        if (r && r.ok === false) toast('打不开资源管理器：' + (r.error || '未知原因') + '；可点前面「复制路径」再 Win+R 粘贴', true)
+        else if (r && r.warning) toast(r.warning + '：' + r.path)
+        else toast('已打开：' + (r.path || ''))
       } catch(e){ toast('打开失败：' + e.message, true) }
     }
   })
@@ -1475,6 +1484,22 @@ async function bind(){
       try { await navigator.clipboard.writeText(text); toast('已复制：' + text) }
       catch(e){ toast('复制失败，请手动选择路径', true) }
     }
+  })
+  const pyCardEl = document.querySelector('details[data-pycard]')
+  if (pyCardEl) pyCardEl.addEventListener('toggle', function(){ pyOpen.card = pyCardEl.open })
+  document.querySelectorAll('details[data-pyrow]').forEach(function(d){
+    d.addEventListener('toggle', function(){
+      const rid = d.dataset.pyrow
+      if (d.open) { if (pyOpen.rows.indexOf(rid) < 0) pyOpen.rows.push(rid) }
+      else { pyOpen.rows = pyOpen.rows.filter(function(x){ return x !== rid }); pyOpen.editors = pyOpen.editors.filter(function(x){ return x !== rid }) }
+    })
+  })
+  pyOpen.editors.slice().forEach(function(eid){
+    const box = document.getElementById('pyEditor-' + eid)
+    if (!box) return
+    const ta = box.querySelector('[data-pysrc]')
+    box.style.display = ''
+    if (ta && !ta.value) api('/api/action/read-python-script', { id: eid }).then(function(r){ ta.value = r.content || '' }).catch(function(){})
   })
   document.querySelectorAll('[data-pycmdsave]').forEach(function(b){
     b.onclick = async function(){

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, cpSync } from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
@@ -1527,18 +1527,31 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       if (!pythonPlugins) throw new Error('Python 插件未启用')
       const dir = pythonPlugins.dir
       const id = String((payload && payload.id) || '').replace(/\.py$/i, '')
-      const open = (args) => new Promise((resolve) => {
-        try { execFile('explorer.exe', args, { windowsHide: true }, () => resolve()) } catch { resolve() }
-      })
+      let target = dir
       if (id) {
         if (!/^[a-z0-9_-]{1,40}$/i.test(id)) throw new Error('脚本名无效')
-        const full = path.join(dir, id + '.py')
-        if (!existsSync(full)) throw new Error('脚本不存在：' + id + '.py')
-        await open(['/select,', full])
-        return { ok: true, path: full }
+        target = path.join(dir, id + '.py')
+        if (!existsSync(target)) throw new Error('脚本不存在：' + id + '.py')
       }
-      await open([dir])
-      return { ok: true, path: dir }
+      // explorer 的 /select,<path> 必须是一个整体参数；拆成两段会直接起不来
+      const attempt = (args) => new Promise((resolve) => {
+        let settled = false
+        const done = (result) => { if (!settled) { settled = true; resolve(result) } }
+        let child
+        try {
+          child = spawn('explorer.exe', args, { windowsHide: true, detached: true, stdio: 'ignore' })
+        } catch (err) { done({ ok: false, error: err.code || err.message }); return }
+        child.on('error', (err) => done({ ok: false, error: err.code || err.message }))
+        child.on('spawn', () => { try { child.unref() } catch {} ; done({ ok: true }) })
+        setTimeout(() => done({ ok: true }), 2000)
+      })
+      const first = await attempt(id ? ['/select,' + target] : [dir])
+      if (first.ok) return { ok: true, path: target, mode: id ? 'select' : 'folder' }
+      const second = await attempt([dir])
+      if (second.ok) return { ok: true, path: dir, mode: 'folder', warning: '定位文件失败，已改为打开所在文件夹' }
+      const reason = first.error || second.error || 'explorer 启动失败'
+      logger?.warn?.('[控制台] 打开资源管理器失败：' + reason)
+      return { ok: false, error: reason, path: target }
     },
     async 'save-poke-replies'(payload) {
       const raw = String((payload && payload.text) || '')
