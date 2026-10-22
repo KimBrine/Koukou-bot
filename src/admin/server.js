@@ -563,7 +563,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       enabled: Boolean(config.stickersEnabled),
       learned: stickers && typeof stickers.learned === 'function' ? stickers.learned() : 0,
       scenes: STICKER_SCENES,
-      learn: { enabled: Boolean(config.stickerLearnEnabled), private: Boolean(config.stickerLearnPrivate), perHour: config.stickerLearnPerHour, groups: [...(config.stickerLearnGroups || [])] },
+      learn: { ...stickers?.learningStatus?.(), enabled: Boolean(config.stickerLearnEnabled) && stickers?.learningAllowed?.() !== false, private: Boolean(config.stickerLearnPrivate), perHour: config.stickerLearnPerHour, groups: [...(config.stickerLearnGroups || [])] },
       settings: { enabled: Boolean(config.stickersEnabled), autoRate: Math.round((config.stickerAutoRate ?? .35) * 100), maxPerReply: config.stickerMaxPerReply || 1, scope: config.stickerSendScope || 'all', groups: [...(config.stickerSendGroups || [])], pickMode: config.stickerPickMode || 'context', cooldownSeconds: config.stickerCooldownSeconds || 0 },
     }),
     'GET /api/config': async () => {
@@ -630,6 +630,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     if (key === 'DEEPSEEK_REASONING_EFFORT') return config.deepseekReasoningEffort ?? ''
     const cur = readEnvFile(envFile)[key]
     const map = {
+      STICKER_LEARN_ENABLED: () => config.stickerLearnEnabled && stickers?.learningAllowed?.() !== false ? '1' : '0',
       STICKER_MAX_PER_REPLY: () => String(config.stickerMaxPerReply || 1),
       STICKER_SEND_SCOPE: () => config.stickerSendScope || 'all',
       STICKER_SEND_GROUPS: () => [...(config.stickerSendGroups || [])].join(','),
@@ -781,6 +782,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         config.stickerLearnPrivate = bool(value)
         break
       case 'STICKER_LEARN_ENABLED':
+        if (bool(value)) stickers?.resumeLearning?.()
         config.stickerLearnEnabled = ['1', 'true'].includes(String(value ?? '').trim().toLowerCase())
         break
       case 'STICKER_LEARN_GROUPS':
@@ -919,6 +921,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         const value = String(raw ?? '')
         if (/[\r\n]/.test(value)) throw new Error(`${field.label} 不能包含换行`)
         validateGroupConfig(key, value)
+        if (key === 'STICKER_LEARN_ENABLED' && /^(1|true)$/i.test(String(value).trim()) && stickers?.learningStatus?.().full) throw new Error('当前人格图库已满60张，请先人工清理后再开启学习')
         if (key === 'DEEPSEEK_REASONING_EFFORT' && !['','none','low','high','max'].includes(value)) throw new Error('DeepSeek 思考强度应为默认、关闭、low、high或max')
         if (field.type === 'rate' && (!Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 1)) {
           throw new Error(`${field.label} 应在 0～1 之间`)
@@ -957,6 +960,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       const field = EDITABLE.find((f) => f.key === key)
       if (!field) throw new Error(`不认识的配置项：${key}`)
       validateGroupConfig(key, String(value ?? ''))
+      if (key === 'STICKER_LEARN_ENABLED' && /^(1|true)$/i.test(String(value).trim()) && stickers?.learningStatus?.().full) throw new Error('当前人格图库已满60张，请先人工清理后再开启学习')
       validateVisionPatch({[key]:String(value??'')})
       writeEnvFile(envFile, { [key]: String(value ?? '') })
       const live = applyLive(key, value)

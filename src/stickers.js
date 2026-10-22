@@ -18,6 +18,7 @@ export const STICKER_SCENES = [
   { id: 'other', name: '其他' },
 ]
 
+export const STICKER_LIBRARY_LIMIT = 60
 export const STICKER_MAX_BYTES = 4 * 1024 * 1024
 const ALLOWED = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' }
 
@@ -67,6 +68,21 @@ export function createStickers({ dir, logger, now = () => Date.now() }) {
     return item
   }
   items = items.map(normalizeItem).filter(x => !isBlocked(x.hash))
+  const learningFile = path.join(dir, 'learning-state.json')
+  let pausedByCapacity = existsSync(learningFile) && JSON.parse(readFileSync(learningFile, 'utf8')).pausedByCapacity === true
+  function lockLearning() {
+    if (!pausedByCapacity) { writeJsonAtomic(learningFile, { pausedByCapacity: true }); pausedByCapacity = true }
+  }
+  function learningStatus() {
+    if (items.length >= STICKER_LIBRARY_LIMIT) lockLearning()
+    return { limit: STICKER_LIBRARY_LIMIT, full: items.length >= STICKER_LIBRARY_LIMIT, pausedByCapacity }
+  }
+  function learningAllowed() { const state = learningStatus(); return !state.full && !state.pausedByCapacity }
+  function resumeLearning() {
+    if (items.length >= STICKER_LIBRARY_LIMIT) throw new Error('当前人格图库已满60张，请先人工清理后再开启学习')
+    writeJsonAtomic(learningFile, { pausedByCapacity: false }); pausedByCapacity = false
+  }
+  learningStatus()
   const list = () => items.slice().sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0))
   const get = (id) => items.find((x) => x.id === id) || null
   const fileOf = (item) => path.join(dir, item.file)
@@ -81,6 +97,7 @@ export function createStickers({ dir, logger, now = () => Date.now() }) {
       if (label && exists.name !== label) { exists.name = label; save() }
       return { item: exists, duplicated: true }
     }
+    if (items.length >= STICKER_LIBRARY_LIMIT) { lockLearning(); throw new Error('当前人格图库已满60张，请先人工清理') }
     const ext = ALLOWED[mime]
     const file = `${hash.slice(0, 16)}.${ext}`
     writeFileSync(path.join(dir, file), buffer)
@@ -101,7 +118,8 @@ export function createStickers({ dir, logger, now = () => Date.now() }) {
       addedAt: now(),
     }
     items.push(item)
-    save()
+    try { save() } catch (error) { items.pop(); try { unlinkSync(path.join(dir, file)) } catch {}; throw error }
+    learningStatus()
     logger?.info?.(`[表情包] 新增「${item.name}」（${(buffer.length / 1024).toFixed(0)}KB）`)
     return { item, duplicated: false }
   }
@@ -186,31 +204,44 @@ export function createStickers({ dir, logger, now = () => Date.now() }) {
     return next
   }
 
-  /** 按名称/关键词匹配；都匹配不到返回 null（不猜） */
-  function find(query, {exact=false}={}) {
-    const q = String(query || '').trim().toLowerCase()
-    if (!q) return null
-    if(exact)return items.find(item=>String(item.name).toLowerCase()===q||item.id===q)||null
-    const score = (item) => {
-      const name = String(item.name || '').toLowerCase()
-      const kws = (item.keywords || []).map((k) => String(k).toLowerCase())
-      if (name === q) return 100
-      if (kws.includes(q)) return 90
-      if (name.includes(q)) return 70
-      if (kws.some((k) => k.includes(q) || q.includes(k))) return 50
-      const scenes = (item.scenes || [])
-      const sceneName = scenes.map((id) => STICKER_SCENES.find((x) => x.id === id)?.name || '').filter(Boolean)
-      if (sceneName.some((n) => n === q)) return 60
-      if (sceneName.some((n) => n.includes(q) || q.includes(n))) return 40
-      return 0
+  /** 匹配程度分档；不使用使用次数、加入时间或列表位置作为权重。 */
+  function candidates(queries) {
+    const clean = value => String(value || '').normalize('NFKC').toLowerCase().replace(/\s+/gu, '').trim()
+    const dice = (a,b) => {
+      if(a.length < 2 || b.length < 2) return 0
+      const grams = x => new Set(Array.from({length:x.length-1},(_,i)=>x.slice(i,i+2)))
+      const x=grams(a),y=grams(b);return 2*[...x].filter(g=>y.has(g)).length/(x.size+y.size)
     }
-    let best = null
-    let bestScore = 0
-    for (const item of items) {
-      const s = score(item)
-      if (s > bestScore) { best = item; bestScore = s }
+    const qs=[...new Set((Array.isArray(queries)?queries:[queries]).map(clean).filter(Boolean))]
+    return items.map(item=>{
+      const name=clean(item.name), id=clean(item.id)
+      const words=[name,...(item.keywords||[]).map(clean),...(item.scenes||[]).map(id=>clean(STICKER_SCENES.find(s=>s.id===id)?.name||id))].filter(Boolean)
+      let weight=0
+      for(const q of qs){
+        let score=q===id||q===name?1.7:words.includes(q)?1.5:0
+        if(words.some(w=>w.includes(q)||(w.length>=2&&q.includes(w))))score=Math.max(score,1.2)
+        if(words.some(w=>w.length===1&&q.includes(w)))score=Math.max(score,1.0)
+        if(q.length>=2){
+          if(words.some(w=>dice(q,w)>=0.5))score=Math.max(score,1.0)
+        }
+        weight=Math.max(weight,score)
+      }
+      return {item,weight}
+    }).filter(x=>x.weight>0)
+  }
+  function choose(queries,{limit=1,rand=Math.random}={}) {
+    const pool=candidates(queries),out=[]
+    while(pool.length&&out.length<limit){
+      let roll=rand()*pool.reduce((n,x)=>n+x.weight,0),index=pool.length-1
+      for(let i=0;i<pool.length;i++){roll-=pool[i].weight;if(roll<0){index=i;break}}
+      out.push(pool.splice(index,1)[0].item)
     }
-    return best
+    return out
+  }
+  /** 管理调用仍可精确定位ID；选图统一按匹配权重抽取，支持同名。 */
+  function find(query,{exact=false,rand=Math.random}={}) {
+    if(exact)return items.find(item=>String(item.name).toLowerCase()===String(query).trim().toLowerCase()||item.id===query)||null
+    return choose([query],{rand})[0]||null
   }
 
   /** 记住「这张图上次用在哪句话后面」，用于以后按语境挑图 */
@@ -226,39 +257,8 @@ export function createStickers({ dir, logger, now = () => Date.now() }) {
     return true
   }
 
-  /** 按语境挑一张：关键词/场景命中优先，其次看历史语境相似度，最后随机 */
-  function pick(contextText) {
-    if (items.length === 0) return null
-    const ctx = String(contextText || '')
-    if (!ctx.trim()) return random()
-    // 1) 语境里直接出现名称/关键词/场景名
-    for (const item of items) {
-      const words = [item.name, ...(item.keywords || [])]
-      const sceneNames = (item.scenes || []).map((id) => STICKER_SCENES.find((x) => x.id === id)?.name || '').filter(Boolean)
-      if ([...words, ...sceneNames].some((w) => w && ctx.includes(w))) return item
-    }
-    // 2) 历史语境相似度（按两字片段重合打分）
-    const grams = (s) => {
-      const out = new Set()
-      const clean = s.replace(/\s+/g, '')
-      for (let i = 0; i < clean.length - 1; i++) out.add(clean.slice(i, i + 2))
-      return out
-    }
-    const ctxGrams = grams(ctx)
-    let best = null
-    let bestScore = 0
-    for (const item of items) {
-      for (const past of item.lastContexts || []) {
-        let hit = 0
-        for (const g of grams(past)) if (ctxGrams.has(g)) hit++
-        const score = hit / Math.max(4, grams(past).size)
-        if (score > bestScore) { best = item; bestScore = score }
-      }
-    }
-    if (best && bestScore >= 0.34) return best
-    // 3) 退化成随机
-    return random()
-  }
+  /** 明确索图未给候选时按语境加权；没有匹配才随机兜底。 */
+  function pick(contextText) { return choose([contextText])[0] || random() }
 
   function random() {
     if (items.length === 0) return null
@@ -279,7 +279,7 @@ export function createStickers({ dir, logger, now = () => Date.now() }) {
     } catch { return null }
   }
 
-  return { dir, list, get, add, remove, update, find, pick, random, noteUsage, summary, dataUrlOf, blacklist, unblock, isBlocked, blacklistImage,
+  return { dir, list, get, add, remove, update, find, pick, random, noteUsage, summary, dataUrlOf, blacklist, unblock, isBlocked, blacklistImage, choose, candidates, learningStatus, learningAllowed, resumeLearning,
     blacklistEntries: () => blocked.map(x=>({...x,hasPreview:existsSync(blockedFile(x.hash))})).sort((a,b)=>b.blockedAt-a.blockedAt), count: () => items.length,
     learned: () => items.filter((x) => x.origin === 'learned').length }
 }
