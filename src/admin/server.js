@@ -1523,6 +1523,23 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       pythonPlugins.remove(payload && payload.id)
       return { ok: true }
     },
+    async 'open-python-folder'(payload) {
+      if (!pythonPlugins) throw new Error('Python 插件未启用')
+      const dir = pythonPlugins.dir
+      const id = String((payload && payload.id) || '').replace(/\.py$/i, '')
+      const open = (args) => new Promise((resolve) => {
+        try { execFile('explorer.exe', args, { windowsHide: true }, () => resolve()) } catch { resolve() }
+      })
+      if (id) {
+        if (!/^[a-z0-9_-]{1,40}$/i.test(id)) throw new Error('脚本名无效')
+        const full = path.join(dir, id + '.py')
+        if (!existsSync(full)) throw new Error('脚本不存在：' + id + '.py')
+        await open(['/select,', full])
+        return { ok: true, path: full }
+      }
+      await open([dir])
+      return { ok: true, path: dir }
+    },
     async 'save-poke-replies'(payload) {
       const raw = String((payload && payload.text) || '')
       const lines = raw.split(/\r?\n/).map((x) => x.trim()).filter((x) => x && !x.startsWith('#'))

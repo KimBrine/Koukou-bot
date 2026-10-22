@@ -39,6 +39,7 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
       try { text = readFileSync(full, 'utf8') } catch {}
       const meta = parseMeta(text, file)
       try { meta.size = statSync(full).size } catch {}
+      meta.path = full
       meta.enabled = !disabled.has(meta.id)
       meta.command = names[meta.id] || meta.id
       out.push(meta)

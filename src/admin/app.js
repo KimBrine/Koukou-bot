@@ -72,6 +72,7 @@ let errorInfo = []
 let pokeReplies = []
 let pythonScripts = []
 let pythonSettings = { recallSeconds: 300 }
+let pythonDir = ''
 let tasksInfo = null
 let metricsInfo = []
 let metricsRange = 7
@@ -630,6 +631,7 @@ function pokeCorpusCard(){
 async function loadPythonScripts(){
   const r = await api('/api/python-scripts').catch(function(){ return { items: [] } })
   pythonScripts = r.items || []
+  pythonDir = r.dir || pythonDir
   if (r.settings) pythonSettings = r.settings
 }
 function pythonCard(){
@@ -645,6 +647,7 @@ function pythonCard(){
         '<input data-pycmd="' + id + '" value="' + esc(s.command || s.id) + '" style="width:120px" maxlength="20">' +
         '<button class="btn sm" data-pycmdsave="' + id + '">保存调用名</button>' +
         '<span class="mut" style="font-size:12px">文件名 ' + id + '.py</span></div>' +
+      '<div class="flexbar" style="margin-top:6px;gap:6px;flex-wrap:wrap"><span class="mut" style="font-size:12px;word-break:break-all">' + esc(s.path || '') + '</span><button class="btn sm" data-pycopy="' + esc(s.path || '') + '">复制</button><button class="btn sm" data-pyopen="' + id + '">定位文件</button></div>' +
       '<div class="flexbar" style="margin-top:8px">' +
         '<button class="btn sm" data-pyedit="' + id + '">编辑内容</button>' +
         '<button class="btn sm" data-pytoggle="' + id + '" data-next="' + (s.enabled === false ? '1' : '0') + '">' + (s.enabled === false ? '启用' : '停用') + '</button>' +
@@ -657,6 +660,7 @@ function pythonCard(){
   }).join('')
   return '<details class="card"><summary><b>Python 脚本</b> <span class="pill">' + items.length + ' 个</span> <span class="mut">点开管理、编辑内容</span></summary>' +
     '<div class="note">放在 plugins/python 下的白名单脚本，用 <code>/py 脚本名 参数</code> 运行，默认仅管理员。脚本以机器人权限执行，只导入可信文件。保存会留一份 .bak。</div>' +
+    '<div class="flexbar" style="margin:8px 0;gap:8px;flex-wrap:wrap"><span class="mut">脚本目录</span><code style="font-size:12px;word-break:break-all">' + esc(pythonDir || 'plugins/python') + '</code><button class="btn sm" data-pycopy="' + esc(pythonDir || '') + '">复制路径</button><button class="btn sm" data-pyopen="">打开文件夹</button></div>' +
     '<div class="flexbar" style="margin:10px 0"><label class="mut">打包默认撤回（秒）</label><input id="pyRecall" type="number" min="5" max="7200" step="5" value="' + recall + '" style="width:90px"><button class="btn sm" id="pyRecallSave">保存</button><span class="mut" id="pyRecallHint"></span></div>' +
     (rows || '<div class="mut">还没有脚本</div>') +
     '<details class="frow" style="margin-top:10px"><summary><b>＋ 新建脚本</b> <span class="mut">自己写，或让 AI 起草</span></summary>' +
@@ -1455,6 +1459,23 @@ async function bind(){
       await load(); render()
     } catch(e){ if (hint) hint.textContent = '保存失败：' + e.message; toast('保存失败：' + e.message, true) }
   }
+  document.querySelectorAll('[data-pyopen]').forEach(function(b){
+    b.onclick = async function(){
+      const id = b.dataset.pyopen || ''
+      try {
+        const r = await api('/api/action/open-python-folder', id ? { id } : {})
+        toast('已打开：' + r.path)
+      } catch(e){ toast('打开失败：' + e.message, true) }
+    }
+  })
+  document.querySelectorAll('[data-pycopy]').forEach(function(b){
+    b.onclick = async function(){
+      const text = b.dataset.pycopy || ''
+      if (!text) { toast('没有可复制的路径', true); return }
+      try { await navigator.clipboard.writeText(text); toast('已复制：' + text) }
+      catch(e){ toast('复制失败，请手动选择路径', true) }
+    }
+  })
   document.querySelectorAll('[data-pycmdsave]').forEach(function(b){
     b.onclick = async function(){
       const id = b.dataset.pycmdsave
