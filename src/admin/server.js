@@ -1474,7 +1474,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       // 不传 maxTokens：输出上限跟随全局模型预算（控制台「模型与接口」可调），
       // 模型、温度、思考强度都与对话共用同一个 llm 客户端。
       const raw = await llm.chat(system, [{ role: 'user', content: prompt }],
-        { signal: AbortSignal.timeout(180000), rejectTruncated: true })
+        { signal: AbortSignal.timeout(600000), rejectTruncated: true, unlimited: true })
       const text = String(raw || '')
       const block = /```(?:python|py)?\s*([\s\S]*?)```/i.exec(text)
       const content = (block ? block[1] : text).trim()

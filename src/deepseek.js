@@ -60,11 +60,12 @@ export class DeepSeekClient {
   }
 
   /** 纯文本对话：messages 为 [{role, content}] 历史（不含 system） */
-  async chat(systemPrompt, messages, { rejectTruncated = false, signal, maxTokens, temperature = this.temperature } = {}) {
+  async chat(systemPrompt, messages, { rejectTruncated = false, signal, maxTokens, unlimited = false, temperature = this.temperature } = {}) {
     const baseMax = typeof this.maxTokens === 'function' ? this.maxTokens() : this.maxTokens
     const configured=Number.isFinite(baseMax)&&baseMax>0?Math.floor(baseMax):undefined
     const requested=Number.isFinite(maxTokens)&&maxTokens>0?Math.max(1,Math.floor(maxTokens)):undefined
-    const outputBudget=configured===undefined?requested:requested===undefined?configured:Math.min(configured,requested)
+    // unlimited=true 时请求体里完全不带 max_tokens，输出长度交给服务商/模型自身
+    const outputBudget=unlimited?undefined:configured===undefined?requested:requested===undefined?configured:Math.min(configured,requested)
     await this.#acquire(signal)
     try {
       let lastErr = null
