@@ -51,6 +51,17 @@ try {
     plugins.remove('demo')
     assert.match(plugins.helpText(), /还没有 Python 脚本/)
   })
+  test('可以单独停用某个脚本', () => {
+    plugins.importScript('off.py', '# name: 停用测试\nprint(1)')
+    assert.equal(plugins.list().find((x) => x.id === 'off').enabled, true)
+    plugins.setEnabled('off', false)
+    assert.equal(plugins.list().find((x) => x.id === 'off').enabled, false)
+    assert.match(plugins.helpText(), /已停用/)
+    assert.equal(plugins.isEnabled('off'), false)
+    plugins.setEnabled('off', true)
+    assert.equal(plugins.isEnabled('off'), true)
+    plugins.remove('off')
+  })
   console.log('python plugins checks passed: ' + passed)
 } finally {
   rmSync(root, { recursive: true, force: true })

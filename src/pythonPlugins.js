@@ -24,6 +24,7 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
   const dir = path.join(config.rootDir, 'plugins', 'python')
   const list = () => {
     if (!existsSync(dir)) return []
+    const disabled = readDisabled()
     const out = []
     for (const file of readdirSync(dir).filter((f) => NAME_RE.test(f)).sort()) {
       const full = path.join(dir, file)
@@ -31,6 +32,7 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
       try { text = readFileSync(full, 'utf8') } catch {}
       const meta = parseMeta(text, file)
       try { meta.size = statSync(full).size } catch {}
+      meta.enabled = !disabled.has(meta.id)
       out.push(meta)
     }
     return out
@@ -47,6 +49,7 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
     if (!NAME_RE.test(file)) throw new Error('脚本名无效')
     const full = path.join(dir, file)
     if (!existsSync(full)) throw new Error('脚本不存在：' + file)
+    if (!isEnabled(id)) throw new Error('脚本已停用：' + id + '（管理员可在控制台「指令中心 → Python 脚本」开启）')
     const args = splitArgs(rawArgs).slice(0, 20)
     return await new Promise((resolve) => {
       execFile(pythonPath, [full, ...args], { cwd: dir, timeout: timeoutMs, maxBuffer: 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
@@ -74,6 +77,31 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
     const id = base.replace(/\.py$/i, '')
     return list().find((x) => x.id === id) || null
   }
+  const DISABLED_FILE = path.join(dir, 'disabled.json')
+  function readDisabled() {
+    try {
+      const raw = JSON.parse(readFileSync(DISABLED_FILE, 'utf8'))
+      return new Set(Array.isArray(raw) ? raw.map(String) : [])
+    } catch { return new Set() }
+  }
+  function writeDisabled(set) {
+    try {
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(DISABLED_FILE, JSON.stringify([...set], null, 1), 'utf8')
+    } catch {}
+  }
+  function isEnabled(id) {
+    return !readDisabled().has(String(id || '').replace(/\.py$/i, ''))
+  }
+  function setEnabled(id, enabled) {
+    const key = String(id || '').replace(/\.py$/i, '')
+    if (!NAME_RE.test(key + '.py')) throw new Error('脚本名无效')
+    const set = readDisabled()
+    if (enabled) set.delete(key)
+    else set.add(key)
+    writeDisabled(set)
+    return isEnabled(key)
+  }
   function remove(id) {
     const file = String(id || '').replace(/\.py$/i, '') + '.py'
     if (!NAME_RE.test(file)) throw new Error('脚本名无效')
@@ -91,12 +119,12 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
     }
     const lines = [`已安装 Python 脚本 ${items.length} 个，用法：/py 脚本名 参数`, '']
     for (const it of items) {
-      lines.push(`▪ /py ${it.id} — ${it.name}`)
+      lines.push(`▪ /py ${it.id} — ${it.name}${it.enabled === false ? '（已停用）' : ''}`)
       if (it.description) lines.push(`   ${it.description.slice(0, 80)}`)
       if (it.usage) lines.push(`   用法：${it.usage.slice(0, 90)}`)
     }
     const text = lines.join('\n')
     return text.length > limit ? text.slice(0, limit - 12) + '\n…（已截断）' : text
   }
-  return { list, run, importScript, remove, helpText, dir }
+  return { list, run, importScript, remove, helpText, isEnabled, setEnabled, dir }
 }

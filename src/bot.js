@@ -870,6 +870,10 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
           catch (err) { await sendTo(evt, '读取脚本列表失败：' + err.message) }
           return
         }
+        if (typeof pythonPlugins.isEnabled === 'function' && !pythonPlugins.isEnabled(pyName)) {
+          await sendTo(evt, `脚本「${pyName}」已停用，管理员可在控制台「指令中心 → Python 脚本」开启。`)
+          return
+        }
         try {
           const r = await pythonPlugins.run(pyName, pyMatch[2] || '')
           const out = String(r.stdout || r.stderr || '（没有输出）').trim()
@@ -885,8 +889,9 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
                 return content.length ? { content } : null
               }).filter(Boolean)
               if (!nodes.length) throw new Error('内容为空')
-              if (evt.message_type === 'private') await onebot.sendPrivateForward(evt.user_id, nodes)
-              else await onebot.sendGroupForward(evt.group_id, nodes)
+              // 整话几十张图时上传较慢，单条合并转发给足 120 秒
+              if (evt.message_type === 'private') await onebot.sendPrivateForward(evt.user_id, nodes, 120000)
+              else await onebot.sendGroupForward(evt.group_id, nodes, 120000)
               if (card.summary) await sendTo(evt, '✅ ' + card.summary)
             } catch (err) { await sendTo(evt, '聊天记录发送失败：' + err.message) }
             return

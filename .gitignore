@@ -59,3 +59,4 @@ plugins/python/option.yml
 plugins/python/state/
 __pycache__/
 *.pyc
+plugins/python/disabled.json

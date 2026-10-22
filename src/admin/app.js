@@ -629,7 +629,7 @@ function pokeCorpusCard(){
 function pythonCard(){
   const items = pythonScripts || []
   const rows = items.map(function(s){
-    return '<div class="frow"><label>' + esc(s.name) + ' <span class="mut">/' + esc(s.id) + '</span></label><div><span class="mut">' + esc(s.description || '') + '</span> <span class="mut" style="font-size:12px">' + esc(s.usage || '') + '</span> <button class="btn sm" data-pydel="' + esc(s.id) + '">删除</button></div></div>'
+    return '<div class="frow"><label>' + esc(s.name) + ' <span class="mut">/' + esc(s.id) + '</span></label><div><span class="mut">' + esc(s.description || '') + '</span> <span class="mut" style="font-size:12px">' + esc(s.usage || '') + '</span> <button class="btn sm" data-pytoggle="' + esc(s.id) + '" data-next="' + (s.enabled === false ? '1' : '0') + '">' + (s.enabled === false ? '启用' : '停用') + '</button> <button class="btn sm" data-pydel="' + esc(s.id) + '">删除</button></div></div>'
   }).join('')
   return '<section class="card"><h2>Python 脚本 <span class="pill">' + items.length + ' 个</span></h2>' +
     '<div class="note">放在 plugins/python 下的白名单脚本，用 <code>/py 脚本名 参数</code> 运行，默认仅管理员。脚本以机器人权限执行，只导入可信文件。</div>' +
@@ -1299,6 +1299,16 @@ async function bind(){
       if (!await ask('删除脚本 ' + b.dataset.pydel + '？', '会同时删除备份文件 .bak。', '删除')) return
       try { await api('/api/action/delete-python-script', { id: b.dataset.pydel }); toast('已删除'); await load(); render() }
       catch(e){ toast('删除失败：' + e.message, true) }
+    }
+  })
+  document.querySelectorAll('[data-pytoggle]').forEach(function(b){
+    b.onclick = async function(){
+      const on = b.dataset.next === '1'
+      try {
+        await api('/api/action/toggle-python-script', { id: b.dataset.pytoggle, enabled: on })
+        toast((on ? '已启用 ' : '已停用 ') + b.dataset.pytoggle)
+        await load(); render()
+      } catch(e){ toast('操作失败：' + e.message, true) }
     }
   })
   const pokeSave = document.getElementById('pokeSave')

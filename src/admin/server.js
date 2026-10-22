@@ -1436,6 +1436,10 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       const item = pythonPlugins.importScript(payload && payload.filename, payload && payload.content)
       return { ok: true, item }
     },
+    async 'toggle-python-script'(payload) {
+      if (!pythonPlugins) throw new Error('Python 插件未启用')
+      return { enabled: pythonPlugins.setEnabled(payload && payload.id, Boolean(payload && payload.enabled)) }
+    },
     async 'delete-python-script'(payload) {
       if (!pythonPlugins) throw new Error('Python 插件未启用')
       pythonPlugins.remove(payload && payload.id)

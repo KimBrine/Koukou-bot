@@ -19,7 +19,7 @@ jm.py —— 机器人用的后台下载插件 + 详情查询
     初始化 [目录]   生成配置文件，默认 ~/jmcomic/option.yml
     查/查询/jmv 350234   查本子详情（不发图，纯文本）
     发图 350234 [张数]    直接把第一话前几张图发到聊天（默认3，最多6）
-    记录 350234 [张数]    详情+图片打包成一条聊天记录卡片（默认5，最多8）
+    记录 350234 [张数]    详情+整话图片打包成一条聊天记录卡片（不填张数=整话全部）
     123456          下载本子(album)
     p345678         下载单个章节(photo)
     状态/status     当前任务进度
@@ -428,8 +428,26 @@ def cmd_info(raw):
     return text
 
 
-def _fetch_pages(album_id, count, timeout=17):
-    """取某一话的前 count 张图（已解密），返回 (album, pindex, pname, files, total)。"""
+def _download_one(client, img, photo, outdir, retry=2):
+    save_path = outdir / img.filename
+    for attempt in range(retry + 1):
+        try:
+            if save_path.is_file() and save_path.stat().st_size > 0:
+                return save_path
+            client.download_image(img.download_url, str(save_path),
+                                  photo.scramble_id, decode_image=True)
+            return save_path
+        except Exception:
+            if attempt >= retry:
+                raise
+            time.sleep(0.4)
+    return save_path
+
+
+def _fetch_pages(album_id, count=None, timeout=18):
+    """取某一话的图片（已解密）。count=None 表示整话全部。
+    返回 (album, pindex, pname, files, total)。"""
+    from concurrent.futures import ThreadPoolExecutor
 
     def fetch():
         from jmcomic import create_option
@@ -446,14 +464,13 @@ def _fetch_pages(album_id, count, timeout=17):
         outdir = state_dir() / 'images' / str(photo.photo_id)
         outdir.mkdir(parents=True, exist_ok=True)
 
-        files = []
-        for img in list(photo)[:count]:
-            save_path = outdir / img.filename
-            if not save_path.is_file() or save_path.stat().st_size == 0:
-                client.download_image(img.download_url, str(save_path),
-                                      photo.scramble_id, decode_image=True)
-            files.append(save_path)
-        total = len(getattr(photo, 'page_arr', []) or [])
+        images = list(photo)
+        total = len(images)
+        if count:
+            images = images[:count]
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            files = list(pool.map(lambda im: _download_one(client, im, photo, outdir), images))
         return album, pindex, pname, files, total
 
     return _with_timeout(fetch, timeout)
@@ -468,17 +485,21 @@ def cmd_send_images(raw, count_arg=''):
     """把图片以 CQ 码直接发在聊天里。"""
     digits = re.findall(r'\d+', raw or '')
     if not digits:
-        return '用法：/py jm 发图 350234 [张数]\n默认 3 张，最多 6 张。'
-    try:
-        count = int(str(count_arg).strip() or 3)
-    except ValueError:
-        count = 3
-    count = max(1, min(count, 6))
+        return '用法：/py jm 发图 350234 [张数]\n默认 3 张，最多 20 张。'
+    arg = str(count_arg).strip().lower()
+    if arg in ('全部', 'all'):
+        count = 20
+    else:
+        try:
+            count = int(arg or 3)
+        except ValueError:
+            count = 3
+    count = max(1, min(count, 20))
 
     try:
-        album, pindex, pname, files, total = _fetch_pages(''.join(digits), count, 16)
+        album, pindex, pname, files, total = _fetch_pages(''.join(digits), count, 18)
     except TimeoutError:
-        return '下载图片超时（16 秒）。网慢时先 /py jm 350234 后台下载，再 /py jm 发图 350234。'
+        return '下载图片超时（18 秒）。网慢时先 /py jm 350234 后台下载，再 /py jm 发图 350234。'
     except SystemExit as e:
         return str(e)
     except Exception as e:
@@ -491,22 +512,25 @@ def cmd_send_images(raw, count_arg=''):
 
 
 def cmd_card(raw, count_arg=''):
-    """把详情和图片打包成一条「聊天记录」卡片，交给机器人合并转发。"""
+    """把详情和这一话的全部图片打包成一条「聊天记录」卡片。"""
     digits = re.findall(r'\d+', raw or '')
     if not digits:
-        return '用法：/py jm 记录 350234 [张数]\n默认 5 张，最多 8 张。'
+        return '用法：/py jm 记录 350234 [张数]\n不填张数就是整话全部。'
     album_id = ''.join(digits)
 
-    try:
-        count = int(str(count_arg).strip() or 5)
-    except ValueError:
-        count = 5
-    count = max(1, min(count, 8))
+    arg = str(count_arg).strip().lower()
+    if arg in ('', '全部', 'all', '0'):
+        count = None
+    else:
+        try:
+            count = max(1, min(int(arg), 40))
+        except ValueError:
+            count = None
 
     try:
-        album, pindex, pname, files, total = _fetch_pages(album_id, count, 17)
+        album, pindex, pname, files, total = _fetch_pages(album_id, count, 18)
     except TimeoutError:
-        return '生成聊天记录超时（17 秒）。先 /py jm 350234 后台下载，再试 /py jm 记录 350234。'
+        return '生成聊天记录超时（18 秒）。先 /py jm 350234 后台下载，再试 /py jm 记录 350234。'
     except SystemExit as e:
         return str(e)
     except Exception as e:
