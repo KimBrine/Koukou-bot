@@ -1,21 +1,23 @@
 # name: 禁漫下载
-# desc: 后台下载 JM 本子/章节到本地，可查进度（文件存本地，不在聊天里发图）
-# usage: /py jm 初始化 → /py jm 123456 → /py jm 状态
+# desc: 后台下载 JM 本子/章节到本地；也能直接查详情（标题/作者/页数/标签/章节）发到聊天里
+# usage: /py jm 初始化 → /py jm 查 350234 → /py jm 350234 → /py jm 状态
 # admin: true
 """
-jm.py —— 机器人用的后台下载插件
+jm.py —— 机器人用的后台下载插件 + 详情查询
 
-为什么是"两段式"：/py 有 20 秒超时、只回文本，而下载一本要几分钟。
-所以这里只做三件事：提交任务、把 worker 甩到独立进程、之后查状态。
+为什么下载是"两段式"：/py 有 20 秒超时、只回文本，而下载一本要几分钟。
+所以下载只做三件事：提交任务、把 worker 甩到独立进程、之后查状态。
+查询（查）是同步的，一般 1~3 秒返回，结果直接发在聊天里。
 
 首次使用：
     1. pip install jmcomic
     2. /py jm 初始化        → 生成 ~/jmcomic/option.yml（Windows 是 C:\\Users\\你\\jmcomic\\）
     3. 按需改里面的代理、下载路径
-    4. /py jm 123456        → 开始下载
+    4. /py jm 查 350234     → 先看详情；/py jm 350234 开始下载
 
 子命令：
     初始化 [目录]   生成配置文件，默认 ~/jmcomic/option.yml
+    查/查询/jmv 350234   查本子详情（不发图，纯文本）
     123456          下载本子(album)
     p345678         下载单个章节(photo)
     状态/status     当前任务进度
@@ -31,8 +33,10 @@ jm.py —— 机器人用的后台下载插件
 
 import json
 import os
+import re
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -238,6 +242,177 @@ def cmd_doctor():
     return '\n'.join(lines)
 
 
+# ---------- 详情查询 ----------
+
+CACHE_TTL = 1800
+
+
+def _cache_dir() -> Path:
+    return state_dir() / 'cache'
+
+
+def cache_get(key):
+    try:
+        p = _cache_dir() / f'{key}.json'
+        if not p.is_file():
+            return None
+        data = json.loads(p.read_text(encoding='utf-8'))
+        if time.time() - data.get('ts', 0) > CACHE_TTL:
+            return None
+        return data.get('text')
+    except Exception:
+        return None
+
+
+def cache_put(key, text):
+    try:
+        d = _cache_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f'{key}.json').write_text(
+            json.dumps({'ts': time.time(), 'text': text}, ensure_ascii=False), encoding='utf-8')
+    except Exception:
+        pass
+
+
+def _fmt_num(n):
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        return str(n if n is not None else 0)
+    if n >= 1_000_000:
+        return f'{n / 1_000_000:.1f}M'
+    if n >= 1_000:
+        return f'{n / 1_000:.1f}K'
+    return str(n)
+
+
+def _fmt_date(v):
+    s = str(v).strip() if v is not None else ''
+    return '-' if s in ('', '0', 'None', 'null') else s
+
+
+def _fmt_list(items, limit=8):
+    items = [str(x) for x in (items or [])]
+    if not items:
+        return ''
+    shown = ', '.join(items[:limit])
+    return shown + (f' 等{len(items)}个' if len(items) > limit else '')
+
+
+def _with_timeout(fn, seconds=12):
+    """在子线程里跑，超时就放弃 —— 保证不会撞上 /py 的 20 秒限制。"""
+    box = {}
+
+    def run():
+        try:
+            box['value'] = fn()
+        except BaseException as e:  # noqa: BLE001
+            box['error'] = e
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(seconds)
+    if t.is_alive():
+        raise TimeoutError(f'超过 {seconds} 秒')
+    if 'error' in box:
+        raise box['error']
+    return box.get('value')
+
+
+def _quiet_jmcomic():
+    """关掉 jmcomic 自己的日志，否则会混进聊天回复里（还吃 1500 字上限）。"""
+    try:
+        import logging
+        logging.getLogger('jmcomic').setLevel(logging.CRITICAL)
+        import jmcomic
+        jmcomic.disable_jm_log()
+    except Exception:
+        pass
+
+
+def format_album(album, limit=1100):
+    from jmcomic import JmcomicText
+
+    def g(name, default=None):
+        return getattr(album, name, default)
+
+    lines = [
+        f'📖 {g("name") or g("title") or "(无标题)"}',
+        f'🆔 JM{album.album_id}   👤 {_fmt_list(g("authors"), 3) or "未知"}',
+        f'📅 发布 {_fmt_date(g("pub_date"))}  更新 {_fmt_date(g("update_date"))}  📄 {g("page_count", 0)} 页',
+        f'👀 {_fmt_num(g("views"))}   ❤️ {_fmt_num(g("likes"))}   💬 {_fmt_num(g("comment_count"))}',
+    ]
+
+    tags = _fmt_list(g('tags'), 10)
+    if tags:
+        lines.append('🏷️ ' + tags)
+    works = _fmt_list(g('works'), 4)
+    if works:
+        lines.append('📚 ' + works)
+    actors = _fmt_list(g('actors'), 4)
+    if actors:
+        lines.append('🎭 ' + actors)
+
+    desc = (g('description') or '').strip().replace('\n', ' ')
+    if desc:
+        lines.append('📝 ' + desc[:120])
+
+    episodes = g('episode_list') or []
+    if episodes:
+        lines.append(f'📑 章节 {len(episodes)}：')
+        for ep in episodes[:6]:
+            try:
+                pid, pindex, pname = ep
+            except (TypeError, ValueError):
+                pid, pindex, pname = '?', '?', str(ep)
+            lines.append(f'  {pindex}. {str(pname).strip()[:16]} (p{pid})')
+        if len(episodes) > 6:
+            lines.append(f'  …还有 {len(episodes) - 6} 章')
+
+    lines.append(f'🔗 {JmcomicText.format_album_url(album.album_id)}')
+    lines.append(f'▶ 下载：/py jm {album.album_id}')
+
+    text = '\n'.join(lines)
+    if len(text) > limit:
+        text = text[:limit - 12].rstrip() + '\n…（已截断）'
+    return text
+
+
+def cmd_info(raw):
+    raw = (raw or '').strip()
+    if raw[:1].lower() == 'p':
+        return ('这是章节号。查详情用本子号：/py jm 查 350234\n'
+                '只下这一章：/py jm ' + raw)
+
+    digits = re.findall(r'\d+', raw)
+    if not digits:
+        return '用法：/py jm 查 350234\n（数字就行，前后带别的字也行）'
+    album_id = ''.join(digits)
+
+    cached = cache_get(f'album_{album_id}')
+    if cached:
+        return cached
+
+    def fetch():
+        from jmcomic import create_option
+        option = create_option(str(find_option()))
+        _quiet_jmcomic()
+        return option.new_jm_client().get_album_detail(int(album_id))
+
+    try:
+        album = _with_timeout(fetch, 12)
+    except TimeoutError:
+        return '查询超时了（12 秒）。多半是代理或网速，先跑 /py jm 检查 看配置。'
+    except SystemExit as e:
+        return str(e)
+    except Exception as e:
+        return f'查询失败：{type(e).__name__}: {str(e)[:120]}'
+
+    text = format_album(album)
+    cache_put(f'album_{album_id}', text)
+    return text
+
+
 # ---------- 提交 ----------
 
 def submit(raw_id):
@@ -390,6 +565,9 @@ def main(argv):
         return 0
     if low in ('检查', 'doctor', '自检'):
         print(cmd_doctor())
+        return 0
+    if low in ('查', '查询', 'jmv', 'info', 'detail'):
+        print(cmd_info(argv[1] if len(argv) > 1 else ''))
         return 0
     if low in ('状态', 'status', '进度'):
         print(cmd_status())
