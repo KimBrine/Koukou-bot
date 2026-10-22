@@ -16,7 +16,8 @@ jm.py —— 机器人用的后台下载插件 + 详情查询
     4. /py jm 查 350234     → 先看详情；/py jm 350234 开始下载
 
 子命令：
-    初始化 [目录]   生成配置文件，默认 ~/jmcomic/option.yml
+    初始化 [目录]   生成配置文件（已有配置时只提示现有路径，不重复生成）
+    目录 [路径]     查看/修改下载目录（写回 option.yml 的 base_dir）
     查/查询/jmv 350234   查本子详情（不发图，纯文本）
     发图 350234 [张数]    直接把第一话前几张图发到聊天（默认3，最多6）
     记录 350234 [张数]    详情+整话图片打包成一条聊天记录卡片（不填张数=整话全部）
@@ -204,6 +205,15 @@ def tail_text(path, n=LOG_TAIL):
 # ---------- 初始化 / 自检 ----------
 
 def cmd_init(arg=''):
+    # 已经有生效配置时不要再生成一份，否则新文件会被前一个候选路径遮住，改了也不生效
+    try:
+        active = find_option()
+        return (f'配置已存在，正在用它：\n{active}\n'
+                f'当前下载目录：{download_dir()}\n'
+                f'改目录：/py jm 目录 D:\\jmcomic\\download')
+    except SystemExit:
+        pass
+
     target = Path(arg).expanduser() if arg else jm_home()
     if not target.is_absolute():
         target = (HERE / target).resolve()
@@ -217,7 +227,36 @@ def cmd_init(arg=''):
     opt.write_text(TEMPLATE.replace('__DOWNLOAD__', download), encoding='utf-8')
     return (f'已生成配置：{opt}\n'
             f'下载目录：{download}\n'
-            f'需要代理就改里面的 proxies，然后 /py jm 123456 开始下载')
+            f'要换盘：/py jm 目录 D:\\jmcomic\\download')
+
+
+def cmd_setdir(raw=''):
+    """改生效配置里的下载目录（base_dir），不用手改文件。"""
+    raw = (raw or '').strip().strip('"').strip("'")
+    if not raw:
+        return (f'当前下载目录：{download_dir()}\n'
+                f'配置：{find_option()}\n'
+                f'改目录：/py jm 目录 D:\\jmcomic\\download')
+
+    target = Path(raw).expanduser()
+    if not target.is_absolute():
+        return '请写绝对路径，比如 /py jm 目录 D:\\jmcomic\\download'
+
+    opt = find_option()
+    text = opt.read_text(encoding='utf-8')
+    value = target.as_posix()
+
+    if re.search(r'(?m)^\s*base_dir\s*:', text):
+        text = re.sub(r'(?m)^(\s*base_dir\s*:\s*).*$', lambda m: m.group(1) + value, text, count=1)
+    else:
+        text = text.rstrip('\n') + f'\n\ndir_rule:\n  base_dir: {value}\n'
+    opt.write_text(text, encoding='utf-8')
+
+    try:
+        actual = download_dir()
+        return f'已改：{opt}\n下载目录 → {actual}\n（目录会在第一次下载时自动创建）'
+    except Exception as e:
+        return f'已写入 {opt}，但读取校验失败：{type(e).__name__}: {e}'
 
 
 def cmd_doctor():
@@ -713,6 +752,9 @@ def main(argv):
 
     if low in ('初始化', 'init'):
         print(cmd_init(argv[1] if len(argv) > 1 else ''))
+        return 0
+    if low in ('目录', 'dir', 'setdir'):
+        print(cmd_setdir(argv[1] if len(argv) > 1 else ''))
         return 0
     if low in ('检查', 'doctor', '自检'):
         print(cmd_doctor())
