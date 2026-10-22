@@ -658,7 +658,8 @@ function pythonCard(){
         '<button class="btn sm" data-pydel="' + id + '">删除</button>' +
       '</div>' +
       '<div id="pyEditor-' + id + '" style="display:' + (pyOpen.editors.indexOf(s.id) >= 0 ? '' : 'none') + ';margin-top:8px">' +
-        '<textarea data-pysrc="' + id + '" spellcheck="false" style="width:100%;min-height:240px;font-family:Consolas,monospace;font-size:12px">' + esc(pyDrafts[s.id] ?? '') + '</textarea>' +
+        '<div class="mut" id="pyInfo-' + id + '" style="font-size:12px;margin-bottom:4px">这里是该脚本的完整源码；保存会覆盖 plugins/python/' + id + '.py（自动留 .bak）。</div>' +
+        '<textarea data-pysrc="' + id + '" spellcheck="false" style="width:100%;min-height:360px;font-family:Consolas,monospace;font-size:12px">' + esc(pyDrafts[s.id] ?? '') + '</textarea>' +
         '<div class="flexbar" style="margin-top:6px"><button class="btn primary sm" data-pysave="' + id + '">保存</button><button class="btn sm" data-pycancel="' + id + '">取消</button><span class="mut" id="pyMsg-' + id + '"></span></div>' +
       '</div></details>'
   }).join('')
@@ -668,7 +669,7 @@ function pythonCard(){
     '<div class="flexbar" style="margin:10px 0"><label class="mut">打包默认撤回（秒）</label><input id="pyRecall" type="number" min="5" max="7200" step="5" value="' + recall + '" style="width:90px"><button class="btn sm" id="pyRecallSave">保存</button><span class="mut" id="pyRecallHint"></span></div>' +
     (rows || '<div class="mut">还没有脚本</div>') +
     '<details class="frow" style="margin-top:10px"><summary><b>＋ 新建脚本</b> <span class="mut">自己写，或让 AI 起草</span></summary>' +
-      '<div class="mut" style="margin:8px 0 6px">描述你要的功能，AI 只生成草稿，代码会放在下面，确认后再保存。保存后即可用 <code>/py 文件名</code> 调用。</div>' +
+      '<div class="mut" style="margin:8px 0 6px">三种填法，效果一样：① 点「插入模板」拿骨架自己改；② 写一句需求让「AI 生成草稿」；③ 直接把完整代码粘进来。保存后会写成 plugins/python/文件名.py，不用重启，立刻能用 <code>/py 文件名</code> 调用。</div>' +
       '<textarea id="pyPrompt" placeholder="例如：把一段文字倒序输出，并统计字符数；参数为空时提示用法" style="width:100%;min-height:70px"></textarea>' +
       '<div class="flexbar" style="margin:8px 0"><input id="pyNewName" placeholder="文件名，如 wc.py" style="width:170px"><input id="pyNewCmd" placeholder="调用名（可选）" style="width:140px" maxlength="20"><button class="btn sm" id="pyDraftBtn">AI 生成草稿</button><button class="btn sm" id="pyTplBtn">插入模板</button><span class="mut" id="pyDraftHint"></span></div>' +
       '<textarea id="pyNewCode" spellcheck="false" placeholder="代码会出现在这里，也可以自己直接写" style="width:100%;min-height:240px;font-family:Consolas,monospace;font-size:12px"></textarea>' +
@@ -1437,6 +1438,8 @@ async function bind(){
         const ta=box.querySelector('[data-pysrc]')
         if(pyDrafts[id] === undefined){const r=await api('/api/action/read-python-script',{id});if(box.isConnected === false)return;if(pyDrafts[id] === undefined){pyDrafts[id]=r.content || ''}}
         ta.value=pyDrafts[id];box.style.display = ''
+        const info = document.getElementById('pyInfo-' + id)
+        if (info) info.textContent = '完整源码 · ' + ta.value.split('\n').length + ' 行 · 保存会覆盖 plugins/python/' + id + '.py（自动留 .bak）'
       } catch(e){ toast('读取失败：' + e.message, true) }
     }
   })
