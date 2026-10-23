@@ -119,6 +119,14 @@ const EDITABLE = [
   { key: 'STICKER_SEND_GROUPS', label: '表情包指定发送群', live: true, type: 'text' },
   { key: 'STICKER_PICK_MODE', label: '表情包选图方式', hint: 'context / model / random', live: true, type: 'text' },
   { key: 'STICKER_COOLDOWN_SECONDS', label: '同一会话配图间隔（秒）', hint: '0不额外限制', live: true, type: 'number' },
+  { key: 'STICKER_WEB_SEARCH', label: '允许联网找表情包', hint: '开启后，用户说「给我找张表情包」这类话会用必应图片搜索一张发过去（本地库优先）；不需要额外 Key', live: true, type: 'bool' },
+  { key: 'STICKER_SEARCH_PROVIDER', label: '联网搜图来源', hint: 'bing（免 Key）/ giphy / tenor / custom（自定义 URL 模板）', live: true, type: 'text' },
+  { key: 'STICKER_SEARCH_URL', label: '自定义搜图 URL', hint: '仅 custom 用；支持 {query} {key} {count} 占位符，接口返回 JSON，程序会自动找图片直链', live: true, type: 'text', wide: true },
+  { key: 'STICKER_SEARCH_KEY', label: '搜图 API Key', hint: 'Giphy / Tenor / 自定义接口用；留空不修改', live: true, type: 'secret' },
+  { key: 'STICKER_SEARCH_MODEL', label: '搜图改写模型', hint: '留空=主对话模型；填模型名（如 deepseek-flash）给它单独用', live: true, type: 'text' },
+  { key: 'STICKER_SEARCH_REWRITE', label: '用模型改写搜索词', hint: '关掉后只按原话提取关键词，不调用模型', live: true, type: 'bool' },
+  { key: 'STICKER_SEARCH_FILTER', label: '用识图模型筛图', hint: '下载后用识图模型判断像不像表情包，跳过 logo/截图/真人照', live: true, type: 'bool' },
+  { key: 'STICKER_SEARCH_PROXY', label: '搜图代理', hint: '只影响搜图请求（Giphy/Tenor 国内需代理），如 http://127.0.0.1:7890；留空直连', live: true, type: 'text' },
   { key: 'DEEPSEEK_API_KEY', label: '模型 Key', live: true, type: 'secret' },
   { key: 'VISION_REASONING', label: '识图思考强度', hint: 'none 最稳（默认）；low/high 更细但更慢，也更容易吃光 token 预算', live: true, type: 'text' },
   { key: 'VISION_MAX_TOKENS', label: '识图 token 预算', hint: '64～4000，默认 300；复杂图片可调高', live: true, type: 'number' },
@@ -136,6 +144,12 @@ const EDITABLE = [
   { key: 'TEMPERATURE', label: '采样温度', hint: '越高越随性', live: false, type: 'number' },
   { key: 'PRIVATE_WHITELIST', label: '私聊白名单', hint: '允许私聊的 QQ 号，逗号分隔；留空 = 只回管理员和控制台里添加过的私聊', live: true, type: 'text', wide: true },
   { key: 'MAX_TOKENS', label: '单次回复 token 上限', hint: '256～200000，即时生效；思考强度开启时建议 ≥2000，否则推理会吃掉输出预算导致回复被截断', live: true, type: 'number' },
+  { key: 'FILE_UPLOAD_MAX_MB', label: '文件发送上限 (MB)', hint: '/发文件 与 Python 脚本结果共用；1～8192，即时生效。QQ 与协议端本身还有自己的上限', live: true, type: 'number' },
+  { key: 'FILE_SPLIT_MB', label: '大文件分卷大小 (MB)', hint: '超过这个大小自动切成多卷发送，避免 QQ 上传到几百 MB 时失败；默认 90，即时生效', live: true, type: 'number' },
+  { key: 'ARCHIVE_FORMAT', label: '打包格式', hint: 'zip、7z 或 rar；/发文件 指定目录时、jm 打包都用它。7z需要7-Zip，rar需要RAR/WinRAR', live: true, type: 'text' },
+  { key: 'ARCHIVE_PASSES', label: '压缩次数', hint: '1～5；2 次表示把上一次的压缩包再压一遍（生成 name.2.zip 这类嵌套包），次数越多越耗时、体积通常不会更小', live: true, type: 'number' },
+  { key: 'RAR_PATH', label: 'RAR 程序路径', hint: '创建RAR需WinRAR目录里的Rar.exe或rar；可填程序、目录，留空查找常见位置与PATH。7-Zip不能创建RAR', live: true, type: 'text' },
+  { key: 'SEVEN_ZIP_PATH', label: '7-Zip 路径', hint: '留空自动找 C:\\Program Files\\7-Zip\\7z.exe 等常见位置；只影响打包，改完下次打包生效', live: true, type: 'text' },
   { key: 'LOG_LEVEL', label: '日志级别', hint: 'debug/info/warn/error', live: false, type: 'text' },
 ]
 
@@ -275,8 +289,13 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     if (field.type === 'number' && !Number.isFinite(Number(value))) throw new Error(`${field.label} 需要填写数字`)
     if (key === 'STICKER_SEND_SCOPE' && !['all', 'whitelist', 'selected', 'private'].includes(value)) throw new Error('配图范围无效')
     if (key === 'STICKER_PICK_MODE' && !['context', 'model', 'random'].includes(value)) throw new Error('选图方式无效')
+    if (key === 'STICKER_SEARCH_PROVIDER' && !['bing', 'custom', 'giphy', 'tenor'].includes(String(value).trim().toLowerCase())) throw new Error('搜图来源只支持 bing / custom / giphy / tenor')
     if (key === 'STICKER_MAX_PER_REPLY' && (!Number.isInteger(Number(value)) || Number(value) < 1 || Number(value) > 3)) throw new Error('每次最多1到3张')
     if (key === 'MAX_TOKENS' && (!Number.isInteger(Number(value)) || Number(value) < 256 || Number(value) > 200000)) throw new Error('单次回复 token 上限应为 256～200000')
+    if (key === 'FILE_UPLOAD_MAX_MB' && (!Number.isInteger(Number(value)) || Number(value) < 1 || Number(value) > 8192)) throw new Error('文件发送上限应为 1～8192 MB 的整数')
+    if (key === 'FILE_SPLIT_MB' && (!Number.isInteger(Number(value)) || Number(value) < 5 || Number(value) > 1024)) throw new Error('分卷大小应为 5～1024 MB 的整数')
+    if (key === 'ARCHIVE_FORMAT' && !['zip', '7z', 'rar'].includes(String(value).trim().toLowerCase())) throw new Error('打包格式只支持 zip、7z 或 rar')
+    if (key === 'ARCHIVE_PASSES' && (!Number.isInteger(Number(value)) || Number(value) < 1 || Number(value) > 5)) throw new Error('压缩次数应为 1～5 的整数')
     if (key === 'STICKER_AUTO_RATE' && (Number(value) < 0 || Number(value) > 100)) throw new Error('配图概率应为0到100')
     if (key === 'STICKER_COOLDOWN_SECONDS' && (Number(value) < 0 || Number(value) > 86400)) throw new Error('配图间隔应为0到86400秒')
     if (key === 'SUMMARY_MAX_TOKENS' && (!Number.isInteger(Number(value)) || Number(value) < 500 || Number(value) > 16000)) throw new Error('总结输出 token 上限应为 500～16000 的整数')
@@ -290,8 +309,8 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
   let groupListCache = { at: 0, items: [] }
   let friendListCache = { at: 0, items: [] }
 
-  async function getGroupList() {
-    if (Date.now() - groupListCache.at < 30000) return groupListCache.items
+  async function getGroupList(force = false) {
+    if (!force && Date.now() - groupListCache.at < 30000) return groupListCache.items
     try {
       const res = await onebot.api('get_group_list', {}, 6000)
       const items = (Array.isArray(res) ? res : res?.data ?? []).map((g) => ({
@@ -306,8 +325,8 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     return groupListCache.items
   }
 
-  async function getFriendList() {
-    if (Date.now() - friendListCache.at < 60000) return friendListCache.items
+  async function getFriendList(force = false) {
+    if (!force && Date.now() - friendListCache.at < 60000) return friendListCache.items
     try {
       const res = await onebot.api('get_friend_list', {}, 6000)
       const items = (Array.isArray(res) ? res : res?.data ?? []).map((f) => ({
@@ -354,8 +373,10 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         if (existsSync(file)) {
           msgToday = readFileSync(file, 'utf8').split(/\r?\n/).filter((l) => l.trim()).length
         }
+        if (!msgToday) msgToday = countMemoryToday(key)
       } else {
         name = friendMap.get(String(uid))?.name ?? ''
+        msgToday = countMemoryToday(key)
       }
       const history = Array.isArray(mem[key]) ? mem[key] : []
       // 不在白名单、没有任何消息、也没有单独设置的群：视为残留空壳，不显示
@@ -404,6 +425,14 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     return path.join(personaDir, `${safe}.txt`)
   }
 
+  function countMemoryToday(key) {
+    try {
+      if (!memory?.get) return 0
+      const start = new Date(); start.setHours(0, 0, 0, 0)
+      return (memory.get(key) || []).filter((e) => e.role === 'user' && Number(e.time || 0) >= start.getTime()).length
+    } catch { return 0 }
+  }
+
   function todayStats() {
     const pad2 = (n) => String(n).padStart(2, '0')
     const d = new Date()
@@ -422,6 +451,13 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       }
     } catch {
       /* ignore */
+    }
+    // 日常总结没开时 data/daily 下没有文件，退回按记忆里的时间统计今天，避免工作台永远是 0
+    if (!total && memory?.keys) {
+      for (const key of memory.keys()) {
+        const n = countMemoryToday(key)
+        if (n > 0) { perGroup.push({ groupId: key, count: n }); total += n }
+      }
     }
     perGroup.sort((a, b) => b.count - a.count)
     return { date: key, total, perGroup }
@@ -535,8 +571,8 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     'GET /api/state': async () => buildState(),
     'GET /api/updates': async () => updateChecker.check(),
     'GET /api/chats': async () => ({ items: await buildChatList() }),
-    'GET /api/groups': async () => ({ items: await getGroupList() }),
-    'GET /api/friends': async () => ({ items: await getFriendList() }),
+    'GET /api/groups': async (query) => ({ items: await getGroupList(query?.refresh === '1') }),
+    'GET /api/friends': async (query) => ({ items: await getFriendList(query?.refresh === '1') }),
     'GET /api/custom-commands': async () => ({ items: typeof customCommands?.all === 'function' ? customCommands.all() : [],builtinItems:commandCenter?.all()||[],poke:commandCenter?.diagnostics()||{} }),
     'GET /api/personas': async () => ({ items: listPersonas(), active: config.activePersona || '', dir: personaDir }),
     'GET /api/memory-overview': async () => {
@@ -612,7 +648,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       learned: stickers && typeof stickers.learned === 'function' ? stickers.learned() : 0,
       scenes: STICKER_SCENES,
       learn: { ...stickers?.learningStatus?.(), enabled: Boolean(config.stickerLearnEnabled) && stickers?.learningAllowed?.() !== false, private: Boolean(config.stickerLearnPrivate), perHour: config.stickerLearnPerHour, groups: [...(config.stickerLearnGroups || [])] },
-      settings: { enabled: Boolean(config.stickersEnabled), autoRate: Math.round((config.stickerAutoRate ?? .35) * 100), maxPerReply: config.stickerMaxPerReply || 1, scope: config.stickerSendScope || 'all', groups: [...(config.stickerSendGroups || [])], pickMode: config.stickerPickMode || 'context', cooldownSeconds: config.stickerCooldownSeconds || 0 },
+      settings: { enabled: Boolean(config.stickersEnabled), autoRate: Math.round((config.stickerAutoRate ?? .35) * 100), maxPerReply: config.stickerMaxPerReply || 1, scope: config.stickerSendScope || 'all', groups: [...(config.stickerSendGroups || [])], pickMode: config.stickerPickMode || 'context', cooldownSeconds: config.stickerCooldownSeconds || 0, webSearch: config.stickerWebSearch !== false, searchProvider: config.stickerSearchProvider || 'bing', searchUrl: config.stickerSearchUrl || '', searchKeyConfigured: Boolean(config.stickerSearchKey), searchModel: config.stickerSearchModel || '', searchRewrite: config.stickerSearchRewrite !== false, searchFilter: config.stickerSearchFilter !== false, searchProxy: config.stickerSearchProxy || '' },
     }),
     'GET /api/config': async () => {
       const env = readEnvFile(envFile)
@@ -713,6 +749,10 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       HUMAN_DELAY_MAX_MS: () => String(config.humanDelayMaxMs),
       LINE_GAP_MIN_MS: () => String(config.lineGapMinMs),
       LINE_GAP_MAX_MS: () => String(config.lineGapMaxMs),
+      RATE_LIMIT_PER_HOUR: () => String(config.rateLimitPerHour),
+      RATE_LIMIT_AT_PER_HOUR: () => String(config.rateLimitAtPerHour),
+      RATE_LIMIT_MIN_GAP_MS: () => String(config.rateLimitMinGapMs),
+      RATE_LIMIT_WAIT_MAX_MS: () => String(config.rateLimitWaitMaxMs),
       PROACTIVE_COOLDOWN_MS: () => String(config.proactiveCooldownMs),
       CONTEXT_REMEMBER_ALL: () => (config.contextRememberAll ? '1' : '0'),
       REPLY_LENGTH_MATCH: () => (config.replyLengthMatch ? '1' : '0'),
@@ -754,6 +794,52 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
           .split(',')
           .map((x) => x.trim())
           .filter(Boolean)
+        break
+      // 文件发送 / 打包参数：调用时现读 config，所以即时生效
+      case 'FILE_UPLOAD_MAX_MB':
+        config.fileUploadMaxMb = Math.min(8192, Math.max(1, Math.floor(num(value, config.fileUploadMaxMb ?? 1024))))
+        break
+      case 'ARCHIVE_FORMAT':
+        config.archiveFormat = ['zip', '7z', 'rar'].includes(String(value || '').trim().toLowerCase())
+          ? String(value).trim().toLowerCase() : 'zip'
+        break
+      case 'ARCHIVE_PASSES':
+        config.archivePasses = Math.min(5, Math.max(1, Math.floor(num(value, config.archivePasses ?? 1))))
+        break
+      case 'RAR_PATH':
+        config.rarPath = String(value || '').trim()
+        break
+      case 'SEVEN_ZIP_PATH':
+        config.sevenZipPath = String(value || '').trim()
+        break
+      case 'FILE_SPLIT_MB':
+        config.fileSplitMb = Math.max(5, Math.min(1024, Math.floor(Number(value) || 90)))
+        break
+      case 'STICKER_WEB_SEARCH':
+        config.stickerWebSearch = bool(value)
+        break
+      case 'STICKER_SEARCH_PROVIDER':
+        config.stickerSearchProvider = ['bing', 'custom', 'giphy', 'tenor'].includes(String(value || '').trim().toLowerCase())
+          ? String(value).trim().toLowerCase() : 'bing'
+        break
+      case 'STICKER_SEARCH_URL':
+        config.stickerSearchUrl = String(value || '').trim()
+        break
+      case 'STICKER_SEARCH_KEY':
+        if (!String(value || '').trim()) return false
+        config.stickerSearchKey = String(value).trim()
+        break
+      case 'STICKER_SEARCH_MODEL':
+        config.stickerSearchModel = String(value || '').trim()
+        break
+      case 'STICKER_SEARCH_REWRITE':
+        config.stickerSearchRewrite = bool(value)
+        break
+      case 'STICKER_SEARCH_FILTER':
+        config.stickerSearchFilter = bool(value)
+        break
+      case 'STICKER_SEARCH_PROXY':
+        config.stickerSearchProxy = String(value || '').trim()
         break
       case 'DEEPSEEK_BASE_URL': {
         const v = String(value || '').trim().replace(/\/+$/, '')
@@ -1288,7 +1374,11 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       if(!receipt?.message_id&&!receipt?.data?.message_id)throw new Error('文字发送未确认，未继续发送图片')
       if (selected && !selected.current()) throw new Error('人格已变化，未继续发送旧人格图片')
       if (!library.dataUrlOf(item)) throw new Error('图片已删除或拉黑，未继续发送')
-      await onebot.sendGroup(groupId, [{ type: 'image', data: { file, sub_type: 1 } }])
+      // 按协议端补字段：LLBot 用 subType、NapCat 用原来的 sub_type（没有该方法时按 NapCat 写法）
+      const stickerSegment = typeof onebot.imageSegment === 'function'
+        ? await onebot.imageSegment(file, { sticker: true })
+        : { type: 'image', data: { file, sub_type: 1 } }
+      await onebot.sendGroup(groupId, [stickerSegment])
       logger?.info?.(`[控制台] 测试发送表情包「${item.name}」到群 ${groupId}`)
       return { ok: true, name: item.name }
     },

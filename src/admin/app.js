@@ -538,13 +538,28 @@ function groupRateEditor(value){
   }).join('')
   return `<div class="rate-editor"><input type="hidden" data-cfg="PROACTIVE_RATE_PER_GROUP" value="${esc(value)}"><div class="group-list" id="groupRateRows">${rows}</div><div class="empty" id="rateEmpty" ${rows ? 'hidden' : ''}>没有单独设置的群，均沿用全局概率。</div><div class="inline-error" id="rateError" role="status"></div><div class="rate-add"><select id="rateGroupPick" aria-label="选择需要单独设置概率的群"><option value="">选择群聊…</option>${availableGroups().map(g => `<option value="${g.id}">${esc(g.name)}（${g.id}）</option>`).join('')}<option value="manual">手动输入群号</option></select><input id="rateGroupId" type="text" inputmode="numeric" aria-label="手动输入概率目标群号" placeholder="输入群号" hidden><button class="btn" id="addGroupRate" type="button">＋ 添加群概率</button></div></div>`
 }
+async function refreshContacts(){
+  // 好友/群在 QQ 上加完之后，控制台缓存（群 30 秒、好友 60 秒）可能还是旧的；
+  // 这里强制拉一次并更新内存列表，供"添加白名单/私聊"等选择框使用。
+  const [g,f]=await Promise.all([api('/api/groups?refresh=1'),api('/api/friends?refresh=1')])
+  if(Array.isArray(g?.items))joinedGroups=g.items
+  if(Array.isArray(f?.items))friendList=f.items
+  return {groups:joinedGroups,friends:friendList}
+}
 async function importWhitelist(options={}){
   const privateChat=options.privateChat===true, label=privateChat?'QQ号':'群号', subject=privateChat?'私聊白名单':'白名单群聊'
   const root=document.getElementById('modalRoot')
   const existing=()=>new Set((privateChat?state?.config?.privateWhitelist || []:state?.config?.whitelist || []).map(String))
   const contactName=id=>privateChat?(friendList.find(f=>String(f.id)===String(id))?.name || 'QQ用户'):groupName(id)
-  const candidates=privateChat?friendList:availableGroups()
-  root.innerHTML=`<div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="importTitle"><h2 id="importTitle">添加${subject}</h2><p>${privateChat?'选择好友或输入QQ号，支持批量添加。添加后新消息即时生效，不会自动发消息或补发旧回复。':'选择群聊，或粘贴多个群号。导入后即时生效。'}</p><label class="field-label" for="whitelistPick">从${privateChat?'好友':'已知群聊'}中选择</label><select id="whitelistPick"><option value="">选择${privateChat?'好友':'群聊'}…</option>${candidates.filter(c=>!existing().has(String(c.id))).map(c=>`<option value="${esc(c.id)}">${esc(c.name)}（${esc(c.id)}）</option>`).join('')}</select><div class="note">未显示在列表中时，也可以直接输入${label}。</div><label class="field-label" for="whitelistInput">${label}（支持批量导入）</label><textarea id="whitelistInput" placeholder="每行一个${label}，也支持逗号或空格分隔"></textarea><div id="whitelistPreview" class="import-preview" aria-live="polite"></div><div class="row"><button class="btn" id="importCancel">取消</button><button class="btn primary" id="importCommit" disabled>请先选择或输入${label}</button></div></div>`
+  const optionHtml=()=>{
+    const list=privateChat?friendList:availableGroups(), known=existing()
+    return list.filter(c=>!known.has(String(c.id))).map(c=>`<option value="${esc(c.id)}">${esc(c.name)}（${esc(c.id)}）</option>`).join('')
+  }
+  const buildOptions=()=>{
+    const sel=root.querySelector('#whitelistPick');if(!sel)return
+    sel.innerHTML='<option value="">选择'+(privateChat?'好友':'群聊')+'…</option>'+optionHtml()
+  }
+  root.innerHTML=`<div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="importTitle"><h2 id="importTitle">添加${subject}</h2><p>${privateChat?'选择好友或输入QQ号，支持批量添加。添加后新消息即时生效，不会自动发消息或补发旧回复。':'选择群聊，或粘贴多个群号。导入后即时生效。'}</p><label class="field-label" for="whitelistPick">从${privateChat?'好友':'已知群聊'}中选择</label><div class="flexbar" style="align-items:center;gap:8px"><select id="whitelistPick" style="flex:1"><option value="">选择${privateChat?'好友':'群聊'}…</option>${optionHtml()}</select><button class="btn sm" id="whitelistRefresh" type="button">刷新列表</button></div><div class="note">刚在 QQ 上加的好友/群没出现，点一下「刷新列表」。也可以直接输入${label}。</div><label class="field-label" for="whitelistInput">${label}（支持批量导入）</label><textarea id="whitelistInput" placeholder="每行一个${label}，也支持逗号或空格分隔"></textarea><div id="whitelistPreview" class="import-preview" aria-live="polite"></div><div class="row"><button class="btn" id="importCancel">取消</button><button class="btn primary" id="importCommit" disabled>请先选择或输入${label}</button></div></div>`
   root.classList.add('show');root.setAttribute('aria-hidden','false')
   const input=root.querySelector('#whitelistInput'),commit=root.querySelector('#importCommit')
   let newIds=[],pending=false
@@ -560,6 +575,15 @@ async function importWhitelist(options={}){
     commit.textContent=commit.disabled?(ids.length&&!invalid.length?'已在白名单中':`请先选择或输入${label}`):`添加${newIds.length}${privateChat?'人到私聊白名单':'个白名单群'}`
   }
   input.oninput=preview;root.querySelector('#whitelistPick').onchange=event=>{if(event.target.value){input.value+=(input.value.trim()?'\n':'')+event.target.value;event.target.value='';preview()}}
+  const refreshContactsBtn=root.querySelector('#whitelistRefresh')
+  if(refreshContactsBtn)refreshContactsBtn.onclick=async()=>{
+    const old=refreshContactsBtn.textContent;refreshContactsBtn.disabled=true;refreshContactsBtn.textContent='刷新中…'
+    try{await refreshContacts();buildOptions();toast('好友/群列表已更新')}
+    catch(err){toast('刷新失败：'+err.message,true)}
+    finally{refreshContactsBtn.disabled=false;refreshContactsBtn.textContent=old}
+  }
+  // 打开弹窗时后台再拉一次，刚在 QQ 上加的好友/群不用手动刷新也能出现
+  refreshContacts().then(()=>buildOptions()).catch(()=>{})
   commit.onclick=async()=>{
     preview();if(commit.disabled)return;pending=true;commit.disabled=true;commit.textContent='正在添加…'
     try{const result=await api(privateChat?'/api/action/add-private-whitelist':'/api/action/update-whitelist',privateChat?{userIds:newIds}:{operation:'add',groupIds:newIds});pending=false;close();await load();toast(privateChat?`已添加${result.changed}人到私聊白名单，下一条新消息起生效`:`已添加${result.changed}个白名单群，即时生效`)}
@@ -567,9 +591,10 @@ async function importWhitelist(options={}){
   }
   preview();root.querySelector('#whitelistPick').focus()
 }
-function configForm(keys, hint){
+function configForm(keys, hint, opts = {}){
+  const scope = opts.scope || 'main'
   const items = configItems.filter(i=>keys.includes(i.key))
-  return items.map(i => {
+  const fields = items.map(i => {
     const v = i.effective !== '' ? i.effective : i.value
     const inactive = state?.config?.summaryUnrestricted && ['SUMMARY_MAX_MESSAGES','SUMMARY_MAX_TOKENS','SUMMARY_TASK_TIMEOUT_MINUTES'].includes(i.key)
     const badge = inactive ? '<span class="badge">宽裕模式下不生效</span>' : i.live ? '<span class="badge live">即时生效</span>' : '<span class="badge restart">需重启</span>'
@@ -581,18 +606,20 @@ function configForm(keys, hint){
     else if (i.key === 'VISION_PROVIDER' || i.key === 'SUMMARY_PROVIDER') input = `<select data-cfg="${i.key}"><option value="deepseek" ${v==='deepseek'?'selected':''}>DeepSeek</option><option value="dashscope" ${v==='dashscope'?'selected':''}>DashScope（通义千问）</option></select>`
     else if (i.key === 'DEEPSEEK_REASONING_EFFORT') input = `<select data-cfg="${i.key}">${[['','沿用服务端默认'],['none','关闭思考'],['low','Low · 较少思考'],['high','High · 充分思考'],['max','Max · 最大思考投入']].map(([value,label])=>`<option value="${value}" ${v===value?'selected':''}>${label}</option>`).join('')}</select>`
     else if (i.key === 'SUMMARY_SEND_MODE') input = `<select data-cfg="${i.key}"><option value="forward" ${v==='forward'?'selected':''}>合并转发卡片</option><option value="split" ${v==='split'?'selected':''}>按空行逐段发送</option></select>`
+    else if (i.key === 'ARCHIVE_FORMAT') input = `<select data-cfg="${i.key}"><option value="zip" ${v==='zip'?'selected':''}>zip（兼容性最好）</option><option value="7z" ${v==='7z'?'selected':''}>7z（需要 7-Zip）</option><option value="rar" ${v==='rar'?'selected':''}>rar（需要 WinRAR/RAR）</option></select>`
     else if (i.key === 'LOG_LEVEL') input = `<select data-cfg="${i.key}"><option value="debug" ${v==='debug'?'selected':''}>详细调试</option><option value="info" ${v==='info'?'selected':''}>正常信息</option><option value="warn" ${v==='warn'?'selected':''}>只看警告与错误</option><option value="error" ${v==='error'?'selected':''}>只看错误</option></select>`
     else input = `<input type="${i.type==='number'?'number':'text'}" data-cfg="${i.key}" value="${esc(v)}">`
     if (inactive) input = `<fieldset disabled style="border:0;padding:0;margin:0;opacity:.5">${input}</fieldset>`
     const fieldHint = ['SUMMARY_SEND_MODE','LOG_LEVEL'].includes(i.key) ? '' : (i.hint||'')
     return `<div class="frow"><label>${i.label} ${badge}</label><div>${input}${fieldHint ? `<div class="mut" style="font-size:12px;margin-top:3px">${fieldHint}</div>` : ''}</div></div>`
-  }).join('') + `<div class="flexbar sticky-save"><button class="btn primary" id="saveCfg" disabled>没有待保存的改动</button><span class="mut" id="cfgDirty">${hint||''}</span></div>`
+  }).join('')
+  return `<div class="cfg-scope" data-cfg-scope="${scope}"><div class="cfg-fields">${fields}</div><div class="flexbar sticky-save"><button class="btn primary" data-cfgsave="${scope}" disabled>没有待保存的改动</button><span class="mut" data-cfgdirty="${scope}">${hint||''}</span></div></div>`
 }
 function pageHumanize(){
   const greetings=state?.config?.quietGreetings
   return `<h1>回复行为</h1><div class="sub">这里修改“沿用全局”的默认值；会话单独设置优先，其次是按群独立概率，最后才是全局概率。</div>
   <div class="flexbar"><a class="btn" href="#chats">管理白名单群聊 →</a><span class="note">概率填写百分比，例如 20%，不需要输入配置格式。</span></div>
-  <div class="card">${configForm(['PROACTIVE_RATE','PROACTIVE_RATE_PER_GROUP','PROACTIVE_COOLDOWN_MS','EMOJI_KEEP_RATE','HUMAN_DELAY_MIN_MS','HUMAN_DELAY_MAX_MS','REPLY_LENGTH_MATCH','REPLY_MIN_BUDGET','REPLY_MAX_LINES','REPLY_LINE_MAX_CHARS','LINE_GAP_MIN_MS','LINE_GAP_MAX_MS','RATE_LIMIT_PER_HOUR','RATE_LIMIT_MIN_GAP_MS','QUIET_HOURS','QUIET_GREETINGS_ENABLED','HISTORY_LIMIT','CONTEXT_REMEMBER_ALL','POKE_REPLY_ENABLED','AUTO_PLUS_ONE_ENABLED','PRIVATE_WHITELIST'],'修改全局概率不会覆盖已经单独设置的群；限流相关参数需重启生效。')}</div><div class="note">固定语库早晚安：${greetings?.enabled?'已启用':'未启用'}；语库就绪 ${greetings?.groups?.filter(g=>g.ready).length||0}/${greetings?.groups?.length||0} 群。检查时段、选句和发送均不调用 AI。<a href="#persona">前往人格页面编辑或导出语库 →</a> <button class="btn sm" id="catchUpMorning">补发本轮未发的早安</button></div>`
+  <div class="card">${configForm(['PROACTIVE_RATE','PROACTIVE_RATE_PER_GROUP','PROACTIVE_COOLDOWN_MS','EMOJI_KEEP_RATE','HUMAN_DELAY_MIN_MS','HUMAN_DELAY_MAX_MS','REPLY_LENGTH_MATCH','REPLY_MIN_BUDGET','REPLY_MAX_LINES','REPLY_LINE_MAX_CHARS','LINE_GAP_MIN_MS','LINE_GAP_MAX_MS','RATE_LIMIT_PER_HOUR','RATE_LIMIT_AT_PER_HOUR','RATE_LIMIT_MIN_GAP_MS','RATE_LIMIT_WAIT_MAX_MS','QUIET_HOURS','QUIET_GREETINGS_ENABLED','HISTORY_LIMIT','CONTEXT_REMEMBER_ALL','POKE_REPLY_ENABLED','AUTO_PLUS_ONE_ENABLED','PRIVATE_WHITELIST'],'修改全局概率不会覆盖已经单独设置的群；限流相关参数需重启生效。',{scope:'humanize'})}</div><div class="note">固定语库早晚安：${greetings?.enabled?'已启用':'未启用'}；语库就绪 ${greetings?.groups?.filter(g=>g.ready).length||0}/${greetings?.groups?.length||0} 群。检查时段、选句和发送均不调用 AI。<a href="#persona">前往人格页面编辑或导出语库 →</a> <button class="btn sm" id="catchUpMorning">补发本轮未发的早安</button></div>`
 }
 function webSearchCard(){
   const info = webSearchInfo || {}
@@ -613,11 +640,13 @@ function webSearchCard(){
 function pageApi(){
   return modelPickerCard() + visionCard() + webSearchCard() + `<h1>模型与接口</h1><div class="sub">对话模型、思考强度改完立刻生效；下方视觉模型与其它项按标注生效。</div>
   <div class="card"><strong>当前生效的识图模型：</strong>${esc(state?.bot?.visionModel || '未启用')}<div class="mut" style="margin-top:5px">图片识别与群聊报告分别配置；下方的 DashScope 模型只有切换识图服务商后才会用于读图。</div></div>
-  <div class="card">${configForm(['TEMPERATURE','MAX_TOKENS','DASHSCOPE_API_KEY','BAIDU_QIANFAN_API_KEY','LOG_LEVEL'],'已设置的密钥不会显示；留空保持原值。')}</div>`
+  <div class="card">${configForm(['TEMPERATURE','MAX_TOKENS','DASHSCOPE_API_KEY','BAIDU_QIANFAN_API_KEY','LOG_LEVEL'],'已设置的密钥不会显示；留空保持原值。',{scope:'api-model'})}</div>
+  <h2>文件与打包</h2>
+  <div class="card">${configForm(['FILE_UPLOAD_MAX_MB','FILE_SPLIT_MB','ARCHIVE_FORMAT','ARCHIVE_PASSES','SEVEN_ZIP_PATH','RAR_PATH'],'/发文件（含目录）与 Python 脚本结果共用这些设置；超过「大文件分卷大小」会自动切成多卷发送。改完下一次发送/打包就生效。',{scope:'api-files'})}</div>`
 }
 function pageReport(){
   return `<h1>群聊报告</h1><div class="sub">每日自动生成「群聊日常分析报告」，也可以在这里随时手动生成</div>
-  <div class="card">${configForm(['SUMMARY_ENABLED','SUMMARY_FALLBACK_ENABLED','SUMMARY_TIMES','SUMMARY_GROUPS','SUMMARY_SEND_MODE','SUMMARY_UNRESTRICTED','SUMMARY_REQUEST_TIMEOUT_SECONDS','SUMMARY_BOT_USERS','SUMMARY_MAX_MESSAGES','SUMMARY_MAX_TOKENS','SUMMARY_CONCURRENCY','SUMMARY_TASK_TIMEOUT_MINUTES','SUMMARY_PROVIDER','SUMMARY_MODEL','SUMMARY_VISION_MODEL','SUMMARY_REFERENCE_MAX_IMAGES'],'')}</div>
+  <div class="card">${configForm(['SUMMARY_ENABLED','SUMMARY_FALLBACK_ENABLED','SUMMARY_TIMES','SUMMARY_GROUPS','SUMMARY_SEND_MODE','SUMMARY_UNRESTRICTED','SUMMARY_REQUEST_TIMEOUT_SECONDS','SUMMARY_BOT_USERS','SUMMARY_MAX_MESSAGES','SUMMARY_MAX_TOKENS','SUMMARY_CONCURRENCY','SUMMARY_TASK_TIMEOUT_MINUTES','SUMMARY_PROVIDER','SUMMARY_MODEL','SUMMARY_VISION_MODEL','SUMMARY_REFERENCE_MAX_IMAGES'],'',{scope:'api-summary'})}</div>
   <div class="note">${state?.config?.summaryUnrestricted ? `当前宽裕模式：整份总结不限总时长；单次模型等待 ${state.config.summaryRequestTimeoutSeconds ?? 900} 秒后可有限重试。` : '当前使用普通模式的准备时限与篇幅设置。'} 服务商容量限制仍存在；发送结果不明确时不会盲目重发。</div>
   <h2>立即生成</h2>
   <div class="card"><div class="row">
@@ -1103,6 +1132,18 @@ function pageStickers(){
     '<div class="note">表情包必须跟随已成功发送的普通聊天文字回复。用户明确要求发表情包时直接尝试发送，不抽概率；普通聊天的自动配图（含模型主动选图）遵守下方概率；名称或标签按匹配程度加权抽图，同名同分机会相等；没有匹配候选时不随机补图。仍遵守开关、范围、黑名单及冷却；群总结、指令回执和 /Q 解题不自动配图。</div>',
     '<label style="display:block;margin:12px 0">文字回复配图概率 <input id="stkAutoRange" type="range" min="0" max="100" value="' + (settings.autoRate ?? 35) + '"> <input id="stkAutoRate" type="number" min="0" max="100" value="' + (settings.autoRate ?? 35) + '" style="width:90px"> %</label>',
     '<div class="mut">自动配图默认35%；0关闭自动配图，100每次尝试。明确索图不受此概率限制；彻底禁用请关闭总开关。按整轮文字回复判断一次，不是每一行。</div>',
+    '<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:12px 0"><input type="checkbox" id="stkWebSearch"' + (settings.webSearch !== false ? ' checked' : '') + '> 允许联网找表情包</label>',
+    '<div class="mut">开启后，用户说「给我找张表情包 / 搜一张开心的图」会去搜一张发过去（本地库优先）。</div>',
+    '<details class="learn-box" id="stkWebBox"><summary><b>联网搜索表情包（高级）</b> <span class="pill">' + ({bing:'必应',giphy:'Giphy',tenor:'Tenor',custom:'自定义'}[settings.searchProvider] || '必应') + '</span></summary><div style="padding:6px 0">',
+    '<label style="display:block;margin:12px 0">搜图来源 <select id="stkSearchProvider">' + [['bing','必应图片（免 Key）'],['giphy','Giphy（表情包/GIF，需 Key）'],['tenor','Tenor（需 Key）'],['custom','自定义接口']].map(x=>'<option value="'+x[0]+'"'+((settings.searchProvider||'bing')===x[0]?' selected':'')+'>'+x[1]+'</option>').join('') + '</select></label>',
+    '<label style="display:block;margin:12px 0">自定义搜图 URL <input id="stkSearchUrl" value="' + esc(settings.searchUrl || '') + '" placeholder="https://api.example.com/search?q={query}&limit={count}&key={key}" style="width:100%;max-width:560px"><div class="mut">仅「自定义接口」用；支持 {query} {key} {count}，返回 JSON，程序会自动找图片直链。</div></label>',
+    '<label style="display:block;margin:12px 0">搜图 API Key <input id="stkSearchKey" type="password" placeholder="' + (settings.searchKeyConfigured ? '已设置，留空不修改' : '未设置') + '" autocomplete="new-password" style="width:280px"><div class="mut">Giphy / Tenor / 自定义接口用；保存后不会回显。</div></label>',
+    '<label style="display:block;margin:12px 0">搜图改写模型 <input id="stkSearchModel" value="' + esc(settings.searchModel || '') + '" placeholder="留空=主对话模型" style="width:220px"><div class="mut">先用这个模型把你的话改写成几个搜索词，再去找图。</div></label>',
+    '<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:12px 0"><input type="checkbox" id="stkSearchRewrite"' + (settings.searchRewrite !== false ? ' checked' : '') + '> 用模型改写搜索词（关掉则只提取原话里的关键词）</label>',
+    '<label style="display:block;margin:12px 0">搜图代理 <input id="stkSearchProxy" value="' + esc(settings.searchProxy || '') + '" placeholder="http://127.0.0.1:7890" style="width:260px"><div class="mut">只影响搜图请求（Giphy/Tenor 国内需代理）；留空直连，模型请求不走这里。</div></label>',
+    '<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:12px 0"><input type="checkbox" id="stkSearchFilter"' + (settings.searchFilter !== false ? ' checked' : '') + '> 用识图模型筛掉不像表情包的图（logo/截图/真人照/广告）</label>',
+    '<div class="mut">筛图会让每次找图多 1~3 次识图调用；关掉则取第一张合格图片。</div>',
+    '</div></details>',
     '<label style="display:block;margin:12px 0">每次最多 <input id="stkMax" type="number" min="1" max="3" value="' + (settings.maxPerReply || 1) + '" style="width:90px"> 张</label>',
     '<label style="display:block;margin:12px 0">选图方式 <select id="stkPickMode">' + [['context','模型按语境选图，情绪接近即可'],['model','模型候选按匹配程度加权选图'],['random','随机选图']].map(x=>'<option value="'+x[0]+'"'+((settings.pickMode || 'context')===x[0]?' selected':'')+'>'+x[1]+'</option>').join('') + '</select></label>',
     '<label style="display:block;margin:12px 0">发送范围 <select id="stkSendScope">' + [['all','所有已允许回复的会话'],['whitelist','仅白名单群'],['selected','仅指定群'],['private','仅私聊']].map(x=>'<option value="'+x[0]+'"'+((settings.scope || 'all')===x[0]?' selected':'')+'>'+x[1]+'</option>').join('') + '</select></label>',
@@ -1341,7 +1382,7 @@ async function bind(){
       const q = learnSearch.value.trim().toLowerCase()
       document.querySelectorAll('#stkLearnGroupList label').forEach(function(l){ l.style.display = l.textContent.toLowerCase().includes(q) ? '' : 'none' })
     }
-    document.querySelectorAll('#stkEnabled,#stkAutoRange,#stkAutoRate,#stkMax,#stkPickMode,#stkSendScope,#stkCooldown,#stkLearnToggle,#stkLearnPrivate,#stkLearnPerHour,[data-stk-send-group],[data-stk-learn-group]').forEach(el=>el.addEventListener('input',()=>{stickerControlsDirty=true}))
+    document.querySelectorAll('#stkEnabled,#stkAutoRange,#stkAutoRate,#stkMax,#stkPickMode,#stkSendScope,#stkCooldown,#stkWebSearch,#stkLearnToggle,#stkLearnPrivate,#stkLearnPerHour,[data-stk-send-group],[data-stk-learn-group]').forEach(el=>el.addEventListener('input',()=>{stickerControlsDirty=true}))
   }
   const cleanGroups = document.getElementById('cleanGroups')
   if (cleanGroups) cleanGroups.onclick = async function(){
@@ -2087,8 +2128,48 @@ async function bind(){
     const ids=['stkAutoRate','stkMax','stkCooldown'];if(ids.some(id=>!document.getElementById(id).value.trim()||!document.getElementById(id).checkValidity())){toast('请检查概率、张数和间隔范围',true);return}
     stkRulesSave.disabled=true
     try{
-      await api('/api/action/set-config-batch',{patch:{STICKERS_ENABLED:document.getElementById('stkEnabled').checked?'1':'0',STICKER_AUTO_RATE:probability.value,STICKER_MAX_PER_REPLY:document.getElementById('stkMax').value,STICKER_PICK_MODE:document.getElementById('stkPickMode').value,STICKER_SEND_SCOPE:sendScope.value,STICKER_SEND_GROUPS:Array.from(document.querySelectorAll('[data-stk-send-group]:checked')).map(x=>x.dataset.stkSendGroup).join(','),STICKER_COOLDOWN_SECONDS:document.getElementById('stkCooldown').value}})
-      await load();toast('发送规则已保存，立即生效')
+      const cur = stickerSettings || {}
+      const want = {
+        STICKERS_ENABLED: document.getElementById('stkEnabled').checked?'1':'0',
+        STICKER_AUTO_RATE: probability.value,
+        STICKER_MAX_PER_REPLY: document.getElementById('stkMax').value,
+        STICKER_PICK_MODE: document.getElementById('stkPickMode').value,
+        STICKER_SEND_SCOPE: sendScope.value,
+        STICKER_SEND_GROUPS: Array.from(document.querySelectorAll('[data-stk-send-group]:checked')).map(x=>x.dataset.stkSendGroup).join(','),
+        STICKER_COOLDOWN_SECONDS: document.getElementById('stkCooldown').value,
+        STICKER_WEB_SEARCH: document.getElementById('stkWebSearch').checked?'1':'0',
+        STICKER_SEARCH_PROVIDER: document.getElementById('stkSearchProvider').value,
+        STICKER_SEARCH_URL: document.getElementById('stkSearchUrl').value.trim(),
+        STICKER_SEARCH_MODEL: document.getElementById('stkSearchModel').value.trim(),
+        STICKER_SEARCH_REWRITE: document.getElementById('stkSearchRewrite').checked?'1':'0',
+        STICKER_SEARCH_FILTER: document.getElementById('stkSearchFilter').checked?'1':'0',
+        STICKER_SEARCH_PROXY: document.getElementById('stkSearchProxy').value.trim(),
+      }
+      const old = {
+        STICKERS_ENABLED: cur.enabled===false?'0':'1',
+        STICKER_AUTO_RATE: String(cur.autoRate ?? 35),
+        STICKER_MAX_PER_REPLY: String(cur.maxPerReply || 1),
+        STICKER_PICK_MODE: cur.pickMode || 'context',
+        STICKER_SEND_SCOPE: cur.scope || 'all',
+        STICKER_SEND_GROUPS: (cur.groups || []).map(String).join(','),
+        STICKER_COOLDOWN_SECONDS: String(cur.cooldownSeconds || 0),
+        STICKER_WEB_SEARCH: cur.webSearch===false?'0':'1',
+        STICKER_SEARCH_PROVIDER: cur.searchProvider || 'bing',
+        STICKER_SEARCH_URL: cur.searchUrl || '',
+        STICKER_SEARCH_MODEL: cur.searchModel || '',
+        STICKER_SEARCH_REWRITE: cur.searchRewrite===false?'0':'1',
+        STICKER_SEARCH_FILTER: cur.searchFilter===false?'0':'1',
+        STICKER_SEARCH_PROXY: cur.searchProxy || '',
+      }
+      // 只提交真正改动的项，控制台日志里就不会刷一屏没动过的配置
+      const patch = {}
+      for (const [k,v] of Object.entries(want)) if (String(v) !== String(old[k])) patch[k] = v
+      const keyValue = document.getElementById('stkSearchKey').value.trim()
+      if (keyValue) patch.STICKER_SEARCH_KEY = keyValue
+      const changed = Object.keys(patch)
+      if (!changed.length) { toast('没有改动'); return }
+      await api('/api/action/set-config-batch',{patch})
+      await load();toast('已保存 ' + changed.length + ' 项，立即生效')
     }catch(e){toast('保存失败：'+e.message,true)}finally{stkRulesSave.disabled=false}
   }
   const stkLearnSave = document.getElementById('stkLearnSave')
@@ -2440,14 +2521,16 @@ async function bind(){
   const cfgValue = (el) => el.type === 'checkbox' ? (el.checked ? '1' : '0') : el.value
   const cfgEls = [...document.querySelectorAll('[data-cfg]')]
   cfgEls.forEach(el => { el.dataset.original = cfgValue(el) })
-  const updateDirty = () => {
-    const count = cfgEls.filter(el => cfgValue(el) !== el.dataset.original && !(el.dataset.secret && !el.value)).length
-    const save = document.getElementById('saveCfg')
-    const invalidRate = [...document.querySelectorAll('[data-rate-percent]')].some(el => !el.value.trim() || !el.checkValidity())
+  const dirtyIn = (scope) => [...scope.querySelectorAll('[data-cfg]')].filter(el => cfgValue(el) !== el.dataset.original && !(el.dataset.secret && !el.value))
+  const updateScope = (scope) => {
+    const count = dirtyIn(scope).length
+    const save = scope.querySelector('[data-cfgsave]')
+    const invalidRate = [...scope.querySelectorAll('[data-rate-percent]')].some(el => !el.value.trim() || !el.checkValidity())
     if (save) { save.disabled = !count || invalidRate; save.textContent = invalidRate ? '请修正群概率' : count ? '保存 ' + count + ' 项改动' : '没有待保存的改动' }
-    const hint = document.getElementById('cfgDirty')
+    const hint = scope.querySelector('[data-cfgdirty]')
     if (hint && count) hint.textContent = '仅保存已修改的项目'
   }
+  const updateDirty = () => document.querySelectorAll('[data-cfg-scope]').forEach(updateScope)
   document.querySelectorAll('[data-cfg]').forEach(el => {
     if (el.type === 'range') el.oninput = () => {
       const s = document.querySelector('[data-cfgshow="' + el.dataset.cfg + '"]')
@@ -2483,23 +2566,22 @@ async function bind(){
       picker.value = ''; manual.value = ''; manual.hidden = true; syncRates()
     }
   }
-  const sc = document.getElementById('saveCfg')
-  if (sc) sc.onclick = async () => {
-    for (const input of document.querySelectorAll('[data-rate-percent]')) {
+  document.querySelectorAll('[data-cfgsave]').forEach(btn => btn.onclick = async () => {
+    const scope = btn.closest('[data-cfg-scope]')
+    if (!scope) return
+    for (const input of scope.querySelectorAll('[data-rate-percent]')) {
       if (!input.value.trim() || !input.reportValidity()) { toast('群概率请填写 0～100 之间的数字', true); return }
     }
     const patch = {}
-    cfgEls.forEach(el => {
-      if (cfgValue(el) !== el.dataset.original && !(el.dataset.secret && !el.value)) patch[el.dataset.cfg] = cfgValue(el)
-    })
+    dirtyIn(scope).forEach(el => { patch[el.dataset.cfg] = cfgValue(el) })
     if (!Object.keys(patch).length) return
-    sc.disabled = true
+    btn.disabled = true
     try {
       const r = await api('/api/action/set-config-batch', { patch })
       toast(`已保存 ${r.changed} 项（即时生效 ${r.live} 项）${r.needRestart ? '，其余项目重启后生效' : ''}`)
       await load()
-    } catch(e){ toast('保存失败：' + e.message, true); sc.disabled = false }
-  }
+    } catch(e){ toast('保存失败：' + e.message, true); btn.disabled = false }
+  })
 
   // 日志
   const lf = document.getElementById('logFilter')

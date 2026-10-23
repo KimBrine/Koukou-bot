@@ -21,27 +21,28 @@ const node=(name, content)=>({sender:{nickname:name,user_id:200000020},time:1,me
 const dir=mkdtempSync(path.join(os.tmpdir(),'koukou-context-')),stores=[]
 let files=0,ids=1000,passed=0
 async function test(name,fn){await fn();passed++;console.log(`PASS ${name}`)}
-function setup({config={},getMsg,forwards={},chat,chatSettings,rateLimiter,visionLLM,imageCache,webSearch,chatRaw,stickers,musicSearch,summaryGroups=[group]}={}) {
+function setup({config={},getMsg,forwards={},chat,chatSettings,rateLimiter,visionLLM,imageCache,webSearch,chatRaw,stickers,musicSearch,pokeReplier,summaryGroups=[group]}={}) {
   let time=Math.floor(Date.now()/1000)*1000
   const timeline=new MessageTimeline({now:()=>time});timeline.begin()
   const memory=new MemoryStore({file:path.join(dir,`${++files}.json`),limit:99,logger});stores.push(memory)
-  const sent=[],requests=[],lookups=[],forwardReads=[],captured=[]
+  const sent=[],requests=[],lookups=[],forwardReads=[],captured=[],apis=[]
   const onebot={selfId,messageTimeline:timeline,
     async sendGroup(g,t){sent.push(t);return {message_id:++ids}},async sendPrivate(u,t){sent.push(t);return {message_id:++ids}},
     async getMsg(id){lookups.push(id);return getMsg?getMsg(id):{message_id:id,group_id:group,user_id:selfId,sender:{nickname:'测试机器人',user_id:selfId},message:[text('之前的答案')]}},
     async getForwardMsg(id){forwardReads.push(id);if(forwards[id] instanceof Error)throw forwards[id];return {messages:forwards[id]??[]}},
+    async api(action,params){apis.push({action,params});return {}},
   }
   const cfg={whitelistGroups:new Set([group]),mutedGroups:new Set(),proactiveRate:0,proactiveCooldownMs:0,
     quietHours:'',contextRememberAll:true,autoPlusOneEnabled:false,replyMaxLines:3,replyLineMaxChars:40,
     humanDelayMinMs:0,humanDelayMaxMs:0,lineGapMinMs:0,lineGapMaxMs:0,emojiKeepRate:0,replyLengthMatch:true,
     visionMaxImages:2,rateLimitAtPerHour:45,...config}
-  const bot=createBot({config:cfg,logger,onebot,memory,chatSettings,rateLimiter,visionLLM,imageCache,webSearch,stickers,musicSearch,rand:()=>0.5,
+  const bot=createBot({config:cfg,logger,onebot,memory,chatSettings,rateLimiter,visionLLM,imageCache,webSearch,stickers,musicSearch,pokeReplier,rand:()=>0.5,
     buildSystemPrompt:createChatPromptBuilder({config:{persona:'群聊人设'},longMemory:{}}),llm:{async chat(...args){requests.push(args);return chat?chat(...args):'明白了，继续聊呀'},async chatRaw(messages,tools){requests.push([messages[0].content,messages.slice(1)]);return chatRaw?chatRaw(messages,tools):{content:'这是本轮回答',toolCalls:null}}},
     dailySummary:{capture(evt){captured.push(evt.message_id)},summaryGroups:()=>summaryGroups}})
   function event(message,extra={}){time=Math.max(time,Math.floor(Date.now()/1000)*1000);const evt={post_type:'message',message_type:'group',user_id:user,group_id:group,
     message_id:++ids,time:time/1000,sender:{nickname:'群友甲'},message:typeof message==='string'?[text(message)]:message,...extra}
     evt.messageContext=timeline.receive(evt);return evt}
-  return {bot,memory,cfg,timeline,onebot,sent,requests,lookups,forwardReads,captured,event,advance:ms=>{time+=ms},time:()=>time}
+  return {bot,memory,cfg,timeline,onebot,sent,requests,lookups,forwardReads,captured,apis,event,advance:ms=>{time+=ms},time:()=>time}
 }
 const lastUser=t=>t.requests.at(-1)[1].at(-1).content
 const shape=t=>t.requests.at(-1)[0].match(/【本次回复的形态要求[^]*?(?=\n\n【|$)/)?.[0]
@@ -133,12 +134,11 @@ try {
     let repairCalls=0
     const promise=setup({stickers,config:{stickersEnabled:true,stickerAutoRate:0},chat:()=>++repairCalls===1?'图来啦，拿去拿去 [贴纸: 猫猫问号]':'这轮先用文字陪你聊呀'})
     await promise.bot.handleMessage(promise.event([at(),text('给我发张表情包')]))
-    assert.equal(repairCalls,2);assert.equal(promise.sent.length,1)
-    assert.doesNotMatch(promise.sent[0],/图来啦|拿去|贴纸/)
-    assert.match(promise.requests.at(-1)[0],/本轮没有图片可发送/)
+    // 用户明确索图时不再依赖模型标记，也不受自动概率限制：图确实发出，文案不算撒谎
+    assert.equal(repairCalls,1);assert.equal(promise.sent.length,2);assert.equal(promise.sent[1][0].type,'image')
     const failedRepair=setup({stickers,config:{stickersEnabled:true,stickerAutoRate:0},chat:()=> '图片来啦，收好'})
     await failedRepair.bot.handleMessage(failedRepair.event([at(),text('来张表情包')]))
-    assert.equal(failedRepair.sent.length,1);assert.match(failedRepair.sent[0],/没有配图/)
+    assert.equal(failedRepair.sent.length,2);assert.equal(failedRepair.sent[1][0].type,'image','用户索图时不需要模型也给标记')
     const requested=setup({stickers,config:{stickersEnabled:true,stickerAutoRate:0},chat:()=> '给你挑一张呀 [索要表情包][贴纸: 猫猫问号]'})
     await requested.bot.handleMessage(requested.event([at(),text('给我发张表情包')]))
     assert.equal(requested.sent.length,2);assert.equal(requested.sent[1][0].type,'image')
@@ -469,6 +469,35 @@ try {
     const records=[{userId:String(user),name:'群友甲',time:1,text:'[合并聊天记录]'}]
     const stats=computeSummaryStats(records)
     assert.equal(stats.total,1);assert.equal(stats.chars,0);assert.equal(profileSummaryContent(records).ordinaryCount,0)
+  })
+  await test('拍一拍私聊与群聊都回应，戳一戳同样处理，拍别人不回应',async()=>{
+    const t=setup({config:{pokeEnabled:true,pokeCooldownMs:0},pokeReplier:()=>'被拍到了～'})
+    const base={notice_type:'notify',sub_type:'poke',user_id:user,target_id:selfId,time:Math.floor(Date.now()/1000)}
+    await t.bot.handleNotice(base)
+    assert.equal(t.sent.length,1,'私聊拍一拍要回应')
+    assert.match(String(t.sent[0]),/被拍到/)
+    await t.bot.handleNotice({...base,group_id:group})
+    assert.equal(t.sent.length,2,'群聊拍一拍要回应')
+    await t.bot.handleNotice({...base,target_id:user+9})
+    assert.equal(t.sent.length,2,'拍别人不回应')
+    await t.bot.handleNotice({...base,notice_type:'poke',sub_type:undefined})
+    assert.equal(t.sent.length,3,'兼容只带 notice_type=poke 的端')
+  })
+  await test('让机器人拍一拍我：私聊 friend_poke、群聊 group_poke，陌生私聊不拍',async()=>{
+    const t=setup({config:{pokeEnabled:true}})
+    await t.bot.handleMessage(t.event('拍一拍我',{message_type:'private'}))
+    assert.equal(t.apis.at(-1).action,'friend_poke')
+    assert.equal(Number(t.apis.at(-1).params.user_id),user)
+    // 提前返回的分支也要把用户原话和回复写进会话记忆（控制台才看得到）
+    const records=t.memory.get('p'+user)
+    assert.match(records.at(-2)?.content||'',/拍一拍我/)
+    assert.match(records.at(-1)?.content||'',/拍回去/,'')
+    await t.bot.handleMessage(t.event([at(),text('戳戳我')]))
+    assert.equal(t.apis.at(-1).action,'group_poke')
+    assert.equal(Number(t.apis.at(-1).params.group_id),group)
+    const stranger=setup({config:{pokeEnabled:true,privateWhitelist:new Set()}})
+    await stranger.bot.handleMessage(stranger.event('拍一拍我',{message_type:'private'}))
+    assert.equal(stranger.apis.length,0,'陌生私聊不能让它戳人')
   })
   console.log(`${passed} cases passed`)
 }finally {

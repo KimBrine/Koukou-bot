@@ -1,13 +1,14 @@
 # name: 禁漫下载
-# desc: 下载、查详情、发图、打包 zip，都能在聊天里完成
+# desc: 下载、查详情、发图、打包 zip/7z/rar，都能在聊天里完成
 # usage: /py jm 帮助
 # admin: true
+# timeout-ms: 600000
 # cmd: 初始化 [目录] | 生成配置文件（已有配置时只提示路径）
 # cmd: 目录 [路径] | 查看或修改下载目录
 # cmd: 查 350234 | 查详情：标题/作者/页数/标签/章节
 # cmd: 发图 350234 [张数] | 直接把前几张图发到聊天
 # cmd: 记录 350234 [张数] | 详情+整话图片打包成聊天记录
-# cmd: 打包 350234 [秒] | 压成 zip 发送并定时撤回
+# cmd: 打包 350234 [秒] [zip|7z|rar] | 已有现成的包直接发送，没有才压缩；按设置定时撤回
 # cmd: 350234 | 后台下载整本
 # cmd: p350234 | 只下载某一章
 # cmd: 状态 | 当前任务进度
@@ -34,7 +35,7 @@ jm.py —— 机器人用的后台下载插件 + 详情查询
     查/查询/jmv 350234   查本子详情（不发图，纯文本）
     发图 350234 [张数]    直接把第一话前几张图发到聊天（默认3，最多6）
     记录 350234 [张数]    详情+整话图片打包成一条聊天记录卡片（不填张数=整话全部）
-    打包 350234 [秒]    压成 zip 以文件发送；默认按控制台开关（开=300 秒后撤回），给了秒数则一定撤回
+    打包 350234 [秒] [zip|7z|rar]    按控制台设置打包（格式/次数可调，默认 zip、1 次）以文件发送；默认按控制台开关（开=300 秒后撤回），给了秒数则一定撤回
     123456          下载本子(album)
     p345678         下载单个章节(photo)
     状态/status     当前任务进度
@@ -518,15 +519,81 @@ def cmd_info(raw):
     return text
 
 
+def _image_ok(path: Path) -> bool:
+    """确认下载结果是真图片：非空、够大、文件头是 jpg/png/webp/gif。"""
+    try:
+        if not path.is_file() or path.stat().st_size < 1024:
+            return False
+        head = path.open('rb').read(12)
+    except OSError:
+        return False
+    return (head[:3] == b'\xff\xd8\xff' or head[:8] == b'\x89PNG\r\n\x1a\n'
+            or head[:4] == b'GIF8' or (head[:4] == b'RIFF' and head[8:12] == b'WEBP'))
+
+
+def prune_downloads(root: Path, since: float | None = None) -> tuple[int, int]:
+    """清理空文件与空目录：jmcomic 下载失败/重试时会留下 0 字节图片和空章节文件夹。"""
+    if not root.exists():
+        return 0, 0
+    files = dirs = 0
+    for dirpath, _dirnames, filenames in os.walk(root, topdown=False):
+        folder = Path(dirpath)
+        for name in filenames:
+            target = folder / name
+            try:
+                if target.is_file() and target.stat().st_size == 0 and (since is None or target.stat().st_mtime >= since - 1):
+                    target.unlink(missing_ok=True)
+                    files += 1
+            except OSError:
+                pass
+        try:
+            if folder != root and not any(folder.iterdir()):
+                folder.rmdir()
+                dirs += 1
+        except OSError:
+            pass
+    return dirs, files
+
+
+def split_file(src: Path, size_mb: int) -> list[Path]:
+    """把大压缩包按字节切成多卷（.001…），避免 QQ 上传到几百 MB 时失败。"""
+    chunk_size = max(5, int(size_mb)) * 1024 * 1024
+    for old in src.parent.glob(src.name + '.[0-9][0-9][0-9]'):
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    parts = []
+    with src.open('rb') as f:
+        index = 1
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            part = src.with_name(f'{src.name}.{index:03d}')
+            part.write_bytes(chunk)
+            parts.append(part)
+            index += 1
+    return parts
+
+
 def _download_one(client, img, photo, outdir, retry=2):
     save_path = outdir / img.filename
     for attempt in range(retry + 1):
         try:
-            if save_path.is_file() and save_path.stat().st_size > 0:
+            if save_path.is_file() and _image_ok(save_path):
                 return save_path
+            # 上一次失败留下的空文件/残图先删掉，别让下一轮误判成已完成
+            try:
+                if save_path.is_file():
+                    save_path.unlink()
+            except OSError:
+                pass
             client.download_image(img.download_url, str(save_path),
                                   photo.scramble_id, decode_image=True)
-            return save_path
+            if _image_ok(save_path):
+                return save_path
+            raise RuntimeError('下载结果不是有效图片（可能是空文件或错误页）')
         except Exception:
             if attempt >= retry:
                 raise
@@ -666,13 +733,100 @@ def _plugin_settings():
         return 300, True
 
 
-def cmd_pack(raw='', minutes_arg=''):
-    """把已下载的本子目录压成 zip，交给机器人以文件形式发送（可自动撤回）。"""
+def _archive_prefs():
+    """压缩格式/次数/7-Zip 路径：控制台下发的环境变量优先，其次 settings.json，默认 zip、1 次。"""
+    fmt = (os.environ.get('KOUKOU_ARCHIVE_FORMAT') or '').strip().lower()
+    passes = os.environ.get('KOUKOU_ARCHIVE_PASSES') or ''
+    seven = (os.environ.get('KOUKOU_SEVEN_ZIP') or os.environ.get('SEVEN_ZIP_PATH') or '').strip()
+    raw = {}
+    try:
+        raw = json.loads((HERE / 'settings.json').read_text(encoding='utf-8-sig'))
+    except Exception:
+        raw = {}
+    if not fmt:
+        fmt = str(raw.get('archiveFormat') or 'zip').strip().lower()
+    if not passes:
+        passes = raw.get('archivePasses') or 1
+    if not seven:
+        seven = str(raw.get('sevenZipPath') or '').strip()
+    if fmt not in ('zip', '7z', 'rar'):
+        fmt = 'zip'
+    try:
+        n = max(1, min(5, int(passes)))
+    except Exception:
+        n = 1
+    return fmt, n, find_seven_zip(seven)
+
+
+SEVEN_ZIP_CANDIDATES = [
+    r'C:\Program Files\7-Zip\7z.exe',
+    r'C:\Program Files (x86)\7-Zip\7z.exe',
+    r'D:\7-Zip\7z.exe',
+    '/usr/bin/7z', '/usr/bin/7zz', '/usr/local/bin/7z', '/opt/homebrew/bin/7z',
+]
+
+
+def find_seven_zip(pref=''):
+    pref = str(pref).strip().strip('"')
+    if Path(pref).is_dir(): pref = str(Path(pref) / ('7z.exe' if os.name == 'nt' else '7z'))
+    for p in [pref, *(os.environ.get('SEVEN_ZIP_PATH') or '').split(os.pathsep), *SEVEN_ZIP_CANDIDATES]:
+        if p and Path(p).is_file():
+            return p
+    return ''
+
+
+def _pack_once(source, out_path, fmt, seven, timeout_seconds=540):
+    """source 可以是目录，也可以是上一轮的压缩包。"""
+    import subprocess
     import zipfile
 
+    if fmt == 'rar':
+        import shutil
+        pref = os.environ.get('KOUKOU_RAR') or os.environ.get('RAR_PATH') or ''
+        rar = ''
+        for candidate in [pref.strip().strip('"'), r'C:\Program Files\WinRAR\Rar.exe', r'C:\Program Files (x86)\WinRAR\Rar.exe', shutil.which('rar') or '']:
+            p = Path(candidate) if candidate else None
+            if p and p.is_dir(): p = p / ('Rar.exe' if os.name == 'nt' else 'rar')
+            if p and p.is_file(): rar = str(p); break
+        if not rar: raise RuntimeError('没有找到RAR程序，请设置控制台 RAR_PATH；7-Zip不能创建RAR')
+        result = subprocess.run([rar, 'a', '-ma5', '-m5', '-y', '-idq', str(out_path), '--', source.name], cwd=str(source.parent), capture_output=True, text=True, timeout=timeout_seconds)
+        if result.returncode != 0: raise RuntimeError((result.stderr or result.stdout or 'RAR打包失败')[-300:])
+        return
+    if seven:
+        args = [seven, 'a', '-t' + fmt, '-mx=9', '-y', str(out_path), source.name]
+        if source.is_dir():
+            args.append('-r')
+        result = subprocess.run(args, cwd=str(source.parent), capture_output=True, text=True, timeout=timeout_seconds)
+        if result.returncode != 0:
+            tail = (result.stderr or result.stdout or '').strip().splitlines()
+            raise RuntimeError(tail[-1] if tail else f'7-Zip 退出码 {result.returncode}')
+        return
+    if fmt == '7z':
+        raise RuntimeError('没装 7-Zip，无法生成 7z；可设置 SEVEN_ZIP_PATH 或改回 zip')
+    with zipfile.ZipFile(out_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+        if source.is_dir():
+            for f in sorted(source.rglob('*')):
+                if f.is_file():
+                    zf.write(f, f.relative_to(source.parent))
+        else:
+            zf.write(source, source.name)
+
+
+def cmd_pack(raw='', minutes_arg=''):
+    """把已下载的本子目录按配置打包（zip/7z/rar、可多次压缩），交给机器人以文件形式发送。"""
     base = download_dir()
     if not base.is_dir():
         return '下载目录还不存在，先 /py jm 350234 下载。'
+
+    arg = (minutes_arg or '').strip()
+    fmt_override = ''
+    seconds_arg = ''
+    for token in arg.split():
+        low = token.lower()
+        if low in ('zip', '7z', 'rar'):
+            fmt_override = low
+        elif re.fullmatch(r'\d+', token):
+            seconds_arg = token
 
     digits = re.findall(r'\d+', raw or '')
     target = None
@@ -690,36 +844,66 @@ def cmd_pack(raw='', minutes_arg=''):
             return '下载目录里还没有本子。'
         target = max(dirs, key=lambda p: p.stat().st_mtime)
 
-    arg = (minutes_arg or '').strip()
     default_seconds, recall_enabled = _plugin_settings()
-    if arg:
-        try:
-            seconds = int(arg)
-            recall_enabled = True          # 显式给了秒数，就按用户要求撤回
-        except ValueError:
-            seconds = default_seconds
+    if seconds_arg:
+        seconds = int(seconds_arg)
+        recall_enabled = True          # 显式给了秒数，就按用户要求撤回
     else:
         seconds = default_seconds
     seconds = max(5, min(seconds, 7200))
 
+    fmt, passes, seven = _archive_prefs()
+    if fmt_override:
+        fmt = fmt_override
+
+    import time
+    pack_deadline = time.monotonic() + 540
     outdir = state_dir() / 'exports'
     outdir.mkdir(parents=True, exist_ok=True)
-    zip_path = outdir / f'{target.name}.zip'
-
+    current = target
+    reused = False
     try:
-        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED) as zf:
-            for f in sorted(target.rglob('*')):
-                if f.is_file():
-                    zf.write(f, f.relative_to(target.parent))
+        try:
+            newest = max((f.stat().st_mtime for f in target.rglob('*') if f.is_file()), default=0)
+        except OSError:
+            newest = 0
+        for round_no in range(1, passes + 1):
+            suffix = '' if round_no == 1 else f'.{round_no}'
+            out_path = outdir / f'{target.name}{suffix}.{fmt}'
+            # 已有的包不比源文件旧就直接发，几百 MB 不重复压缩
+            if out_path.is_file() and out_path.stat().st_size > 0 and out_path.stat().st_mtime >= newest:
+                current = out_path
+                reused = True
+                continue
+            import uuid
+            staging = outdir / (uuid.uuid4().hex + '.' + fmt)
+            try:
+                _pack_once(current, staging, fmt, seven, max(1, pack_deadline-time.monotonic()))
+                if not staging.is_file() or not staging.stat().st_size: raise RuntimeError('未生成有效压缩包')
+                staging.replace(out_path)
+            finally:
+                staging.unlink(missing_ok=True)
+            current = out_path
     except Exception as e:
         return f'打包失败：{type(e).__name__}: {e}'
 
-    size_mb = zip_path.stat().st_size / 1024 / 1024
+    size_mb = current.stat().st_size / 1024 / 1024
+    label = f'{fmt}，压缩 {passes} 次' if passes > 1 else fmt
+    if size_mb > int(os.environ.get('KOUKOU_FILE_SPLIT_MB') or 90):
+        parts = split_file(current, int(os.environ.get('KOUKOU_FILE_SPLIT_MB') or 90))
+        if parts:
+            return '@@FILE@@' + json.dumps({
+                'parts': [{'path': p.as_posix(), 'name': p.name} for p in parts],
+                'recall_seconds': seconds if recall_enabled else 0,
+                'text': (f'打包完成：{current.name}（{label}，{size_mb:.1f} MB）\n'
+                         f'文件太大，已切成 {len(parts)} 卷发送；全部下载后按顺序从 .001 用 7-Zip 打开并解压。'),
+            }, ensure_ascii=False)
     payload = {
-        'path': zip_path.as_posix(),
-        'name': zip_path.name,
+        'path': current.as_posix(),
+        'name': current.name,
         'recall_seconds': seconds if recall_enabled else 0,
-        'text': f'打包完成：{zip_path.name}（{size_mb:.1f} MB）',
+        'text': (f'发送已有压缩包：{current.name}（{label}，{size_mb:.1f} MB）' if reused
+                 else f'打包完成：{current.name}（{label}，{size_mb:.1f} MB）'),
     }
     return '@@FILE@@' + json.dumps(payload, ensure_ascii=False)
 
@@ -792,6 +976,11 @@ def worker(job_id):
                 option.download_photo(int(rec['jm_id']))
             else:
                 option.download_album(int(rec['jm_id']))
+            # jmcomic 失败重试会留下空章节文件夹/0 字节图，下完顺手清掉
+            removed_dirs, removed_files = prune_downloads(Path(rec['base_dir']), rec['start'])
+            if removed_dirs or removed_files:
+                jm_log('bot_job', f'清理空目录 {removed_dirs} 个、空文件 {removed_files} 个')
+                print(f'[clean] 空目录 {removed_dirs} 个，空文件 {removed_files} 个', flush=True)
 
         rec['status'] = 'done'
         rec['end'] = time.time()
@@ -900,7 +1089,7 @@ def main(argv):
         return 0
     if low in ('打包', 'zip', '压缩', '文件'):
         print(cmd_pack(argv[1] if len(argv) > 1 else '',
-                       argv[2] if len(argv) > 2 else ''))
+                       ' '.join(argv[2:])))
         return 0
     if low in ('状态', 'status', '进度'):
         print(cmd_status())

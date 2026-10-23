@@ -53,7 +53,7 @@ function normalizeOutgoing(message) {
  * - 事件：'ready'（拿到登录信息）、'message'（收到消息事件）。
  */
 export class OneBotClient extends EventEmitter {
-  constructor({ url, logger, probeUserId = '' }) {
+  constructor({ url, logger, probeUserId = '', offlineGraceMs = 8000 }) {
     super()
     this.url = url
     this.logger = logger
@@ -75,6 +75,14 @@ export class OneBotClient extends EventEmitter {
     this.probeVerified = false
     this.probeError = ''
     this.accountStatusVersion = 0
+    // 离线去抖：短于 offlineGraceMs 的断开不判定离线（LLBot 重连一般 5 秒左右）
+    this.offlineSince = 0
+    this.offlineGraceMs = Math.max(0, Number(offlineGraceMs) || 0)
+    // 协议端能力探测（表情包字段名 LLBot 用 subType、NapCat 用 sub_type）
+    this.backendCache = null
+    // 启动时 LLBot 端口往往还没就绪：第一次连接失败属于正常等待，不该刷警告
+    this.everConnected = false
+    this.connectFailures = 0
     this.messageTimeline = new MessageTimeline()
   }
 
@@ -84,7 +92,16 @@ export class OneBotClient extends EventEmitter {
         await this.#connectOnce()
       } catch (err) {
         if (this.stopped) return
-        this.logger.warn(`OneBot 连接失败：${err.message}（${Math.round(this.reconnectDelay / 1000)}s 后重连）`)
+        this.connectFailures++
+        // 首次连上之前最多安静等 60 秒：LLBot 冷启动要十几秒，这段失败是预期内的
+        if (!this.everConnected && this.connectFailures <= 60) {
+          if (this.connectFailures === 1) this.logger.info('等待 OneBot 就绪（LLBot 还在启动，自动重试）')
+        } else if (this.connectFailures <= 2) {
+          // LLBot 偶发的协议层重置：1~2 次内恢复只记 info，不算警告
+          this.logger.info(`OneBot 连接中断，正在重连（第 ${this.connectFailures} 次）：${err.message}`)
+        } else {
+          this.logger.warn(`OneBot 连接失败：${err.message}（${Math.round(this.reconnectDelay / 1000)}s 后重连）`)
+        }
       }
       if (this.stopped) return
       await sleep(this.reconnectDelay)
@@ -127,6 +144,8 @@ export class OneBotClient extends EventEmitter {
         // 已被新连接取代的旧 socket 即使握手成功也不能接管状态
         if (this.ws !== ws) { try { ws.close() } catch { /* ignore */ } return }
         this.messageTimeline.begin()
+        this.everConnected = true
+        this.connectFailures = 0
         this.logger.info(`已连接 OneBot：${String(this.url).replace(/([?&]access_token=)[^&]*/i, '$1***')}`)
         this.reconnectDelay = 1000
         this.refreshStatus({ maxAgeMs: 0 }).catch(() => {})
@@ -162,7 +181,7 @@ export class OneBotClient extends EventEmitter {
         }
         // lifecycle 事件里也带 self_id，尽早拿到自己的 QQ 号
         if (data?.post_type === 'meta_event' && data.meta_event_type === 'heartbeat') {
-          this.updateAccountStatus(data.status)
+          this.updateAccountStatus(data.status, { immediate: true })
           return
         }
         if (data && data.post_type === 'meta_event' && data.meta_event_type === 'lifecycle' && data.self_id) {
@@ -171,7 +190,7 @@ export class OneBotClient extends EventEmitter {
         }
         // 通知类事件（拍一拍 / 群成员变动 / 戳一戳等）
         if (data && data.post_type === 'notice') {
-          if (data.notice_type === 'bot_offline') this.updateAccountStatus({ online: false, good: true })
+          if (data.notice_type === 'bot_offline') this.updateAccountStatus({ online: false, good: true }, { immediate: true })
           this.emit('notice', data)
           return
         }
@@ -213,7 +232,7 @@ export class OneBotClient extends EventEmitter {
       const onError = (event) => {
         if (!settled) {
           settled = true
-          reject(new Error(`WebSocket 错误（${event?.message || 'unknown'}）`))
+          reject(new Error(`WebSocket 错误（${event?.message || (event?.code ? 'code ' + event.code : 'unknown')}）`))
         }
         // 主动关掉出错的 socket：否则它可能延迟很久才 close，届时会误伤新连接
         try { ws.close() } catch { /* ignore */ }
@@ -224,6 +243,42 @@ export class OneBotClient extends EventEmitter {
       ws.addEventListener('close', onClose)
       ws.addEventListener('error', onError)
     })
+  }
+
+  /**
+   * 协议端能力探测：LLBot 的图片段读 subType（驼峰），NapCat 读 sub_type（下划线）。
+   * 只探测一次并缓存；探测失败时两个字段都带，避免某一端把表情当普通图片。
+   */
+  async backendInfo({ force = false } = {}) {
+    if (this.backendCache && !force) return this.backendCache
+    let appName = ''
+    try {
+      const info = await this.api('get_version_info', {}, 3000)
+      appName = String(info?.app_name || info?.appName || info?.data?.app_name || '')
+    } catch { /* 老版本或不支持时不阻断发送 */ }
+    const lower = appName.toLowerCase()
+    const style = /napcat/.test(lower) ? 'snake' : /llbot|luckylillia|llonebot/.test(lower) ? 'camel' : ''
+    this.backendCache = { appName, style }
+    return this.backendCache
+  }
+
+  /** 主动拍一拍/戳一戳：群聊用 group_poke，私聊用 friend_poke（LLBot 与 NapCat 都支持这组动作名） */
+  async poke({ groupId, userId, timeoutMs = 8000 } = {}) {
+    const uid = Number(userId)
+    if (!Number.isFinite(uid) || uid <= 0) throw new Error('缺少要拍的人')
+    if (groupId) return this.api('group_poke', { group_id: Number(groupId), user_id: uid }, timeoutMs)
+    return this.api('friend_poke', { user_id: uid }, timeoutMs)
+  }
+
+  /** 图片段：sticker=true 时按协议端补字段；NapCat 保持原来的 sub_type */
+  async imageSegment(file, { sticker = false } = {}) {
+    const data = { file }
+    if (sticker) {
+      const { style } = await this.backendInfo()
+      if (style !== 'snake') data.subType = 1
+      if (style !== 'camel') data.sub_type = 1
+    }
+    return { type: 'image', data }
   }
 
   /** 连接状态（控制台总览用） */
@@ -237,8 +292,23 @@ export class OneBotClient extends EventEmitter {
     return { connected: open, online: qqOnline === true && qqGood !== false, qqOnline, qqGood, reportedOnline, probeVerified: verified, probeCheckedAt: this.probeCheckedAt, statusCheckedAt: this.statusCheckedAt, statusError: this.statusError || this.probeError, selfId: this.selfId, nickname: this.nickname }
   }
 
-  updateAccountStatus(data) {
+  updateAccountStatus(data, { immediate = false } = {}) {
     if (typeof data?.online !== 'boolean') return false
+    if (data.online) {
+      this.offlineSince = 0
+    } else if (this.qqOnline === true && !immediate) {
+      // LLBot 协议层断开后通常几秒内自动恢复（"协议层断开，等待重连…"）。
+      // 短抖动先维持在线，等超过 grace 仍没回来才判定离线，避免控制台一会在跑一会离线。
+      const grace = Number.isFinite(Number(this.offlineGraceMs)) ? Math.max(0, Number(this.offlineGraceMs)) : 8000
+      const first = this.offlineSince || Date.now()
+      if (Date.now() - first < grace) {
+        this.offlineSince = first
+        this.statusCheckedAt = Date.now()
+        this.statusError = ''
+        if (typeof data.good === 'boolean') this.qqGood = data.good
+        return true
+      }
+    }
     const previous = this.qqOnline
     if (data.online && previous === false) this.messageTimeline.begin()
     if (!data.online) this.messageTimeline.end()

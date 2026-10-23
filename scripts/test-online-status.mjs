@@ -7,7 +7,7 @@ let passed=0
 async function test(name,task){await task();console.log(`PASS ${name}`);passed++}
 const probeUserId='200000007'
 const goodReply=action=>action==='get_stranger_info'?{user_id:Number(probeUserId),nickname:'核验账号'}:{online:true,good:true}
-function client(){const ob=new OneBotClient({url:'ws://127.0.0.1:3002',logger,probeUserId});ob.ws={readyState:WebSocket.OPEN};return ob}
+function client(){const ob=new OneBotClient({url:'ws://127.0.0.1:3002',logger,probeUserId,offlineGraceMs:0});ob.ws={readyState:WebSocket.OPEN};return ob}
 await test('端口 / WebSocket 连接存在且保留昵称，QQ 离线仍显示离线',async()=>{
   const ob=client();ob.nickname='旧昵称';ob.selfId='200000010';ob.api=async()=>({online:false,good:true})
   const state=await ob.refreshStatus()

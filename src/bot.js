@@ -1,4 +1,4 @@
-import { createStickerSendPolicy, claimsStickerDelivery } from './stickerSend.js'
+import { createStickerSendPolicy, claimsStickerDelivery, userAsksForSticker } from './stickerSend.js'
 import {isOnebotError} from './onebotErrors.js'
 import { isQuestionMode, QUESTION_MODE_HINT, QUESTION_IMAGE_PROMPT } from './questionMode.js'
 import { readFileSync, existsSync, statSync } from 'node:fs'
@@ -13,9 +13,11 @@ import { conversationRules } from './conversationRules.js'
 import { stripInternalReplyMetadata, hasInternalToolMarkup, REPLY_REPAIR_HINT } from './replySanitizer.js'
 import { parseMusicRequest, resolveMusicRequest, searchSong, musicPlatformName } from './music.js'
 import { parseMessage } from './cq.js'
+import { createArchive, archiveErrorHint } from './archive.js'
 import { isBotAdmin, hasAdmins, adminHint } from './permissions.js'
 import { renderReply } from './customCommands.js'
-import { extractStickerMarkers } from './stickers.js'
+import { extractStickerMarkers, STICKER_MAX_BYTES } from './stickers.js'
+import { collectWebImages, buildStickerQuery } from './imageSearch.js'
 import { SUMMARY_RE, CLEAR_RE, HELP_RE, SEND_FILE_RE, SEND_LINK_RE, PY_CMD_RE } from './commandCenter.js'
 import { formatCommandHelp } from './commandHelp.js'
 import { createGroupMute } from './groupMute.js'
@@ -299,7 +301,7 @@ const SEARCH_TOOLS = [{
   },
 }]
 
-export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, commandCenter, longMemory, stickers = null, stickerLearner = null, musicSearch = searchSong, rand = Math.random, metrics = null, pythonPlugins = null }) {
+export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, commandCenter, longMemory, stickers = null, stickerLearner = null, musicSearch = searchSong, rand = Math.random, metrics = null, pythonPlugins = null, stickerSearchLLM = null }) {
   const imageCache = sharedImageCache ?? (config.dataDir && config.visionCacheEnabled !== false ? createImageCache({
     dir: path.join(config.dataDir, 'image-cache'),
     maxBytes: config.visionCacheMaxBytes,
@@ -308,12 +310,59 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
     ttlMs: config.visionCacheTtlMs,
     logger,
   }) : null)
+  // 打包与文件发送共用：上限、格式、压缩次数都走 config（控制台可改）
+  const fileMaxBytesNow = () => Math.max(1, Number(config.fileUploadMaxMb) || 1024) * 1024 * 1024
   // 只缓存客观画面；模型或识图提示词改变后使用新描述，不缓存聊天口吻。
   const stickerSend = createStickerSendPolicy({config,stickers,rand})
   const failedRecently = new Map() // 私聊报错提示限频：key -> 上次提示时间戳
   const lastProactive = new Map() // 白名单群主动搭话冷却：groupId -> 上次时间戳
   const pendingProactive = new Map() // 每群至多一轮主动生成；失败释放，不占成功冷却。
   const lastPoke = new Map() // 拍一拍回应冷却：会话 key -> 上次时间戳
+  const stickerSearchClient = () => stickerSearchLLM || llm
+  /** 用配置的模型把用户原话改写成 2~4 个搜索词（失败就退回原词） */
+  async function expandStickerQueries(base) {
+    if (config.stickerSearchRewrite === false) return [base]
+    const client = stickerSearchClient()
+    if (!client || typeof client.chat !== 'function') return [base]
+    try {
+      const text = await client.chat(
+        '你负责把用户想要的表情包需求转成 2~4 个中文图片搜索词，每行一个；保留人名、角色、作品名等关键词（如 deepseek、claude、初音未来），不要统一改写成泛泛的“表情包”；只输出搜索词，不要编号、解释或标点。',
+        [{ role: 'user', content: base }],
+        // 思考强度与输出预算跟随全局配置（MAX_TOKENS / DEEPSEEK_REASONING_EFFORT），这里只压温度
+        { temperature: 0.3 },
+      )
+      const list = String(text || '').split(/\r?\n/)
+        .map((s) => s.replace(/^[\s\d.、:：\-—]+/, '').replace(/[。！？!?；;]+$/, '').trim())
+        .filter((s) => s && s.length <= 30)
+      return list.length ? [...new Set([base, ...list])].slice(0, 4) : [base]
+    } catch (err) {
+      logger.debug(`[表情包] 搜索词改写失败：${err.message}`)
+      return [base]
+    }
+  }
+  /** 可选：用识图模型把不像表情包的图筛掉（logo/截图/真人照/广告） */
+  async function pickBestWebImage(images, requestText) {
+    if (!images.length) return null
+    if (config.stickerSearchFilter === false) return images[0]
+    const vision = typeof visionLLM?.snapshot === 'function' ? visionLLM.snapshot() : visionLLM
+    if (!vision || typeof vision.describeImages !== 'function') return images[0]
+    for (const image of images.slice(0, 4)) {
+      try {
+        const answer = await vision.describeImages(
+          '判断这张图是否适合当聊天表情包。合格：表情、梗图、动漫反应图、GIF；不合格：logo、网页截图、真人照片、纯文字广告、低清图标。只输出以“是”或“否”开头的一句话。',
+          '用户想要的：' + requestText,
+          [{ type: 'image_url', image_url: { url: image.dataUrl } }],
+        )
+        if (/^\s*是/.test(String(answer || ''))) return image
+        logger.info(`[表情包] 联网筛图跳过：${String(answer || '').slice(0, 40)}`)
+      } catch (err) {
+        // 识图失败（例如动图不支持）时不要整批丢弃，放行这一张
+        logger.info(`[表情包] 筛图不可用，直接采用：${err.message}`)
+        return image
+      }
+    }
+    return null
+  }
   // 最近一次 /id_check 的结果：groupId -> { group_id, at, bad, kicked }
   // 只活在内存里（5 分钟有效期）：机器人一重启就作废，踢人指令会静默失效 —— 这是安全方向
   const lastIdCheck = new Map()
@@ -639,12 +688,18 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         list: verdict.list ? verdict.list.map((b) => ({ userId: b.userId, name: b.name })) : [],
       }
     },
-    /** 拍一拍（双击头像）回应：NapCat 以 notice(notify/poke) 事件推送 */
+    /** 拍一拍 / 戳一戳回应：NapCat/LLBot 以 notice(notify/poke) 事件推送；私聊同样处理 */
     async handleNotice(evt) {
-      if (evt?.notice_type !== 'notify' || evt?.sub_type !== 'poke') return
+      const isPoke = (evt?.notice_type === 'notify' && ['poke', 'shake'].includes(evt?.sub_type)) || evt?.notice_type === 'poke'
+      if (!isPoke) return
+      // 群里任何人拍任何人都推给机器人，只有拍夜璃才需要处理；其余只记 debug，避免刷屏
+      logger.debug(`[拍一拍] 收到：kind=${evt.notice_type}/${evt.sub_type || ''} user=${evt.user_id} target=${evt.target_id} group=${evt.group_id ?? '私聊'}`)
       if (commandCenter && !commandCenter.poke(evt,onebot.selfId)) return
       // 只回应"拍机器人自己"，且忽略机器人自己拍自己
-      if (String(evt.target_id) !== String(onebot.selfId)) return
+      if (String(evt.target_id) !== String(onebot.selfId)) {
+        logger.debug(`[拍一拍] 跳过：拍的不是我（target=${evt.target_id}，self=${onebot.selfId}）`)
+        return
+      }
       if (String(evt.user_id) === String(onebot.selfId)) return
 
       const groupId = evt.group_id
@@ -837,12 +892,30 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         const targetId = Number((sendFileMatch || sendLinkMatch)[2])
         if (sendFileMatch) {
           const filePath = path.resolve(sendFileMatch[3].trim().replace(/^"|"$/g, ''))
-          if (!existsSync(filePath) || !statSync(filePath).isFile()) { await sendTo(evt, '文件不存在：' + filePath); return }
+          if (!existsSync(filePath)) { await sendTo(evt, '文件不存在：' + filePath); return }
+          const limitMb = Math.round(fileMaxBytesNow() / 1024 / 1024)
+          const sendUpload = async (forSend, name) => {
+            if (targetType === '群') await onebot.api('upload_group_file', { group_id: targetId, file: forSend, name }, 600000)
+            else await onebot.api('upload_private_file', { user_id: targetId, file: forSend, name }, 600000)
+          }
           const st = statSync(filePath)
-          if (st.size > 1024 * 1024 * 1024) { await sendTo(evt, '文件超过 1GB，未发送'); return }
+          if (st.isDirectory()) {
+            // 目录：按配置的格式与压缩次数打包后再发（和 jm 打包同一套参数）
+            let packed = null
+            try {
+              packed = await createArchive({sevenZipPath:config.sevenZipPath,rarPath:config.rarPath}).pack(filePath, { format: config.archiveFormat, passes: config.archivePasses })
+              const size = statSync(packed.file).size
+              if (size > fileMaxBytesNow()) { await sendTo(evt, `打包后 ${(size / 1024 / 1024).toFixed(1)}MB，超过上限 ${limitMb}MB，未发送`); return }
+              await sendUpload(packed.file, packed.name)
+              await sendTo(evt, `已发送打包文件：${packed.name}（${packed.format}，压缩 ${packed.passes} 次，${(size / 1024 / 1024).toFixed(1)}MB）`)
+            } catch (err) { await sendTo(evt, '打包发送失败：' + archiveErrorHint(err)) }
+            finally { packed?.cleanup?.() }
+            return
+          }
+          if (!st.isFile()) { await sendTo(evt, '不是文件或目录：' + filePath); return }
+          if (st.size > fileMaxBytesNow()) { await sendTo(evt, `文件超过 ${limitMb}MB，未发送`); return }
           try {
-            if (targetType === '群') await onebot.api('upload_group_file', { group_id: targetId, file: filePath, name: path.basename(filePath) }, 600000)
-            else await onebot.api('upload_private_file', { user_id: targetId, file: filePath, name: path.basename(filePath) }, 600000)
+            await sendUpload(filePath, path.basename(filePath))
             await sendTo(evt, '已发送文件：' + path.basename(filePath))
           } catch (err) { await sendTo(evt, '文件发送失败：' + err.message) }
           return
@@ -856,6 +929,80 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
           await sendTo(evt, '已发送链接：' + title)
         } catch (err) {
           try { await sendTo(evt, title + ' ' + url) } catch { await sendTo(evt, '链接发送失败：' + err.message) }
+        }
+        return
+      }
+      // 提前返回的分支也要落会话记忆，否则控制台会话里看不到用户说过什么
+      const rememberExchange = (assistantText) => {
+        try {
+          if (!config.contextRememberAll) return
+          const userName = evt.sender?.card || evt.sender?.nickname || String(evt.user_id)
+          if (parsed.text) memory.push(conversationKey, 'user', `【${userName}】${parsed.text}`, { time: messageTime(evt) ?? Date.now(), messageId: evt.message_id, userId: evt.user_id, senderName: userName })
+          if (assistantText) memory.push(conversationKey, 'assistant', assistantText)
+        } catch { /* 记忆写入失败不影响发送 */ }
+      }
+      // 让机器人拍一拍 / 戳一戳你：「拍一拍我」「戳戳我」这类原话，群聊私聊都支持
+      const pokeMeMatch = /^(?:请|麻烦|帮忙)?\s*(?:拍一拍我|拍拍我|戳一戳我|戳戳我|戳我一下|拍我一下)[呀啊吧哦嘛了呢~！!。.]*$/u.exec(sendText)
+      if (pokeMeMatch && directReply && (!isPrivate || privateAllowed(evt.user_id))) {
+        if (!featureAllowed('poke')) { await sendTo(evt, '拍一拍功能现在关着呢～'); return }
+        try {
+          if (typeof onebot.poke === 'function') await onebot.poke({ groupId: isPrivate ? undefined : groupId, userId: evt.user_id })
+          else if (isPrivate) await onebot.api('friend_poke', { user_id: Number(evt.user_id) })
+          else await onebot.api('group_poke', { group_id: Number(groupId), user_id: Number(evt.user_id) })
+          logger.info(`[拍一拍] 已按请求拍 ${isPrivate ? '私聊' : '群 ' + groupId} 的 ${evt.user_id}`)
+          rememberExchange('（拍回去了）')
+          await sendTo(evt, isPrivate ? '戳回去啦，收到没有～' : '拍回去啦～')
+          try { metrics?.replied?.() } catch {}
+        } catch (err) {
+          logger.warn(`[拍一拍] 主动拍失败：${err.message}`)
+          await sendTo(evt, '想拍你的，但是没戳动……')
+        }
+        return
+      }
+      // 联网找表情包：「找/搜/网上/联网」+「图/表情包/贴纸」且本地库挑不出来时，去必应图片搜一张
+      const wantsWebSticker = /(?:搜|找|网上|联网|在线)/u.test(sendText) && /(?:表情包|贴纸|图片|图)/u.test(sendText)
+      if (wantsWebSticker && directReply && config.stickerWebSearch !== false && (!isPrivate || privateAllowed(evt.user_id))) {
+        if (!featureAllowed('request-sticker')) { await sendTo(evt, '找图这个功能现在关着～'); return }
+        if (!stickerSend.allowed(evt)) { await sendTo(evt, '这个会话现在不允许发表情包哦'); return }
+        const query = buildStickerQuery(sendText)
+        try {
+          const queries = await expandStickerQueries(query)
+          // 必应直连可用，走代理反而搜不到；Giphy/Tenor 等境外接口才走代理
+          const proxy = config.stickerSearchProvider === 'bing' ? '' : config.stickerSearchProxy
+          const options = {
+            provider: config.stickerSearchProvider,
+            urlTemplate: config.stickerSearchUrl,
+            key: config.stickerSearchKey,
+            proxy,
+            maxBytes: STICKER_MAX_BYTES,
+            limit: config.stickerSearchFilter === false ? 1 : 4,
+          }
+          let candidates = await collectWebImages(queries, options)
+          logger.info(`[表情包] 联网搜图「${queries.join(' / ')}」候选 ${candidates.length} 张`)
+          // Giphy/Tenor 搜不到冷门角色时，用必应再兜一次（不带代理）
+          if (!candidates.length && config.stickerSearchProvider !== 'bing') {
+            candidates = await collectWebImages(queries, { ...options, provider: 'bing', proxy: '' })
+            logger.info(`[表情包] 改用必应兜底，候选 ${candidates.length} 张`)
+          }
+          if (!candidates.length) throw new Error('没搜到候选图')
+          const image = await pickBestWebImage(candidates, sendText)
+          // 筛不出合适的就如实说没找到，不拿无关的图凑数
+          if (!image) throw new Error('没找到合适的表情包')
+          const segment = typeof onebot.imageSegment === 'function'
+            ? await onebot.imageSegment(image.dataUrl, { sticker: true })
+            : { type: 'image', data: { file: image.dataUrl, sub_type: 1 } }
+          if (isPrivate) await onebot.sendPrivate(evt.user_id, [segment])
+          else await onebot.sendGroup(groupId, [segment])
+          stickerSend.begin(evt)
+          logger.info(`[表情包] 联网找图「${queries.join(' / ')}」已发送：${image.sourceUrl}`)
+          rememberExchange('[表情包]')
+          await sendTo(evt, '从网上给你找了一张，看看合不合口味～')
+          try { metrics?.replied?.() } catch {}
+        } catch (err) {
+          logger.warn(`[表情包] 联网找图失败：${err.message}`)
+          rememberExchange('（没找到合适的表情包）')
+          await sendTo(evt, '没找到合适的表情包，换个说法再让我试试？')
+          try { metrics?.replied?.() } catch {}
         }
         return
       }
@@ -902,33 +1049,50 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
           if (r.ok && out.startsWith('@@FILE@@')) {
             try {
               const spec = JSON.parse(out.slice('@@FILE@@'.length))
-              const filePath = path.resolve(String(spec.path || ''))
-              if (!existsSync(filePath) || !statSync(filePath).isFile()) throw new Error('文件不存在：' + filePath)
-              if (statSync(filePath).size > 1024 * 1024 * 1024) throw new Error('文件超过 1GB')
-              const name = String(spec.name || path.basename(filePath))
+              // parts：大文件被脚本切成多卷时逐个发送；否则就是单个文件
+              const files = (Array.isArray(spec.parts) && spec.parts.length
+                ? spec.parts.map((p) => ({ path: path.resolve(String(p.path || p)), name: String(p.name || path.basename(String(p.path || p))) }))
+                : [{ path: path.resolve(String(spec.path || '')), name: String(spec.name || path.basename(String(spec.path || ''))) }])
+              for (const f of files) {
+                if (!existsSync(f.path) || !statSync(f.path).isFile()) throw new Error('文件不存在：' + f.path)
+                if (statSync(f.path).size > fileMaxBytesNow()) throw new Error(`${f.name} 超过 ${Math.round(fileMaxBytesNow() / 1024 / 1024)}MB（可在控制台调大「文件发送上限」）`)
+              }
               // 单位秒，兼容旧脚本仍在用的 recall_minutes
               const seconds = Math.min(7200, Math.max(0, Number(
                 spec.recall_seconds ?? (spec.recall_minutes ? Number(spec.recall_minutes) * 60 : 300)) || 0))
               const recallLabel = seconds >= 60 ? `${Math.round(seconds / 60)} 分钟` : `${seconds} 秒`
-              let receipt = null
-              try {
-                const segment = [{ type: 'file', data: { file: 'file:///' + filePath.replace(/\\/g, '/'), name } }]
-                receipt = evt.message_type === 'private'
-                  ? await onebot.sendPrivate(evt.user_id, segment, 600000)
-                  : await onebot.sendGroup(evt.group_id, segment, 600000)
-              } catch (segErr) {
-                if (!/不支持|unsupported|not implemented|unknown.*(?:segment|type)|file.*segment/i.test(String(segErr.message))) throw segErr
-                // 文件段不被支持时退回群文件/私聊文件上传（这种形式没有消息号，无法自动撤回）
-                if (evt.message_type === 'private') await onebot.api('upload_private_file', { user_id: evt.user_id, file: filePath, name }, 600000)
-                else await onebot.api('upload_group_file', { group_id: evt.group_id, file: filePath, name }, 600000)
+              const sentIds = []
+              if (files.length > 1) await sendTo(evt, `分 ${files.length} 卷发送，请稍等…`)
+              for (let i = 0; i < files.length; i++) {
+                const f = files[i]
+                let receipt = null
+                try {
+                  const segment = [{ type: 'file', data: { file: 'file:///' + f.path.replace(/\\/g, '/'), name: f.name } }]
+                  receipt = evt.message_type === 'private'
+                    ? await onebot.sendPrivate(evt.user_id, segment, 600000)
+                    : await onebot.sendGroup(evt.group_id, segment, 600000)
+                } catch (segErr) {
+                  if (!/不支持|unsupported|not implemented|unknown.*(?:segment|type)|file.*segment/i.test(String(segErr.message))) throw segErr
+                  // 文件段不被支持时退回群文件/私聊文件上传（这种形式没有消息号，无法自动撤回）
+                  if (evt.message_type === 'private') await onebot.api('upload_private_file', { user_id: evt.user_id, file: f.path, name: f.name }, 600000)
+                  else await onebot.api('upload_group_file', { group_id: evt.group_id, file: f.path, name: f.name }, 600000)
+                }
+                if (receipt && receipt.message_id) sentIds.push(receipt.message_id)
+                if (files.length > 1) await sendTo(evt, `已发送 ${i + 1}/${files.length}：${f.name}`)
               }
-              const mid = receipt && receipt.message_id
-              if (mid && seconds > 0) {
-                const t = setTimeout(() => { onebot.deleteMessage(mid).catch(() => {}) }, seconds * 1000)
-                if (typeof t.unref === 'function') t.unref()
+              if (seconds > 0) {
+                for (const mid of sentIds) {
+                  const t = setTimeout(() => { onebot.deleteMessage(mid).catch(() => {}) }, seconds * 1000)
+                  if (typeof t.unref === 'function') t.unref()
+                }
               }
-              await sendTo(evt, (spec.text || ('已发送文件：' + name)) + (mid && seconds > 0 ? `\n（${recallLabel}后自动撤回；机器人重启会中断计时）` : seconds > 0 ? '\n（当前发送方式无法自动撤回，请手动处理）' : ''))
-            } catch (err) { await sendTo(evt, '文件发送失败：' + err.message) }
+              const mid = sentIds[0]
+              await sendTo(evt, (spec.text || ('已发送文件：' + files[0].name)) + (mid && seconds > 0 ? `\n（${recallLabel}后自动撤回；机器人重启会中断计时）` : seconds > 0 ? '\n（当前发送方式无法自动撤回，请手动处理）' : ''))
+            } catch (err) {
+              const hint = /Highway|upload|retcode=1200/i.test(String(err.message))
+                ? '\n提示：大文件上传容易在几百 MB 处失败，可在「模型与接口 → 文件与打包」把「大文件分卷大小」调小后重发。' : ''
+              await sendTo(evt, '文件发送失败：' + err.message + hint)
+            }
             return
           }
           const body = out.slice(0, 1500)
@@ -1417,8 +1581,10 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         // 第一条的普通回复可能仍在生成；复读段已触发时取消这条迟到的搭话。
         if (!canContinue()) return
         // 先决定是否实际配图，再发送文字；重写文案不重新抽取概率。
-        let selection=questionMode?{items:[],reason:'解题不配表情包'}:stickerSend.select(evt,{text:reply,queries:stickerQueries,context:parsed.text,requested:stickerRequested,store:replyStickers})
-        if(stickerRequested&&!stickerRequestAllowed())selection={items:[],reason:'明确索图指令已关闭或范围/权限改变'}
+        // 用户原话明确要图时，不再依赖模型自觉打 [索要表情包]（模型偶尔漏标记会退回 10% 概率）
+        const userAskedSticker = !questionMode && userAsksForSticker(parsed.text)
+        let selection=questionMode?{items:[],reason:'解题不配表情包'}:stickerSend.select(evt,{text:reply,queries:stickerQueries,context:parsed.text,requested:stickerRequested||userAskedSticker,store:replyStickers})
+        if((stickerRequested||userAskedSticker)&&!stickerRequestAllowed())selection={items:[],reason:'明确索图指令已关闭或范围/权限改变'}
         selection.items=selection.items.filter(item=>replyStickers?.dataUrlOf(item))
         if(!questionMode&&!selection.items.length&&claimsStickerDelivery(reply)){
           logger.info(`[表情包文案] 本轮不配图（${selection.reason}），修正发图承诺`)
@@ -1471,9 +1637,13 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
             const file = item ? replyStickers.dataUrlOf(item) : null
             if (!file) { logger.warn(`[表情包] 「${item.name}」文件不可读，跳过`); continue }
             try {
-              if (!canContinue() || !stickerSend.allowed(evt) || (stickerRequested&&!stickerRequestAllowed())) break
+              if (!canContinue() || !stickerSend.allowed(evt) || ((stickerRequested || userAskedSticker) && !stickerRequestAllowed())) break
               stickerSend.begin(evt)
-              const segments = [{ type: 'image', data: { file, sub_type: 1 } }]
+              // 按协议端补字段：LLBot 用 subType、NapCat 用原来的 sub_type；
+              // 自定义/测试用的 OneBot 客户端没有 imageSegment 时退回原来的写法。
+              const segments = typeof onebot.imageSegment === 'function'
+                ? [await onebot.imageSegment(file, { sticker: true })]
+                : [{ type: 'image', data: { file, sub_type: 1 } }]
               if (evt.message_type === 'private') await onebot.sendPrivate(evt.user_id, segments)
               else await onebot.sendGroup(evt.group_id, segments)
               logger.info(`[表情包] 发送「${item.name}」到 ${evt.message_type === 'private' ? '私聊' : '群 ' + evt.group_id}`)

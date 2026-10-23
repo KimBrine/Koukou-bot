@@ -40,6 +40,15 @@ try {
     await client({enableThinking:true}).chat('p',[])
     assert.equal(Object.hasOwn(bodies[0],'enable_thinking'),false);assert.equal(bodies[1].enable_thinking,true)
   })
+  await test('单次调用可关闭思考，不改变客户端默认', async () => {
+    const bodies=[]
+    globalThis.fetch=async (_, options)=>{bodies.push(JSON.parse(options.body));return success()}
+    const c=client({model:'deepseek-flash',reasoningEffort:'low'})
+    await c.chat('p',[],{effort:'none'})
+    await c.chat('p',[])
+    assert.deepEqual(bodies[0].thinking,{type:'disabled'});assert.equal(bodies[0].reasoning_effort,'none')
+    assert.deepEqual(bodies[1].thinking,{type:'enabled'});assert.equal(bodies[1].reasoning_effort,'low')
+  })
   await test('只读 message 的 AbortError 不被二次 TypeError 掩盖，正确报告超时并释放并发', async () => {
     const abort=new DOMException('This operation was aborted','AbortError'), c=client()
     globalThis.fetch=async()=>{throw abort}

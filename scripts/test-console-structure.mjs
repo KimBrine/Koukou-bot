@@ -14,11 +14,15 @@ for (const page of pages) {
 }
 
 // 关键按钮：既要出现在 DOM 里，也要有事件绑定，缺一个就是「点了没反应」
-const buttons = ['addchat', 'cleanGroups', 'saveCfg', 'importWhitelist', 'stkRulesSave', 'wsSave', 'vcSave', 'stkUpload']
+const buttons = ['addchat', 'cleanGroups', 'importWhitelist', 'stkRulesSave', 'wsSave', 'vcSave', 'stkUpload']
 for (const id of buttons) {
   assert.ok(html.includes(`id="${id}"`), `页面缺少按钮 #${id}`)
   assert.ok(html.includes(`getElementById('${id}')`), `按钮 #${id} 没有绑定事件`)
 }
+// 配置表单按卡片分作用域保存：同一页多个卡片各有自己的保存按钮，不能共用一个 id
+assert.ok(html.includes('data-cfgsave'), '缺少配置保存按钮')
+assert.ok(html.includes("[data-cfgsave]"), '配置保存按钮没有绑定事件')
+assert.ok(html.includes('data-cfg-scope'), '配置表单缺少独立作用域，同页多个保存按钮会互相抢')
 
 // 记忆浏览：查看 / 改 / 删 / 清空 四个动作都要绑上（历史上漏过）
 for (const attr of ['data-memview', 'data-mem-edit', 'data-mem-del', 'data-memclear']) {
@@ -38,6 +42,7 @@ assert.match(groupRow,/被 @ \/ 引用时回复/)
 assert.equal(vm.runInContext('Object.keys(proactiveSettingsPatch({querySelector(){return null}})).length',context),0,'私聊保存不访问不存在的概率输入框，也不提交群聊专属设置')
 const patch=vm.runInContext(`proactiveSettingsPatch({querySelector(s){return s.includes('data-global')?{checked:false}:s.includes('proactiveEnabled')?{checked:false}:{value:'.25'}}})`,context)
 assert.equal(patch.proactiveEnabled,false);assert.equal(patch.proactiveRate,.25)
+assert.match(app,/const cur = stickerSettings \|\| \{\}/,'表情包保存用全局 stickerSettings，不引用只在页面作用域里的 settings')
 console.log('控制台结构及私聊设置检查通过：私聊不展示/提交群聊概率，群聊设置保留。')
 
 // QQ真实群名不能被会话占位名覆盖；满库时两个学习开关仍须禁用。
