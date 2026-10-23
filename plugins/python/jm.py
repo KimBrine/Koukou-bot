@@ -1033,7 +1033,7 @@ def main(argv):
         print(cmd_card(argv[1] if len(argv) > 1 else '',
                        argv[2] if len(argv) > 2 else ''))
         return 0
-    if low in ('打包', 'zip', '压缩', '文件', '发包', '发文件', 'send'):
+    if low in ('打包', 'zip', '压缩', '文件'):
         print(cmd_pack(argv[1] if len(argv) > 1 else '',
                        argv[2] if len(argv) > 2 else ''))
         return 0
