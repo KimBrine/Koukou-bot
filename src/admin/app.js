@@ -591,9 +591,10 @@ async function importWhitelist(options={}){
   }
   preview();root.querySelector('#whitelistPick').focus()
 }
-function configForm(keys, hint){
+function configForm(keys, hint, opts = {}){
+  const scope = opts.scope || 'main'
   const items = configItems.filter(i=>keys.includes(i.key))
-  return items.map(i => {
+  const fields = items.map(i => {
     const v = i.effective !== '' ? i.effective : i.value
     const inactive = state?.config?.summaryUnrestricted && ['SUMMARY_MAX_MESSAGES','SUMMARY_MAX_TOKENS','SUMMARY_TASK_TIMEOUT_MINUTES'].includes(i.key)
     const badge = inactive ? '<span class="badge">宽裕模式下不生效</span>' : i.live ? '<span class="badge live">即时生效</span>' : '<span class="badge restart">需重启</span>'
@@ -611,13 +612,14 @@ function configForm(keys, hint){
     if (inactive) input = `<fieldset disabled style="border:0;padding:0;margin:0;opacity:.5">${input}</fieldset>`
     const fieldHint = ['SUMMARY_SEND_MODE','LOG_LEVEL'].includes(i.key) ? '' : (i.hint||'')
     return `<div class="frow"><label>${i.label} ${badge}</label><div>${input}${fieldHint ? `<div class="mut" style="font-size:12px;margin-top:3px">${fieldHint}</div>` : ''}</div></div>`
-  }).join('') + `<div class="flexbar sticky-save"><button class="btn primary" id="saveCfg" disabled>没有待保存的改动</button><span class="mut" id="cfgDirty">${hint||''}</span></div>`
+  }).join('')
+  return `<div class="cfg-scope" data-cfg-scope="${scope}"><div class="cfg-fields">${fields}</div><div class="flexbar sticky-save"><button class="btn primary" data-cfgsave="${scope}" disabled>没有待保存的改动</button><span class="mut" data-cfgdirty="${scope}">${hint||''}</span></div></div>`
 }
 function pageHumanize(){
   const greetings=state?.config?.quietGreetings
   return `<h1>回复行为</h1><div class="sub">这里修改“沿用全局”的默认值；会话单独设置优先，其次是按群独立概率，最后才是全局概率。</div>
   <div class="flexbar"><a class="btn" href="#chats">管理白名单群聊 →</a><span class="note">概率填写百分比，例如 20%，不需要输入配置格式。</span></div>
-  <div class="card">${configForm(['PROACTIVE_RATE','PROACTIVE_RATE_PER_GROUP','PROACTIVE_COOLDOWN_MS','EMOJI_KEEP_RATE','HUMAN_DELAY_MIN_MS','HUMAN_DELAY_MAX_MS','REPLY_LENGTH_MATCH','REPLY_MIN_BUDGET','REPLY_MAX_LINES','REPLY_LINE_MAX_CHARS','LINE_GAP_MIN_MS','LINE_GAP_MAX_MS','RATE_LIMIT_PER_HOUR','RATE_LIMIT_AT_PER_HOUR','RATE_LIMIT_MIN_GAP_MS','RATE_LIMIT_WAIT_MAX_MS','QUIET_HOURS','QUIET_GREETINGS_ENABLED','HISTORY_LIMIT','CONTEXT_REMEMBER_ALL','POKE_REPLY_ENABLED','AUTO_PLUS_ONE_ENABLED','PRIVATE_WHITELIST'],'修改全局概率不会覆盖已经单独设置的群；限流相关参数需重启生效。')}</div><div class="note">固定语库早晚安：${greetings?.enabled?'已启用':'未启用'}；语库就绪 ${greetings?.groups?.filter(g=>g.ready).length||0}/${greetings?.groups?.length||0} 群。检查时段、选句和发送均不调用 AI。<a href="#persona">前往人格页面编辑或导出语库 →</a> <button class="btn sm" id="catchUpMorning">补发本轮未发的早安</button></div>`
+  <div class="card">${configForm(['PROACTIVE_RATE','PROACTIVE_RATE_PER_GROUP','PROACTIVE_COOLDOWN_MS','EMOJI_KEEP_RATE','HUMAN_DELAY_MIN_MS','HUMAN_DELAY_MAX_MS','REPLY_LENGTH_MATCH','REPLY_MIN_BUDGET','REPLY_MAX_LINES','REPLY_LINE_MAX_CHARS','LINE_GAP_MIN_MS','LINE_GAP_MAX_MS','RATE_LIMIT_PER_HOUR','RATE_LIMIT_AT_PER_HOUR','RATE_LIMIT_MIN_GAP_MS','RATE_LIMIT_WAIT_MAX_MS','QUIET_HOURS','QUIET_GREETINGS_ENABLED','HISTORY_LIMIT','CONTEXT_REMEMBER_ALL','POKE_REPLY_ENABLED','AUTO_PLUS_ONE_ENABLED','PRIVATE_WHITELIST'],'修改全局概率不会覆盖已经单独设置的群；限流相关参数需重启生效。',{scope:'humanize'})}</div><div class="note">固定语库早晚安：${greetings?.enabled?'已启用':'未启用'}；语库就绪 ${greetings?.groups?.filter(g=>g.ready).length||0}/${greetings?.groups?.length||0} 群。检查时段、选句和发送均不调用 AI。<a href="#persona">前往人格页面编辑或导出语库 →</a> <button class="btn sm" id="catchUpMorning">补发本轮未发的早安</button></div>`
 }
 function webSearchCard(){
   const info = webSearchInfo || {}
@@ -638,13 +640,13 @@ function webSearchCard(){
 function pageApi(){
   return modelPickerCard() + visionCard() + webSearchCard() + `<h1>模型与接口</h1><div class="sub">对话模型、思考强度改完立刻生效；下方视觉模型与其它项按标注生效。</div>
   <div class="card"><strong>当前生效的识图模型：</strong>${esc(state?.bot?.visionModel || '未启用')}<div class="mut" style="margin-top:5px">图片识别与群聊报告分别配置；下方的 DashScope 模型只有切换识图服务商后才会用于读图。</div></div>
-  <div class="card">${configForm(['TEMPERATURE','MAX_TOKENS','DASHSCOPE_API_KEY','BAIDU_QIANFAN_API_KEY','LOG_LEVEL'],'已设置的密钥不会显示；留空保持原值。')}</div>
+  <div class="card">${configForm(['TEMPERATURE','MAX_TOKENS','DASHSCOPE_API_KEY','BAIDU_QIANFAN_API_KEY','LOG_LEVEL'],'已设置的密钥不会显示；留空保持原值。',{scope:'api-model'})}</div>
   <h2>文件与打包</h2>
-  <div class="card">${configForm(['FILE_UPLOAD_MAX_MB','ARCHIVE_FORMAT','ARCHIVE_PASSES','SEVEN_ZIP_PATH'],'/发文件（含目录）与 Python 脚本结果共用这些设置；格式和压缩次数也用于 jm 打包。改完下一次发送/打包就生效。')}</div>`
+  <div class="card">${configForm(['FILE_UPLOAD_MAX_MB','ARCHIVE_FORMAT','ARCHIVE_PASSES','SEVEN_ZIP_PATH'],'/发文件（含目录）与 Python 脚本结果共用这些设置；格式和压缩次数也用于 jm 打包。改完下一次发送/打包就生效。',{scope:'api-files'})}</div>`
 }
 function pageReport(){
   return `<h1>群聊报告</h1><div class="sub">每日自动生成「群聊日常分析报告」，也可以在这里随时手动生成</div>
-  <div class="card">${configForm(['SUMMARY_ENABLED','SUMMARY_FALLBACK_ENABLED','SUMMARY_TIMES','SUMMARY_GROUPS','SUMMARY_SEND_MODE','SUMMARY_UNRESTRICTED','SUMMARY_REQUEST_TIMEOUT_SECONDS','SUMMARY_BOT_USERS','SUMMARY_MAX_MESSAGES','SUMMARY_MAX_TOKENS','SUMMARY_CONCURRENCY','SUMMARY_TASK_TIMEOUT_MINUTES','SUMMARY_PROVIDER','SUMMARY_MODEL','SUMMARY_VISION_MODEL','SUMMARY_REFERENCE_MAX_IMAGES'],'')}</div>
+  <div class="card">${configForm(['SUMMARY_ENABLED','SUMMARY_FALLBACK_ENABLED','SUMMARY_TIMES','SUMMARY_GROUPS','SUMMARY_SEND_MODE','SUMMARY_UNRESTRICTED','SUMMARY_REQUEST_TIMEOUT_SECONDS','SUMMARY_BOT_USERS','SUMMARY_MAX_MESSAGES','SUMMARY_MAX_TOKENS','SUMMARY_CONCURRENCY','SUMMARY_TASK_TIMEOUT_MINUTES','SUMMARY_PROVIDER','SUMMARY_MODEL','SUMMARY_VISION_MODEL','SUMMARY_REFERENCE_MAX_IMAGES'],'',{scope:'api-summary'})}</div>
   <div class="note">${state?.config?.summaryUnrestricted ? `当前宽裕模式：整份总结不限总时长；单次模型等待 ${state.config.summaryRequestTimeoutSeconds ?? 900} 秒后可有限重试。` : '当前使用普通模式的准备时限与篇幅设置。'} 服务商容量限制仍存在；发送结果不明确时不会盲目重发。</div>
   <h2>立即生成</h2>
   <div class="card"><div class="row">
@@ -2516,14 +2518,16 @@ async function bind(){
   const cfgValue = (el) => el.type === 'checkbox' ? (el.checked ? '1' : '0') : el.value
   const cfgEls = [...document.querySelectorAll('[data-cfg]')]
   cfgEls.forEach(el => { el.dataset.original = cfgValue(el) })
-  const updateDirty = () => {
-    const count = cfgEls.filter(el => cfgValue(el) !== el.dataset.original && !(el.dataset.secret && !el.value)).length
-    const save = document.getElementById('saveCfg')
-    const invalidRate = [...document.querySelectorAll('[data-rate-percent]')].some(el => !el.value.trim() || !el.checkValidity())
+  const dirtyIn = (scope) => [...scope.querySelectorAll('[data-cfg]')].filter(el => cfgValue(el) !== el.dataset.original && !(el.dataset.secret && !el.value))
+  const updateScope = (scope) => {
+    const count = dirtyIn(scope).length
+    const save = scope.querySelector('[data-cfgsave]')
+    const invalidRate = [...scope.querySelectorAll('[data-rate-percent]')].some(el => !el.value.trim() || !el.checkValidity())
     if (save) { save.disabled = !count || invalidRate; save.textContent = invalidRate ? '请修正群概率' : count ? '保存 ' + count + ' 项改动' : '没有待保存的改动' }
-    const hint = document.getElementById('cfgDirty')
+    const hint = scope.querySelector('[data-cfgdirty]')
     if (hint && count) hint.textContent = '仅保存已修改的项目'
   }
+  const updateDirty = () => document.querySelectorAll('[data-cfg-scope]').forEach(updateScope)
   document.querySelectorAll('[data-cfg]').forEach(el => {
     if (el.type === 'range') el.oninput = () => {
       const s = document.querySelector('[data-cfgshow="' + el.dataset.cfg + '"]')
@@ -2559,23 +2563,22 @@ async function bind(){
       picker.value = ''; manual.value = ''; manual.hidden = true; syncRates()
     }
   }
-  const sc = document.getElementById('saveCfg')
-  if (sc) sc.onclick = async () => {
-    for (const input of document.querySelectorAll('[data-rate-percent]')) {
+  document.querySelectorAll('[data-cfgsave]').forEach(btn => btn.onclick = async () => {
+    const scope = btn.closest('[data-cfg-scope]')
+    if (!scope) return
+    for (const input of scope.querySelectorAll('[data-rate-percent]')) {
       if (!input.value.trim() || !input.reportValidity()) { toast('群概率请填写 0～100 之间的数字', true); return }
     }
     const patch = {}
-    cfgEls.forEach(el => {
-      if (cfgValue(el) !== el.dataset.original && !(el.dataset.secret && !el.value)) patch[el.dataset.cfg] = cfgValue(el)
-    })
+    dirtyIn(scope).forEach(el => { patch[el.dataset.cfg] = cfgValue(el) })
     if (!Object.keys(patch).length) return
-    sc.disabled = true
+    btn.disabled = true
     try {
       const r = await api('/api/action/set-config-batch', { patch })
       toast(`已保存 ${r.changed} 项（即时生效 ${r.live} 项）${r.needRestart ? '，其余项目重启后生效' : ''}`)
       await load()
-    } catch(e){ toast('保存失败：' + e.message, true); sc.disabled = false }
-  }
+    } catch(e){ toast('保存失败：' + e.message, true); btn.disabled = false }
+  })
 
   // 日志
   const lf = document.getElementById('logFilter')
