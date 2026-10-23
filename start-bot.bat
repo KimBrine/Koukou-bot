@@ -42,19 +42,17 @@ call :mark "已清理旧实例"
 
 echo [1/3] 启动 LLBot headless（不启动 QQ 客户端）...
 set "LLBOT_STARTED=0"
-tasklist /FI "IMAGENAME eq LuckyLillia.exe" 2>nul | find /I "LuckyLillia.exe" >nul
-if errorlevel 1 (
-  cd /d "%LLDIR%\bin\llbot"
-  powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%\scripts\start-llbot.ps1" -FilePath "%LLDIR%\LuckyLillia.exe"
-  set "LLBOT_STARTED=1"
-  call :mark "LLBot 已发起启动，等待端口"
-) else (
-  echo       LLBot 已在运行
-  call :mark "LLBot 已在运行"
+netstat -ano | findstr /R /C:":%ONEBOT_PORT% .*LISTENING" >nul 2>&1
+if not errorlevel 1 (
+  echo       OneBot 端口已就绪，跳过启动 LLBot
+  call :mark "OneBot 端口已就绪，跳过 LLBot"
+  goto WAITPORT
 )
-
-if "%LLBOT_STARTED%"=="1" start "" http://127.0.0.1:3080/
-echo       首次使用：用手机 QQ 扫码。扫码后本窗口会自动继续。
+REM 用 wscript 隐藏启动，避免 PowerShell 冷启动和额外窗口
+wscript //B //Nologo "%ROOT%\scripts\start-llbot-hidden.vbs" "%LLDIR%\LuckyLillia.exe" "%LLDIR%\bin\llbot"
+set "LLBOT_STARTED=1"
+call :mark "LLBot 已发起启动，等待端口"
+echo       首次使用：在控制台「QQ 登录」里扫码；本窗口会显示等待进度。
 echo.
 
 REM ===== 等 OneBot 端口，1 秒一次，最多 120 秒 =====
@@ -64,12 +62,14 @@ netstat -ano | findstr /R /C:":%ONEBOT_PORT% .*LISTENING" >nul 2>&1
 if not errorlevel 1 goto PORTOK
 set /a N+=1
 if !N! GEQ 120 goto PORTTIMEOUT
+set /a MOD=N %% 10
+if !MOD!==0 echo       已等待 !N! 秒，仍在等 OneBot 端口（LLBot 启动 / QQ 登录中）...
 ping -n 2 127.0.0.1 >nul
 goto WAITPORT
 :PORTTIMEOUT
 echo.
 echo [!] 2 分钟内没等到 OneBot 端口就绪。
-echo [!] 请在 http://127.0.0.1:3080 里确认 QQ 已登录，再重新运行本脚本。
+echo [!] 在控制台「QQ 登录」里确认 QQ 已登录，再重新运行本脚本。
 call :mark "等待端口超时"
 pause
 exit /b 1
