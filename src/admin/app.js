@@ -5,7 +5,7 @@ const PAGES = [
   ['persona','✧  人格编辑'],
   ['humanize','◉  回复行为'],
   ['api','⌘  模型与接口'],
-  ['report','▤  群聊报告'],
+  ['report','▤  群聊报告 · 自动名单'],
   ['memory','▤  记忆浏览'],
   ['stickers','☺  表情包'],
   ['metrics','▤  运行概览'],
@@ -393,6 +393,7 @@ function pageChats(){
   const whitelist = (state?.config?.whitelist || []).map(id => ({id, name: groupName(id)}))
   return `
   <div class="section-head"><div><h1>会话管理</h1><div class="sub">为每个群聊或私聊设置回复方式。保存后即时生效。</div></div><button class="btn primary" id="addPrivateWhitelistTop">＋ 添加私聊白名单</button></div>
+  <section class="card" style="border:2px solid var(--accent,#56d8c3)"><div class="section-head"><div><h2>自动群总结 · 群名单</h2><p class="note">设置每天的总结时间及自动发送到哪些群。</p></div><a class="btn primary" href="#report">管理自动总结群名单 →</a></div></section>
   <section class="card group-manager" aria-label="白名单群聊管理">
     <div class="section-head"><div><h2>白名单群聊 <span class="badge whitelist">${whitelist.length} 个群</span></h2><div class="note">机器人可以在这些群主动搭话，概率在「回复行为」中设置。</div></div><button class="btn primary" id="importWhitelist">＋ 添加 / 导入白名单群</button></div>
     <div class="group-list">${whitelist.map(g => `<div class="group-item"><div class="group-identity"><strong>${esc(g.name)}</strong><small>群号 ${g.id}</small></div>${summaryControls(g.id)}<button class="btn sm" data-open-chat="g${g.id}">会话设置</button><button class="btn danger sm" data-whitelist="remove" data-group="${g.id}">移出白名单</button></div>`).join('') || '<div class="empty">还没有白名单群，点击右上方按钮添加。</div>'}</div>
@@ -591,6 +592,14 @@ async function importWhitelist(options={}){
   }
   preview();root.querySelector('#whitelistPick').focus()
 }
+function summaryGroupEditor(value){
+  const ids=[...new Set(String(value||'').split(/[,，\s]+/).filter(x=>/^\d+$/.test(x)))]
+  const groups=new Map()
+  ;(joinedGroups||[]).forEach(g=>groups.set(String(g.id),g.name))
+  ;(chats||[]).filter(c=>c.type==='group').forEach(c=>{if(!groups.has(String(c.id)))groups.set(String(c.id),c.name)})
+  ids.forEach(id=>{if(!groups.has(id))groups.set(id,'群聊')})
+  return `<div data-summary-editor><div class="group-list" style="max-height:280px;overflow:auto">${[...groups].map(([id,name])=>`<label class="group-item"><input type="checkbox" data-summary-pick="${esc(id)}" ${ids.includes(id)?'checked':''}><span>${esc(name)}（${esc(id)}）</span></label>`).join('')||'<p class="mut">群列表暂不可用，可在下面输入群号。</p>'}</div><input data-cfg="SUMMARY_GROUPS" value="${esc(ids.join(','))}" placeholder="群号，多个用逗号分隔" aria-label="自动总结群名单"><p class="note">只修改自动总结名单，不改变主动聊天白名单。留空会使用全部白名单群；停用自动总结请关闭上方开关。保存后需重启机器人生效。</p></div>`
+}
 function configForm(keys, hint, opts = {}){
   const scope = opts.scope || 'main'
   const items = configItems.filter(i=>keys.includes(i.key))
@@ -600,6 +609,7 @@ function configForm(keys, hint, opts = {}){
     const badge = inactive ? '<span class="badge">宽裕模式下不生效</span>' : i.live ? '<span class="badge live">即时生效</span>' : '<span class="badge restart">需重启</span>'
     let input
     if (i.key === 'PROACTIVE_RATE_PER_GROUP') input = groupRateEditor(v)
+    else if (i.key === 'SUMMARY_GROUPS') input = summaryGroupEditor(v)
     else if (i.type === 'bool') input = `<label class="switch"><input type="checkbox" data-cfg="${i.key}" ${(v==='1'||v==='true')?'checked':''}><i></i></label>`
     else if (i.type === 'rate') input = `<input type="range" min="0" max="1" step="0.01" data-cfg="${i.key}" value="${v||0}"> <span class="pill" data-cfgshow="${i.key}">${((Number(v)||0)*100).toFixed(0)}%</span>`
     else if (i.type === 'secret') input = `<div class="row"><input type="password" data-cfg="${i.key}" data-secret="1" value="" placeholder="${i.configured ? '已设置，留空不修改' : '尚未设置'}" autocomplete="new-password" style="flex:1;min-width:180px"><button class="btn sm" type="button" data-reveal="${i.key}">显示输入</button></div>`
@@ -646,7 +656,9 @@ function pageApi(){
 }
 function pageReport(){
   return `<h1>群聊报告</h1><div class="sub">每日自动生成「群聊日常分析报告」，也可以在这里随时手动生成</div>
-  <div class="card">${configForm(['SUMMARY_ENABLED','SUMMARY_FALLBACK_ENABLED','SUMMARY_TIMES','SUMMARY_GROUPS','SUMMARY_SEND_MODE','SUMMARY_UNRESTRICTED','SUMMARY_REQUEST_TIMEOUT_SECONDS','SUMMARY_BOT_USERS','SUMMARY_MAX_MESSAGES','SUMMARY_MAX_TOKENS','SUMMARY_CONCURRENCY','SUMMARY_TASK_TIMEOUT_MINUTES','SUMMARY_PROVIDER','SUMMARY_MODEL','SUMMARY_VISION_MODEL','SUMMARY_REFERENCE_MAX_IMAGES'],'',{scope:'api-summary'})}</div>
+  <section class="card" style="border:2px solid var(--accent,#56d8c3)" aria-label="自动群总结名单"><h2>自动群总结 · 群名单</h2><p class="note">勾选需要每天自动总结的群，然后点击下方保存。</p>${configForm(['SUMMARY_ENABLED','SUMMARY_FALLBACK_ENABLED','SUMMARY_TIMES','SUMMARY_GROUPS'],'',{scope:'summary-roster'})}</section>
+  <h2>模型、篇幅与发送设置</h2>
+  <div class="card">${configForm(['SUMMARY_SEND_MODE','SUMMARY_UNRESTRICTED','SUMMARY_REQUEST_TIMEOUT_SECONDS','SUMMARY_BOT_USERS','SUMMARY_MAX_MESSAGES','SUMMARY_MAX_TOKENS','SUMMARY_CONCURRENCY','SUMMARY_TASK_TIMEOUT_MINUTES','SUMMARY_PROVIDER','SUMMARY_MODEL','SUMMARY_VISION_MODEL','SUMMARY_REFERENCE_MAX_IMAGES'],'',{scope:'api-summary'})}</div>
   <div class="note">${state?.config?.summaryUnrestricted ? `当前宽裕模式：整份总结不限总时长；单次模型等待 ${state.config.summaryRequestTimeoutSeconds ?? 900} 秒后可有限重试。` : '当前使用普通模式的准备时限与篇幅设置。'} 服务商容量限制仍存在；发送结果不明确时不会盲目重发。</div>
   <h2>立即生成</h2>
   <div class="card"><div class="row">
@@ -2538,6 +2550,15 @@ async function bind(){
     }
     el.addEventListener('input', updateDirty)
     el.addEventListener('change', updateDirty)
+  })
+  document.querySelectorAll('[data-summary-editor]').forEach(box=>{
+    const field=box.querySelector('[data-cfg="SUMMARY_GROUPS"]')
+    box.querySelectorAll('[data-summary-pick]').forEach(check=>check.onchange=()=>{
+      const ids=new Set(field.value.split(/[,，\s]+/).filter(Boolean))
+      if(check.checked)ids.add(check.dataset.summaryPick);else ids.delete(check.dataset.summaryPick)
+      field.value=[...ids].join(',');field.dispatchEvent(new Event('input',{bubbles:true}))
+    })
+    field.addEventListener('input',()=>{const ids=new Set(field.value.split(/[,，\s]+/));box.querySelectorAll('[data-summary-pick]').forEach(check=>{check.checked=ids.has(check.dataset.summaryPick)})})
   })
   const rateEditor = document.querySelector('.rate-editor')
   if (rateEditor) {

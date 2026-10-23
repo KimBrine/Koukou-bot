@@ -1014,8 +1014,6 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         }
         if (!pythonPlugins) { await sendTo(evt, 'Python 插件未启用。'); return }
         const pyName = String(pyMatch[1] || '').trim()
-        const packFailureHelp = /^(?:打包|zip|压缩|文件)(?:\s|$)/.test(pyMatch[2] || '') && /(?:^|\s)(?:加密|encrypted)(?:\s|$)/i.test(pyMatch[2] || '')
-          ? '\n使用说明：此模式为ZIP→7z→RAR逐层去后缀套包，不设密码。收到分卷先下载齐并合并；外层补.rar解压，内层补.7z解压，再补.zip解压。超时或失败时请先核对已收文件，不要直接重复上传。' : ''
         if (!pyName || /^(列表|list|帮助|help|指令|命令)$/i.test(pyName)) {
           try { await sendTo(evt, pythonPlugins.helpText()) }
           catch (err) { await sendTo(evt, '读取脚本列表失败：' + err.message) }
@@ -1049,10 +1047,8 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
             return
           }
           if (r.ok && out.startsWith('@@FILE@@')) {
-            let fileInstructions = ''
             try {
               const spec = JSON.parse(out.slice('@@FILE@@'.length))
-              fileInstructions = String(spec.instructions || '').slice(0, 1200)
               // parts：大文件被脚本切成多卷时逐个发送；否则就是单个文件
               const files = (Array.isArray(spec.parts) && spec.parts.length
                 ? spec.parts.map((p) => ({ path: path.resolve(String(p.path || p)), name: String(p.name || path.basename(String(p.path || p))) }))
@@ -1095,13 +1091,13 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
             } catch (err) {
               const hint = /Highway|upload|retcode=1200/i.test(String(err.message))
                 ? '\n提示：大文件上传容易在几百 MB 处失败，可在「模型与接口 → 文件与打包」把「大文件分卷大小」调小后重发。' : ''
-              await sendTo(evt, '文件发送失败：' + err.message + (fileInstructions ? '\n部分分卷可能已送达，超时请先核对，勿直接重复上传。\n' + fileInstructions : '') + hint)
+              await sendTo(evt, '文件发送失败：' + err.message + hint)
             }
             return
           }
           const body = out.slice(0, 1500)
-          await sendTo(evt, (r.ok ? '✅ ' : '⚠️ ') + body + (r.killed ? '\n（超时已终止）' : '') + (!r.ok ? packFailureHelp : ''))
-        } catch (err) { await sendTo(evt, '脚本执行失败：' + err.message + packFailureHelp) }
+          await sendTo(evt, (r.ok ? '✅ ' : '⚠️ ') + body + (r.killed ? '\n（超时已终止）' : ''))
+        } catch (err) { await sendTo(evt, '脚本执行失败：' + err.message) }
         return
       }
       const selfResult=!questionMode&&!muteFollowup&&selfActions.applies(evt,parsed,selfFollowup)?await selfActions.handle(evt,parsed,{followup:selfFollowup,quotedRaw,canReply:samePersona,replyPrompt:()=>{
