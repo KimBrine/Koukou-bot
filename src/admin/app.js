@@ -1132,6 +1132,12 @@ function pageStickers(){
     '<div class="mut">自动配图默认35%；0关闭自动配图，100每次尝试。明确索图不受此概率限制；彻底禁用请关闭总开关。按整轮文字回复判断一次，不是每一行。</div>',
     '<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:12px 0"><input type="checkbox" id="stkWebSearch"' + (settings.webSearch !== false ? ' checked' : '') + '> 允许联网找表情包</label>',
     '<div class="mut">开启后，用户说「给我找张表情包 / 搜一张开心的图」会去必应图片搜一张发过去（本地库优先，不需要额外 Key）。</div>',
+    '<label style="display:block;margin:12px 0">搜图来源 <select id="stkSearchProvider">' + [['bing','必应图片（免 Key）'],['giphy','Giphy（表情包/GIF，需 Key）'],['tenor','Tenor（需 Key）'],['custom','自定义接口']].map(x=>'<option value="'+x[0]+'"'+((settings.searchProvider||'bing')===x[0]?' selected':'')+'>'+x[1]+'</option>').join('') + '</select></label>',
+    '<label style="display:block;margin:12px 0">自定义搜图 URL <input id="stkSearchUrl" value="' + esc(settings.searchUrl || '') + '" placeholder="https://api.example.com/search?q={query}&limit={count}&key={key}" style="width:100%;max-width:560px"><div class="mut">仅「自定义接口」用；支持 {query} {key} {count}，返回 JSON，程序会自动找图片直链。</div></label>',
+    '<label style="display:block;margin:12px 0">搜图 API Key <input id="stkSearchKey" type="password" placeholder="' + (settings.searchKeyConfigured ? '已设置，留空不修改' : '未设置') + '" autocomplete="new-password" style="width:280px"><div class="mut">Giphy / Tenor / 自定义接口用；保存后不会回显。</div></label>',
+    '<label style="display:block;margin:12px 0">搜图改写模型 <input id="stkSearchModel" value="' + esc(settings.searchModel || '') + '" placeholder="留空=主对话模型" style="width:220px"><div class="mut">先用这个模型把你的话改写成几个搜索词，再去找图。</div></label>',
+    '<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:12px 0"><input type="checkbox" id="stkSearchFilter"' + (settings.searchFilter !== false ? ' checked' : '') + '> 用识图模型筛掉不像表情包的图（logo/截图/真人照/广告）</label>',
+    '<div class="mut">筛图会让每次找图多 1~3 次识图调用；关掉则取第一张合格图片。</div>',
     '<label style="display:block;margin:12px 0">每次最多 <input id="stkMax" type="number" min="1" max="3" value="' + (settings.maxPerReply || 1) + '" style="width:90px"> 张</label>',
     '<label style="display:block;margin:12px 0">选图方式 <select id="stkPickMode">' + [['context','模型按语境选图，情绪接近即可'],['model','模型候选按匹配程度加权选图'],['random','随机选图']].map(x=>'<option value="'+x[0]+'"'+((settings.pickMode || 'context')===x[0]?' selected':'')+'>'+x[1]+'</option>').join('') + '</select></label>',
     '<label style="display:block;margin:12px 0">发送范围 <select id="stkSendScope">' + [['all','所有已允许回复的会话'],['whitelist','仅白名单群'],['selected','仅指定群'],['private','仅私聊']].map(x=>'<option value="'+x[0]+'"'+((settings.scope || 'all')===x[0]?' selected':'')+'>'+x[1]+'</option>').join('') + '</select></label>',
@@ -2116,7 +2122,10 @@ async function bind(){
     const ids=['stkAutoRate','stkMax','stkCooldown'];if(ids.some(id=>!document.getElementById(id).value.trim()||!document.getElementById(id).checkValidity())){toast('请检查概率、张数和间隔范围',true);return}
     stkRulesSave.disabled=true
     try{
-      await api('/api/action/set-config-batch',{patch:{STICKERS_ENABLED:document.getElementById('stkEnabled').checked?'1':'0',STICKER_AUTO_RATE:probability.value,STICKER_MAX_PER_REPLY:document.getElementById('stkMax').value,STICKER_PICK_MODE:document.getElementById('stkPickMode').value,STICKER_SEND_SCOPE:sendScope.value,STICKER_SEND_GROUPS:Array.from(document.querySelectorAll('[data-stk-send-group]:checked')).map(x=>x.dataset.stkSendGroup).join(','),STICKER_COOLDOWN_SECONDS:document.getElementById('stkCooldown').value,STICKER_WEB_SEARCH:document.getElementById('stkWebSearch').checked?'1':'0'}})
+      const extraPatch={STICKER_WEB_SEARCH:document.getElementById('stkWebSearch').checked?'1':'0',STICKER_SEARCH_PROVIDER:document.getElementById('stkSearchProvider').value,STICKER_SEARCH_URL:document.getElementById('stkSearchUrl').value.trim(),STICKER_SEARCH_MODEL:document.getElementById('stkSearchModel').value.trim(),STICKER_SEARCH_FILTER:document.getElementById('stkSearchFilter').checked?'1':'0'}
+      const keyValue=document.getElementById('stkSearchKey').value.trim()
+      if(keyValue)extraPatch.STICKER_SEARCH_KEY=keyValue
+      await api('/api/action/set-config-batch',{patch:{STICKERS_ENABLED:document.getElementById('stkEnabled').checked?'1':'0',STICKER_AUTO_RATE:probability.value,STICKER_MAX_PER_REPLY:document.getElementById('stkMax').value,STICKER_PICK_MODE:document.getElementById('stkPickMode').value,STICKER_SEND_SCOPE:sendScope.value,STICKER_SEND_GROUPS:Array.from(document.querySelectorAll('[data-stk-send-group]:checked')).map(x=>x.dataset.stkSendGroup).join(','),STICKER_COOLDOWN_SECONDS:document.getElementById('stkCooldown').value,...extraPatch}})
       await load();toast('发送规则已保存，立即生效')
     }catch(e){toast('保存失败：'+e.message,true)}finally{stkRulesSave.disabled=false}
   }

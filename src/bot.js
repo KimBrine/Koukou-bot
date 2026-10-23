@@ -17,7 +17,7 @@ import { createArchive, archiveErrorHint } from './archive.js'
 import { isBotAdmin, hasAdmins, adminHint } from './permissions.js'
 import { renderReply } from './customCommands.js'
 import { extractStickerMarkers, STICKER_MAX_BYTES } from './stickers.js'
-import { findWebImage, buildStickerQuery } from './imageSearch.js'
+import { collectWebImages, buildStickerQuery } from './imageSearch.js'
 import { SUMMARY_RE, CLEAR_RE, HELP_RE, SEND_FILE_RE, SEND_LINK_RE, PY_CMD_RE } from './commandCenter.js'
 import { formatCommandHelp } from './commandHelp.js'
 import { createGroupMute } from './groupMute.js'
@@ -301,7 +301,7 @@ const SEARCH_TOOLS = [{
   },
 }]
 
-export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, commandCenter, longMemory, stickers = null, stickerLearner = null, musicSearch = searchSong, rand = Math.random, metrics = null, pythonPlugins = null }) {
+export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, commandCenter, longMemory, stickers = null, stickerLearner = null, musicSearch = searchSong, rand = Math.random, metrics = null, pythonPlugins = null, stickerSearchLLM = null }) {
   const imageCache = sharedImageCache ?? (config.dataDir && config.visionCacheEnabled !== false ? createImageCache({
     dir: path.join(config.dataDir, 'image-cache'),
     maxBytes: config.visionCacheMaxBytes,
@@ -319,6 +319,45 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
   const lastProactive = new Map() // 白名单群主动搭话冷却：groupId -> 上次时间戳
   const pendingProactive = new Map() // 每群至多一轮主动生成；失败释放，不占成功冷却。
   const lastPoke = new Map() // 拍一拍回应冷却：会话 key -> 上次时间戳
+  const stickerSearchClient = () => stickerSearchLLM || llm
+  /** 用配置的模型把用户原话改写成 2~4 个搜索词（失败就退回原词） */
+  async function expandStickerQueries(base) {
+    const client = stickerSearchClient()
+    if (!client || typeof client.chat !== 'function') return [base]
+    try {
+      const text = await client.chat(
+        '你负责把用户想要的表情包需求转成 2~4 个中文图片搜索词，每行一个；只输出搜索词，不要编号、解释或标点。',
+        [{ role: 'user', content: base }],
+        { maxTokens: 120, temperature: 0.3 },
+      )
+      const list = String(text || '').split(/\r?\n/)
+        .map((s) => s.replace(/^[\s\d.、:：\-—]+/, '').replace(/[。！？!?；;]+$/, '').trim())
+        .filter((s) => s && s.length <= 30)
+      return list.length ? [...new Set([base, ...list])].slice(0, 4) : [base]
+    } catch (err) {
+      logger.debug(`[表情包] 搜索词改写失败：${err.message}`)
+      return [base]
+    }
+  }
+  /** 可选：用识图模型把不像表情包的图筛掉（logo/截图/真人照/广告） */
+  async function pickBestWebImage(images, requestText) {
+    if (!images.length) return null
+    if (config.stickerSearchFilter === false) return images[0]
+    const vision = typeof visionLLM?.snapshot === 'function' ? visionLLM.snapshot() : visionLLM
+    if (!vision || typeof vision.describeImages !== 'function') return images[0]
+    for (const image of images.slice(0, 4)) {
+      try {
+        const answer = await vision.describeImages(
+          '判断这张图是否适合当聊天表情包。合格：表情、梗图、动漫反应图、GIF；不合格：logo、网页截图、真人照片、纯文字广告、低清图标。只输出以“是”或“否”开头的一句话。',
+          '用户想要的：' + requestText,
+          [{ type: 'image_url', image_url: { url: image.dataUrl } }],
+        )
+        if (/^\s*是/.test(String(answer || ''))) return image
+        logger.info(`[表情包] 联网筛图跳过：${String(answer || '').slice(0, 40)}`)
+      } catch { /* 识图失败不阻断，继续下一张 */ }
+    }
+    return null
+  }
   // 最近一次 /id_check 的结果：groupId -> { group_id, at, bad, kicked }
   // 只活在内存里（5 分钟有效期）：机器人一重启就作废，踢人指令会静默失效 —— 这是安全方向
   const lastIdCheck = new Map()
@@ -910,14 +949,23 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         if (!stickerSend.allowed(evt)) { await sendTo(evt, '这个会话现在不允许发表情包哦'); return }
         const query = buildStickerQuery(sendText)
         try {
-          const image = await findWebImage(query, { maxBytes: STICKER_MAX_BYTES })
+          const queries = await expandStickerQueries(query)
+          const candidates = await collectWebImages(queries, {
+            provider: config.stickerSearchProvider,
+            urlTemplate: config.stickerSearchUrl,
+            key: config.stickerSearchKey,
+            maxBytes: STICKER_MAX_BYTES,
+            limit: config.stickerSearchFilter === false ? 1 : 4,
+          })
+          const image = await pickBestWebImage(candidates, sendText)
+          if (!image) throw new Error('没有筛到合适的表情包')
           const segment = typeof onebot.imageSegment === 'function'
             ? await onebot.imageSegment(image.dataUrl, { sticker: true })
             : { type: 'image', data: { file: image.dataUrl, sub_type: 1 } }
           if (isPrivate) await onebot.sendPrivate(evt.user_id, [segment])
           else await onebot.sendGroup(groupId, [segment])
           stickerSend.begin(evt)
-          logger.info(`[表情包] 联网找图「${query}」已发送：${image.sourceUrl}`)
+          logger.info(`[表情包] 联网找图「${queries.join(' / ')}」已发送：${image.sourceUrl}`)
           await sendTo(evt, '从网上给你找了一张，看看合不合口味～')
         } catch (err) {
           logger.warn(`[表情包] 联网找图失败：${err.message}`)

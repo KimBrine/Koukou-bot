@@ -92,18 +92,104 @@ export async function downloadImage(url, { maxBytes = 4 * 1024 * 1024, minSide =
   return { buffer, mime: 'image/' + mime, size, dataUrl: `data:image/${mime};base64,${buffer.toString('base64')}` }
 }
 
-/** 搜索 + 下载：依次尝试前几张，返回第一张合格图片 */
-export async function findWebImage(query, { count = 10, maxBytes = 4 * 1024 * 1024, minSide = 160, minBytes = 8 * 1024, fetchImpl = (...a) => fetch(...a) } = {}) {
-  const results = await searchBingImages(query, { count, fetchImpl })
-  const errors = []
-  for (const item of results) {
-    try {
-      const image = await downloadImage(item.url, { maxBytes, minSide, fetchImpl })
-      if (image.buffer.length < minBytes) throw new Error('图片太小，可能是图标')
-      return { ...image, sourceUrl: item.url }
-    } catch (err) {
-      errors.push(err.message)
+/** 从任意 JSON 里递归收集图片直链（自定义接口用；只看扩展名明确的 http(s) URL） */
+export function collectImageUrls(node, out = [], depth = 0) {
+  if (depth > 4 || out.length >= 40) return out
+  if (typeof node === 'string') {
+    if (/^https?:\/\//i.test(node) && /\.(png|jpe?g|gif|webp)(\?|#|$)/i.test(node)) out.push(node)
+    return out
+  }
+  if (Array.isArray(node)) {
+    for (const item of node) collectImageUrls(item, out, depth + 1)
+    return out
+  }
+  if (node && typeof node === 'object') {
+    for (const value of Object.values(node)) collectImageUrls(value, out, depth + 1)
+  }
+  return out
+}
+
+/**
+ * 自定义图片搜索：URL 模板里可用 {query} {key} {count} 占位符，返回 JSON 后递归找图片直链。
+ * 例：https://api.example.com/images?q={query}&limit={count}&key={key}
+ */
+export async function searchCustomImages(query, { urlTemplate = '', key = '', count = 10, fetchImpl = (...a) => fetch(...a), timeoutMs = 10000 } = {}) {
+  const template = String(urlTemplate || '').trim()
+  if (!template) throw new Error('自定义搜图接口还没填 URL')
+  const url = template
+    .replace(/\{query\}/g, encodeURIComponent(String(query || '')))
+    .replace(/\{key\}/g, encodeURIComponent(String(key || '')))
+    .replace(/\{count\}/g, String(Math.max(1, Math.min(35, Number(count) || 10))))
+  const res = await fetchImpl(url, { headers: { 'user-agent': UA, accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) })
+  if (!res.ok) throw new Error('自定义搜图接口返回 HTTP ' + res.status)
+  let data
+  try { data = await res.json() } catch { throw new Error('自定义搜图接口没有返回 JSON') }
+  const urls = [...new Set(collectImageUrls(data))]
+  return urls.slice(0, count).map((u) => ({ url: u }))
+}
+
+/** Giphy 表情包搜索（结果天生是 sticker/GIF，需要 Key） */
+export async function searchGiphy(query, { key = '', count = 10, fetchImpl = (...a) => fetch(...a), timeoutMs = 10000 } = {}) {
+  if (!String(key || '').trim()) throw new Error('Giphy 需要先在设置里填 API Key')
+  const url = 'https://api.giphy.com/v1/stickers/search?api_key=' + encodeURIComponent(key)
+    + '&q=' + encodeURIComponent(String(query || '')) + '&limit=' + Math.max(1, Math.min(35, Number(count) || 10)) + '&rating=pg-13&lang=zh-CN'
+  const res = await fetchImpl(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) })
+  if (!res.ok) throw new Error('Giphy 返回 HTTP ' + res.status)
+  const data = await res.json().catch(() => null)
+  return (Array.isArray(data?.data) ? data.data : [])
+    .map((item) => item?.images?.original?.url || item?.images?.fixed_width?.url || '')
+    .filter(Boolean).slice(0, count).map((url) => ({ url }))
+}
+
+/** Tenor 表情包搜索（v2 API，需要 Key） */
+export async function searchTenor(query, { key = '', count = 10, fetchImpl = (...a) => fetch(...a), timeoutMs = 10000 } = {}) {
+  if (!String(key || '').trim()) throw new Error('Tenor 需要先在设置里填 API Key')
+  const url = 'https://tenor.googleapis.com/v2/search?key=' + encodeURIComponent(key)
+    + '&q=' + encodeURIComponent(String(query || '')) + '&limit=' + Math.max(1, Math.min(35, Number(count) || 10)) + '&media_filter=gif'
+  const res = await fetchImpl(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) })
+  if (!res.ok) throw new Error('Tenor 返回 HTTP ' + res.status)
+  const data = await res.json().catch(() => null)
+  return (Array.isArray(data?.results) ? data.results : [])
+    .map((item) => item?.media_formats?.gif?.url || item?.media_formats?.tinygif?.url || '')
+    .filter(Boolean).slice(0, count).map((url) => ({ url }))
+}
+
+/** 统一入口：按配置选择搜索来源 */
+export function searchImages(query, { provider = 'bing', urlTemplate = '', key = '', count = 10, fetchImpl = (...a) => fetch(...a) } = {}) {
+  if (provider === 'custom') return searchCustomImages(query, { urlTemplate, key, count, fetchImpl })
+  if (provider === 'giphy') return searchGiphy(query, { key, count, fetchImpl })
+  if (provider === 'tenor') return searchTenor(query, { key, count, fetchImpl })
+  return searchBingImages(query, { count, fetchImpl })
+}
+
+/** 多个搜索词依次搜 + 下载校验，返回最多 limit 张可用图片 */
+export async function collectWebImages(queries, {
+  provider = 'bing', urlTemplate = '', key = '', limit = 6, count = 8,
+  minSide = 160, minBytes = 8 * 1024, maxBytes = 4 * 1024 * 1024,
+  fetchImpl = (...a) => fetch(...a),
+} = {}) {
+  const images = [], seen = new Set()
+  for (const query of queries) {
+    let results = []
+    try { results = await searchImages(query, { provider, urlTemplate, key, count, fetchImpl }) }
+    catch { continue }
+    for (const item of results) {
+      if (images.length >= limit) return images
+      if (!item?.url || seen.has(item.url)) continue
+      seen.add(item.url)
+      try {
+        const image = await downloadImage(item.url, { maxBytes, minSide, fetchImpl })
+        if (image.buffer.length < minBytes) continue
+        images.push({ ...image, sourceUrl: item.url, query })
+      } catch { /* 这张不合格，继续下一张 */ }
     }
   }
-  throw new Error('没有找到可用的图片' + (errors.length ? '：' + errors.slice(0, 2).join('；') : ''))
+  return images
+}
+
+/** 搜索 + 下载：依次尝试前几张，返回第一张合格图片 */
+export async function findWebImage(query, { count = 10, maxBytes = 4 * 1024 * 1024, minSide = 160, minBytes = 8 * 1024, fetchImpl = (...a) => fetch(...a) } = {}) {
+  const images = await collectWebImages([query], { count, maxBytes, minSide, minBytes, limit: 1, fetchImpl })
+  if (!images.length) throw new Error('没有找到可用的图片')
+  return images[0]
 }

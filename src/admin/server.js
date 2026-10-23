@@ -120,6 +120,11 @@ const EDITABLE = [
   { key: 'STICKER_PICK_MODE', label: '表情包选图方式', hint: 'context / model / random', live: true, type: 'text' },
   { key: 'STICKER_COOLDOWN_SECONDS', label: '同一会话配图间隔（秒）', hint: '0不额外限制', live: true, type: 'number' },
   { key: 'STICKER_WEB_SEARCH', label: '允许联网找表情包', hint: '开启后，用户说「给我找张表情包」这类话会用必应图片搜索一张发过去（本地库优先）；不需要额外 Key', live: true, type: 'bool' },
+  { key: 'STICKER_SEARCH_PROVIDER', label: '联网搜图来源', hint: 'bing（免 Key）/ giphy / tenor / custom（自定义 URL 模板）', live: true, type: 'text' },
+  { key: 'STICKER_SEARCH_URL', label: '自定义搜图 URL', hint: '仅 custom 用；支持 {query} {key} {count} 占位符，接口返回 JSON，程序会自动找图片直链', live: true, type: 'text', wide: true },
+  { key: 'STICKER_SEARCH_KEY', label: '搜图 API Key', hint: 'Giphy / Tenor / 自定义接口用；留空不修改', live: true, type: 'secret' },
+  { key: 'STICKER_SEARCH_MODEL', label: '搜图改写模型', hint: '留空=主对话模型；填模型名（如 deepseek-flash）给它单独用', live: true, type: 'text' },
+  { key: 'STICKER_SEARCH_FILTER', label: '用识图模型筛图', hint: '下载后用识图模型判断像不像表情包，跳过 logo/截图/真人照', live: true, type: 'bool' },
   { key: 'DEEPSEEK_API_KEY', label: '模型 Key', live: true, type: 'secret' },
   { key: 'VISION_REASONING', label: '识图思考强度', hint: 'none 最稳（默认）；low/high 更细但更慢，也更容易吃光 token 预算', live: true, type: 'text' },
   { key: 'VISION_MAX_TOKENS', label: '识图 token 预算', hint: '64～4000，默认 300；复杂图片可调高', live: true, type: 'number' },
@@ -280,6 +285,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     if (field.type === 'number' && !Number.isFinite(Number(value))) throw new Error(`${field.label} 需要填写数字`)
     if (key === 'STICKER_SEND_SCOPE' && !['all', 'whitelist', 'selected', 'private'].includes(value)) throw new Error('配图范围无效')
     if (key === 'STICKER_PICK_MODE' && !['context', 'model', 'random'].includes(value)) throw new Error('选图方式无效')
+    if (key === 'STICKER_SEARCH_PROVIDER' && !['bing', 'custom', 'giphy', 'tenor'].includes(String(value).trim().toLowerCase())) throw new Error('搜图来源只支持 bing / custom / giphy / tenor')
     if (key === 'STICKER_MAX_PER_REPLY' && (!Number.isInteger(Number(value)) || Number(value) < 1 || Number(value) > 3)) throw new Error('每次最多1到3张')
     if (key === 'MAX_TOKENS' && (!Number.isInteger(Number(value)) || Number(value) < 256 || Number(value) > 200000)) throw new Error('单次回复 token 上限应为 256～200000')
     if (key === 'FILE_UPLOAD_MAX_MB' && (!Number.isInteger(Number(value)) || Number(value) < 1 || Number(value) > 8192)) throw new Error('文件发送上限应为 1～8192 MB 的整数')
@@ -620,7 +626,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       learned: stickers && typeof stickers.learned === 'function' ? stickers.learned() : 0,
       scenes: STICKER_SCENES,
       learn: { ...stickers?.learningStatus?.(), enabled: Boolean(config.stickerLearnEnabled) && stickers?.learningAllowed?.() !== false, private: Boolean(config.stickerLearnPrivate), perHour: config.stickerLearnPerHour, groups: [...(config.stickerLearnGroups || [])] },
-      settings: { enabled: Boolean(config.stickersEnabled), autoRate: Math.round((config.stickerAutoRate ?? .35) * 100), maxPerReply: config.stickerMaxPerReply || 1, scope: config.stickerSendScope || 'all', groups: [...(config.stickerSendGroups || [])], pickMode: config.stickerPickMode || 'context', cooldownSeconds: config.stickerCooldownSeconds || 0, webSearch: config.stickerWebSearch !== false },
+      settings: { enabled: Boolean(config.stickersEnabled), autoRate: Math.round((config.stickerAutoRate ?? .35) * 100), maxPerReply: config.stickerMaxPerReply || 1, scope: config.stickerSendScope || 'all', groups: [...(config.stickerSendGroups || [])], pickMode: config.stickerPickMode || 'context', cooldownSeconds: config.stickerCooldownSeconds || 0, webSearch: config.stickerWebSearch !== false, searchProvider: config.stickerSearchProvider || 'bing', searchUrl: config.stickerSearchUrl || '', searchKeyConfigured: Boolean(config.stickerSearchKey), searchModel: config.stickerSearchModel || '', searchFilter: config.stickerSearchFilter !== false },
     }),
     'GET /api/config': async () => {
       const env = readEnvFile(envFile)
@@ -779,6 +785,23 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         break
       case 'STICKER_WEB_SEARCH':
         config.stickerWebSearch = bool(value)
+        break
+      case 'STICKER_SEARCH_PROVIDER':
+        config.stickerSearchProvider = ['bing', 'custom', 'giphy', 'tenor'].includes(String(value || '').trim().toLowerCase())
+          ? String(value).trim().toLowerCase() : 'bing'
+        break
+      case 'STICKER_SEARCH_URL':
+        config.stickerSearchUrl = String(value || '').trim()
+        break
+      case 'STICKER_SEARCH_KEY':
+        if (!String(value || '').trim()) return false
+        config.stickerSearchKey = String(value).trim()
+        break
+      case 'STICKER_SEARCH_MODEL':
+        config.stickerSearchModel = String(value || '').trim()
+        break
+      case 'STICKER_SEARCH_FILTER':
+        config.stickerSearchFilter = bool(value)
         break
       case 'DEEPSEEK_BASE_URL': {
         const v = String(value || '').trim().replace(/\/+$/, '')

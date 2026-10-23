@@ -379,6 +379,13 @@ export function loadConfig() {
     stickerMaxPerReply: Math.max(1, Math.min(3, Math.floor(num('STICKER_MAX_PER_REPLY', 1)))),
     // 用户明确要图且本地库没有/说了“搜/找/网上”时，用必应图片搜索找一张发过去
     stickerWebSearch: String(env.STICKER_WEB_SEARCH ?? '1').trim() !== '0',
+    // 联网搜表情包的来源与模型：bing 或 custom（URL 模板），可用单独模型改写搜索词/筛图
+    stickerSearchProvider: ['bing', 'custom'].includes(String(env.STICKER_SEARCH_PROVIDER ?? '').trim().toLowerCase())
+      ? String(env.STICKER_SEARCH_PROVIDER).trim().toLowerCase() : 'bing',
+    stickerSearchUrl: String(env.STICKER_SEARCH_URL ?? '').trim(),
+    stickerSearchKey: String(env.STICKER_SEARCH_KEY ?? '').trim(),
+    stickerSearchModel: String(env.STICKER_SEARCH_MODEL ?? '').trim(),
+    stickerSearchFilter: String(env.STICKER_SEARCH_FILTER ?? '1').trim() !== '0',
     temperature: Math.min(2, Math.max(0, num('TEMPERATURE', 1.2))),
     // 默认给足空间：思考强度开启时 500 会被推理吃光，导致回复被截断/空回复
     maxTokens: Math.max(256, Math.floor(num('MAX_TOKENS', 4096))),

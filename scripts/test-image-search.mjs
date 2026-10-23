@@ -1,6 +1,6 @@
 // 离线：联网找图（必应图片解析、搜索词、下载校验），不联网
 import assert from 'node:assert/strict'
-import { buildStickerQuery, downloadImage, findWebImage, imageSize, parseBingImageResults } from '../src/imageSearch.js'
+import { buildStickerQuery, collectImageUrls, downloadImage, findWebImage, imageSize, parseBingImageResults, searchCustomImages, searchGiphy, searchTenor } from '../src/imageSearch.js'
 
 let pass = 0
 const check = (name, ok) => { assert.ok(ok, name); pass++; console.log('PASS', name) }
@@ -52,5 +52,21 @@ const searchThenDownload = async (url) => {
 }
 const found = await findWebImage('开心', { fetchImpl: searchThenDownload, minBytes: 1024, minSide: 0 })
 check('第一张失败时自动换下一张', found.sourceUrl === 'https://b.example/2.png' && found.dataUrl.startsWith('data:image/png;base64,'))
+
+let requestedUrl = ''
+const custom = await searchCustomImages('猫猫', {
+  urlTemplate: 'https://api.example/s?q={query}&n={count}&key={key}', key: 'k1',
+  fetchImpl: async (url) => { requestedUrl = url; return { ok: true, status: 200, async json() { return { data: [{ pic: 'https://x.example/a.png' }, { url: 'https://x.example/page.html' }] } } } },
+})
+check('自定义接口替换占位符并只取图片直链', requestedUrl.includes('q=%E7%8C%AB%E7%8C%AB') && requestedUrl.includes('n=10') && custom.length === 1 && custom[0].url === 'https://x.example/a.png')
+check('递归收集图片直链会跳过普通网页', collectImageUrls({ a: ['https://x.example/1.gif', 'https://x.example/page'] }).length === 1)
+
+const giphy = await searchGiphy('happy', { key: 'gk', fetchImpl: async () => ({ ok: true, status: 200, async json() { return { data: [{ images: { original: { url: 'https://g.example/1.gif' } } }] } } }) })
+check('Giphy 结果转成图片直链', giphy.length === 1 && giphy[0].url === 'https://g.example/1.gif')
+const tenor = await searchTenor('happy', { key: 'tk', fetchImpl: async () => ({ ok: true, status: 200, async json() { return { results: [{ media_formats: { gif: { url: 'https://t.example/1.gif' } } }] } } }) })
+check('Tenor 结果转成图片直链', tenor.length === 1 && tenor[0].url === 'https://t.example/1.gif')
+let noKey = false
+try { await searchGiphy('x', { key: '' }) } catch (err) { noKey = /API Key/.test(err.message) }
+check('Giphy 没 Key 时明确报错', noKey)
 
 console.log(`image search checks passed: ${pass}`)
