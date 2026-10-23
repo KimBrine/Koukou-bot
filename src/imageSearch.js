@@ -5,7 +5,6 @@
  * 这是给"给我找张表情包"用的，和 models 的联网搜索（文字/链接）是两条路。
  */
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36'
-const ALLOWED_MIME = ['png', 'jpeg', 'webp', 'gif']
 
 /** 按文件头猜图片类型（走代理时 curl 不给 content-type 也够用） */
 export function sniffMime(buffer) {
@@ -21,8 +20,8 @@ export function sniffMime(buffer) {
  * 走代理的 fetch（用系统自带 curl，避免引第三方依赖）。
  * 返回和 fetch 响应同形的对象；body 先落临时文件再读，二进制图片不会被终端编码破坏。
  */
-export function proxyFetcher(proxy, { timeoutMs = 12000 } = {}) {
-  return async (url) => {
+export function proxyFetcher(proxy, { timeoutMs = 12000, maxResponseBytes = 6 * 1024 * 1024 } = {}) {
+  return async (url, options = {}) => {
     const { execFile } = await import('node:child_process')
     const { randomUUID } = await import('node:crypto')
     const { readFile, unlink } = await import('node:fs/promises')
@@ -33,8 +32,8 @@ export function proxyFetcher(proxy, { timeoutMs = 12000 } = {}) {
     const headFile = path.join(os.tmpdir(), `dsh-img-${id}.hdr`)
     try {
       await new Promise((resolve, reject) => {
-        execFile('curl', ['-sS', '-L', '--max-time', String(Math.ceil(timeoutMs / 1000)), '-x', proxy, '-A', UA, '-o', bodyFile, '-D', headFile, url],
-          { maxBuffer: 1024 * 1024, windowsHide: true },
+        execFile('curl', ['-sS', '-L', '--max-time', String(Math.ceil(timeoutMs / 1000)), '--max-filesize', String(maxResponseBytes), '-x', proxy, '-A', UA, '-o', bodyFile, '-D', headFile, url],
+          { maxBuffer: 1024 * 1024, windowsHide: true, signal: options.signal },
           (err, stdout, stderr) => {
             if (err) reject(new Error('代理请求失败：' + String(stderr || err.message).trim().slice(0, 120)))
             else resolve()
@@ -69,19 +68,21 @@ function pickFetch(fetchImpl, proxy) {
 
 function decodeEntities(text) {
   return String(text || '')
-    .replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/&amp;/g, '&')
 }
 
 /** 从必应图片 HTML 里抽 murl（图片直链），去重并过滤非 http(s) */
 export function parseBingImageResults(html, limit = 10) {
   const out = [], seen = new Set()
-  const re = /murl&quot;:&quot;([^&"]+)&quot;/g
-  for (const m of String(html || '').matchAll(re)) {
-    const url = decodeEntities(m[1])
+  for (const m of String(html || '').matchAll(/\bm=(["'])(.*?)\1/gs)) {
+    let item
+    try { item = JSON.parse(decodeEntities(m[2])) } catch { continue }
+    const url = item.murl
     if (!/^https?:\/\//i.test(url) || seen.has(url)) continue
     seen.add(url)
-    out.push({ url })
+    out.push({ url, title: item.t || '', pageUrl: item.purl || '' })
     if (out.length >= limit) break
   }
   return out
@@ -89,11 +90,16 @@ export function parseBingImageResults(html, limit = 10) {
 
 /** 把用户原话压成搜索词：「给我找张开心的表情包」→「开心 表情包」 */
 export function buildStickerQuery(text) {
-  const cleaned = String(text || '')
+  let cleaned = String(text || '')
     .replace(/\[[^\]]*\]/g, ' ')
-    .replace(/(?:帮我|给我|麻烦|请|你|能不能|可以|再|来|发|找|搜|一张|张|个|点|一些|几|网上|联网|在线|的|吧|呀|啊|嘛|呢|下)/gu, ' ')
+    .replace(/^(?:(?:请|麻烦|能不能|可以|你|帮我|给我|再)\s*)+/u, '')
+    .replace(/^(?:(?:从)?(?:网上|联网|在线)\s*)?/u, '')
+    .replace(/^(?:搜索|搜|查找|找|发|来)(?:一下)?\s*(?:一张|一个|一些|几张|张)?\s*/u, '')
+    .replace(/(?:的)?\s*(?:表情包|贴纸)/gu, ' 表情包 ')
+    .replace(/(?:吧|呀|啊|嘛|呢|看看|就好)[。！!~～]*$/u, '')
     .replace(/[，。！？、,.!?~～\s]+/g, ' ')
     .trim()
+  if (/^(?:(?:随机|随便|任意|一张|一个)\s*)*表情包$/u.test(cleaned)) cleaned = '聊天 表情包'
   const base = /表情包|贴纸/.test(cleaned) ? '' : ' 表情包'
   return (cleaned || '表情') + base
 }
@@ -142,8 +148,22 @@ export async function downloadImage(url, { maxBytes = 4 * 1024 * 1024, minSide =
   })
   if (!res.ok) throw new Error('图片下载失败（HTTP ' + res.status + '）')
   const type = String(res.headers.get('content-type') || '').toLowerCase()
-  const buffer = Buffer.from(await res.arrayBuffer())
-  const mime = ALLOWED_MIME.find((x) => type.includes('image/' + x)) || (sniffMime(buffer) || '').replace('image/', '')
+  if (Number(res.headers.get('content-length')) > maxBytes) throw new Error('图片太大，未下载')
+  let buffer
+  if (res.body?.getReader) {
+    const reader = res.body.getReader(), chunks = []; let total = 0
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        total += value.length
+        if (total > maxBytes) { await reader.cancel(); throw new Error('图片太大，已停止下载') }
+        chunks.push(Buffer.from(value))
+      }
+      buffer = Buffer.concat(chunks)
+    } finally { reader.releaseLock() }
+  } else buffer = Buffer.from(await res.arrayBuffer())
+  const mime = (sniffMime(buffer) || '').replace('image/', '')
   if (!mime) throw new Error('不是支持的图片类型：' + (type || '未知'))
   if (buffer.length > maxBytes) throw new Error('图片太大（' + (buffer.length / 1024 / 1024).toFixed(1) + 'MB）')
   if (buffer.length < 1024) throw new Error('图片太小，可能是占位图')
@@ -220,8 +240,35 @@ export async function searchTenor(query, { key = '', count = 10, fetchImpl, prox
     .filter(Boolean).slice(0, count).map((url) => ({ url }))
 }
 
+/** 国内免 Key 备用来源；保留标题，先检查相关性再下载图片。 */
+export async function searchDomesticImages(query, { provider = 'baidu', count = 10, fetchImpl, proxy = '', timeoutMs = 8000 } = {}) {
+  const endpoint = provider === 'so' ? 'https://image.so.com/j' : 'https://image.baidu.com/search/acjson'
+  const url = new URL(endpoint)
+  if (provider === 'so') { url.searchParams.set('q', query); url.searchParams.set('pn', count); url.searchParams.set('sn', '0') }
+  else { url.searchParams.set('tn', 'resultjson_com'); url.searchParams.set('word', query); url.searchParams.set('rn', count); url.searchParams.set('pn', '0') }
+  const res = await pickFetch(fetchImpl, proxy)(url.href, { headers: { 'user-agent': UA, referer: url.origin }, signal: AbortSignal.timeout(timeoutMs) })
+  if (!res.ok) throw new Error(`${provider} 图片搜索返回 HTTP ${res.status}`)
+  const data = await res.json()
+  return (provider === 'so' ? data.list || [] : data.data || []).map(item => ({
+    url: provider === 'so' ? item.img || item.imgurl || item.thumb : item.middleURL || item.thumbURL,
+    title: decodeEntities(String(item.fromPageTitle || item.title || '').replace(/<[^>]*>/g, '')),
+  })).filter(item => /^https?:\/\//i.test(item.url)).slice(0, count)
+}
+
+export function relevantImageResult(item, query) {
+  if (!item.title) return true // 自定义接口可能没有标题，仍须经过视觉复核。
+  const normalize = value => String(value).toLowerCase().replace(/表情包|贴纸|图片|聊天|随机|搞笑/g, '').replace(/[^\p{L}\p{N}]/gu, '')
+  const wanted = normalize(query), title = normalize(item.title)
+  if (!wanted) return true
+  if (title.includes(wanted)) return true
+  const parts = [...new Set(wanted.match(/[a-z0-9]+|[\p{Script=Han}]+/gu) || [])]
+  const grams = parts.flatMap(part => /^[a-z0-9]+$/.test(part) ? [part] : Array.from({ length: Math.max(0, part.length - 1) }, (_, i) => part.slice(i, i + 2)))
+  return grams.length > 0 && grams.filter(part => title.includes(part)).length / grams.length >= 0.2
+}
+
 /** 统一入口：按配置选择搜索来源 */
 export function searchImages(query, { provider = 'bing', urlTemplate = '', key = '', count = 10, fetchImpl, proxy = '' } = {}) {
+  if (provider === 'baidu' || provider === 'so') return searchDomesticImages(query, { provider, count, fetchImpl, proxy })
   if (provider === 'custom') return searchCustomImages(query, { urlTemplate, key, count, fetchImpl, proxy })
   if (provider === 'giphy') return searchGiphy(query, { key, count, fetchImpl, proxy })
   if (provider === 'tenor') return searchTenor(query, { key, count, fetchImpl, proxy })
@@ -232,22 +279,40 @@ export function searchImages(query, { provider = 'bing', urlTemplate = '', key =
 export async function collectWebImages(queries, {
   provider = 'bing', urlTemplate = '', key = '', limit = 6, count = 8,
   minSide = 160, minBytes = 8 * 1024, maxBytes = 4 * 1024 * 1024, proxy = '',
-  fetchImpl,
+  fetchImpl, current = () => true, onDiagnostic = () => {},
 } = {}) {
-  const images = [], seen = new Set()
-  for (const query of queries) {
-    let results = []
-    try { results = await searchImages(query, { provider, urlTemplate, key, count, fetchImpl, proxy }) }
-    catch { continue }
-    for (const item of results) {
+  const images = [], seen = new Set(), hashes = new Set()
+  const { createHash } = await import('node:crypto')
+  const checkCurrent = () => { if (!current()) throw Object.assign(new Error('请求已失效，取消联网找图'), { code: 'STALE_STICKER_REQUEST' }) }
+  const lists = await Promise.all([...new Set(queries)].slice(0, 4).map(async query => {
+    checkCurrent()
+    try {
+      const results = await searchImages(query, { provider, urlTemplate, key, count, fetchImpl, proxy })
+      onDiagnostic({ stage: 'search', provider, query, count: results.length })
+      return { query, results }
+    } catch (error) { onDiagnostic({ stage: 'search-failed', provider, query, error: error.message }); return { query, results: [] } }
+  }))
+  // 轮流取每个搜索词的候选，不让第一个词独占全部下载/识图名额。
+  for (let index = 0; index < count; index++) {
+    for (const { query, results } of lists) {
+      checkCurrent()
       if (images.length >= limit) return images
+      const item = results[index]
       if (!item?.url || seen.has(item.url)) continue
       seen.add(item.url)
+      if (!relevantImageResult(item, query)) { onDiagnostic({ stage: 'irrelevant', provider }); continue }
       try {
         const image = await downloadImage(item.url, { maxBytes, minSide, fetchImpl, proxy })
+        checkCurrent()
         if (image.buffer.length < minBytes) continue
-        images.push({ ...image, sourceUrl: item.url, query })
-      } catch { /* 这张不合格，继续下一张 */ }
+        const hash = createHash('sha256').update(image.buffer).digest('hex')
+        if (hashes.has(hash)) continue
+        hashes.add(hash)
+        images.push({ ...image, hash, sourceUrl: item.url, query, title: item.title || '' })
+      } catch (error) {
+        if (error.code === 'STALE_STICKER_REQUEST') throw error
+        onDiagnostic({ stage: 'download-failed', provider, error: error.message })
+      }
     }
   }
   return images

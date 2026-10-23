@@ -1,6 +1,6 @@
 // 离线：联网找图（必应图片解析、搜索词、下载校验），不联网
 import assert from 'node:assert/strict'
-import { buildStickerQuery, collectImageUrls, downloadImage, findWebImage, imageSize, parseBingImageResults, searchCustomImages, searchGiphy, searchTenor, sniffMime } from '../src/imageSearch.js'
+import { buildStickerQuery, collectWebImages, relevantImageResult, searchDomesticImages, collectImageUrls, downloadImage, findWebImage, imageSize, parseBingImageResults, searchCustomImages, searchGiphy, searchTenor, sniffMime } from '../src/imageSearch.js'
 
 let pass = 0
 const check = (name, ok) => { assert.ok(ok, name); pass++; console.log('PASS', name) }
@@ -23,7 +23,7 @@ const fakeFetch = (ok = true, type = 'image/png', size = png.length) => async (u
   ok, status: ok ? 200 : 404,
   headers: { get: () => type },
   async text() { return '' },
-  async arrayBuffer() { return Buffer.alloc(size, 1) },
+  async arrayBuffer() { const b=Buffer.alloc(size, 1); if(type==='image/jpeg'){b[0]=0xff;b[1]=0xd8} else if(type==='image/png')png.copy(b,0,0,Math.min(size,png.length)); return b },
 })
 
 const image = await downloadImage('https://a.example/1.jpg', { fetchImpl: fakeFetch(true, 'image/jpeg') })
@@ -33,7 +33,7 @@ const noType = await downloadImage('https://a.example/n.png', { fetchImpl: async
 check('没有 content-type 也能按文件头接受', noType.mime === 'image/png')
 check('PNG 宽高可读出', imageSize(png)?.width === 300)
 
-const tiny = Buffer.alloc(2048, 1); tiny[0] = 0x89; tiny[1] = 0x50; tiny.writeUInt32BE(64, 16); tiny.writeUInt32BE(64, 20)
+const tiny = Buffer.alloc(2048, 1); png.copy(tiny,0,0,4); tiny.writeUInt32BE(64, 16); tiny.writeUInt32BE(64, 20)
 let tooSmall = false
 try { await downloadImage('https://a.example/s', { minSide: 160, fetchImpl: async () => ({ ok: true, status: 200, headers: { get: () => 'image/png' }, async text() { return '' }, async arrayBuffer() { return tiny } }) }) } catch (err) { tooSmall = /尺寸太小/.test(err.message) }
 check('拒绝小图标', tooSmall)
@@ -71,5 +71,23 @@ check('Tenor 结果转成图片直链', tenor.length === 1 && tenor[0].url === '
 let noKey = false
 try { await searchGiphy('x', { key: '' }) } catch (err) { noKey = /API Key/.test(err.message) }
 check('Giphy 没 Key 时明确报错', noKey)
+
+for (const name of ['初音未来','拉普兰德','发条猫','来栖川']) check('保留角色名 '+name, buildStickerQuery('帮我找张'+name+'的表情包') === name+' 表情包')
+const amp = parseBingImageResults('<a m="{&quot;murl&quot;:&quot;https://x.example/a.png?a=1&amp;b=2&quot;,&quot;t&quot;:&quot;开心表情包&quot;}"></a>')
+check('必应元数据保留带参数直链和标题', amp[0].url === 'https://x.example/a.png?a=1&b=2' && amp[0].title === '开心表情包')
+check('标题相关性排除邮票，保留角色相关候选', !relevantImageResult({title:'中国邮政特种邮票'},'拉普兰德 表情包') && relevantImageResult({title:'拉普兰德可爱反应图'},'明日方舟 拉普兰德 表情包'))
+let cancelled=false
+await assert.rejects(downloadImage('https://x.example/oversize',{maxBytes:1000,fetchImpl:async()=>({ok:true,headers:{get:()=>''},body:{getReader:()=>({read:async()=>({value:Buffer.alloc(1024),done:false}),cancel:async()=>cancelled=true,releaseLock(){}})}})}),/图片太大/)
+check('流式下载超限立即停止', cancelled)
+await assert.rejects(downloadImage('https://x.example/fake',{fetchImpl:async()=>({ok:true,headers:{get:()=> 'image/png'},arrayBuffer:async()=>Buffer.alloc(4096,1)})}),/不是支持的图片/)
+const domestic=await searchDomesticImages('猫猫',{fetchImpl:async()=>({ok:true,json:async()=>({data:[{middleURL:'https://x.example/a',fromPageTitle:'可爱<strong>猫猫</strong>表情包'}]})})})
+check('备用来源支持无扩展名图片直链并保留标题',domestic[0].url==='https://x.example/a'&&domestic[0].title==='可爱猫猫表情包')
+const order=[]
+await collectWebImages(['开心 表情包','难过 表情包'],{limit:2,count:2,minBytes:1024,fetchImpl:async url=>{
+ if(url.includes('bing.com')){const q=new URL(url).searchParams.get('q');return {ok:true,text:async()=>[1,2].map(i=>'<a m="'+JSON.stringify({murl:'https://x.example/'+encodeURIComponent(q)+i+'.png',t:q}).replace(/"/g,'&quot;')+'"></a>').join('')}}
+ order.push(decodeURIComponent(url));const bytes=Buffer.from(png);bytes[30]=order.length
+ return {ok:true,headers:{get:()=> 'image/png'},arrayBuffer:async()=>bytes}
+}})
+check('轮流下载不同关键词的候选，不让首词占满', order.length===2&&order[0].includes('开心')&&order[1].includes('难过'))
 
 console.log(`image search checks passed: ${pass}`)
