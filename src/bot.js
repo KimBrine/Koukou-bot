@@ -1495,8 +1495,11 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
             try {
               if (!canContinue() || !stickerSend.allowed(evt) || (stickerRequested&&!stickerRequestAllowed())) break
               stickerSend.begin(evt)
-              // 按协议端补字段：LLBot 用 subType、NapCat 用原来的 sub_type（见 onebot.imageSegment）
-              const segments = [await onebot.imageSegment(file, { sticker: true })]
+              // 按协议端补字段：LLBot 用 subType、NapCat 用原来的 sub_type；
+              // 自定义/测试用的 OneBot 客户端没有 imageSegment 时退回原来的写法。
+              const segments = typeof onebot.imageSegment === 'function'
+                ? [await onebot.imageSegment(file, { sticker: true })]
+                : [{ type: 'image', data: { file, sub_type: 1 } }]
               if (evt.message_type === 'private') await onebot.sendPrivate(evt.user_id, segments)
               else await onebot.sendGroup(evt.group_id, segments)
               logger.info(`[表情包] 发送「${item.name}」到 ${evt.message_type === 'private' ? '私聊' : '群 ' + evt.group_id}`)
