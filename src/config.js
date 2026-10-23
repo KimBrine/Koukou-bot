@@ -391,6 +391,9 @@ export function loadConfig() {
     archivePasses: Math.max(1, Math.min(5, Math.floor(num('ARCHIVE_PASSES', 1)))),
     sevenZipPath: String(env.SEVEN_ZIP_PATH ?? '').trim(),
 
+    // LLBot 登录账号：启动时作为 --qq 传入，用保存的登录态恢复，避免重启后退到扫码
+    llbotQq: String(env.LLBOT_QQ ?? '').trim(),
+
     logLevel: String(env.LOG_LEVEL ?? 'info').toLowerCase(),
   }
 }

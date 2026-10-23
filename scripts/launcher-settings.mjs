@@ -8,3 +8,5 @@ const port = Number(url.port || (url.protocol === 'wss:' ? 443 : 80))
 if (!Number.isInteger(port) || port <= 0 || port > 65535) throw new Error('OneBot 端口无效')
 console.log('ONEBOT_PORT=' + port)
 console.log('CONSOLE_PORT=' + config.adminPort)
+// 有配置账号时让 LLBot 直接用保存的登录态恢复，避免每次重启都退到扫码
+if (config.llbotQq) console.log('LLBOT_QQ=' + config.llbotQq)
