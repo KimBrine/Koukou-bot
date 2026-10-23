@@ -16,7 +16,8 @@ import { parseMessage } from './cq.js'
 import { createArchive, archiveErrorHint } from './archive.js'
 import { isBotAdmin, hasAdmins, adminHint } from './permissions.js'
 import { renderReply } from './customCommands.js'
-import { extractStickerMarkers } from './stickers.js'
+import { extractStickerMarkers, STICKER_MAX_BYTES } from './stickers.js'
+import { findWebImage, buildStickerQuery } from './imageSearch.js'
 import { SUMMARY_RE, CLEAR_RE, HELP_RE, SEND_FILE_RE, SEND_LINK_RE, PY_CMD_RE } from './commandCenter.js'
 import { formatCommandHelp } from './commandHelp.js'
 import { createGroupMute } from './groupMute.js'
@@ -899,6 +900,28 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         } catch (err) {
           logger.warn(`[拍一拍] 主动拍失败：${err.message}`)
           await sendTo(evt, '想拍你的，但是没戳动……')
+        }
+        return
+      }
+      // 联网找表情包：「找/搜/网上/联网」+「图/表情包/贴纸」且本地库挑不出来时，去必应图片搜一张
+      const wantsWebSticker = /(?:搜|找|网上|联网|在线)/u.test(sendText) && /(?:表情包|贴纸|图片|图)/u.test(sendText)
+      if (wantsWebSticker && directReply && config.stickerWebSearch !== false && (!isPrivate || privateAllowed(evt.user_id))) {
+        if (!featureAllowed('request-sticker')) { await sendTo(evt, '找图这个功能现在关着～'); return }
+        if (!stickerSend.allowed(evt)) { await sendTo(evt, '这个会话现在不允许发表情包哦'); return }
+        const query = buildStickerQuery(sendText)
+        try {
+          const image = await findWebImage(query, { maxBytes: STICKER_MAX_BYTES })
+          const segment = typeof onebot.imageSegment === 'function'
+            ? await onebot.imageSegment(image.dataUrl, { sticker: true })
+            : { type: 'image', data: { file: image.dataUrl, sub_type: 1 } }
+          if (isPrivate) await onebot.sendPrivate(evt.user_id, [segment])
+          else await onebot.sendGroup(groupId, [segment])
+          stickerSend.begin(evt)
+          logger.info(`[表情包] 联网找图「${query}」已发送：${image.sourceUrl}`)
+          await sendTo(evt, '从网上给你找了一张，看看合不合口味～')
+        } catch (err) {
+          logger.warn(`[表情包] 联网找图失败：${err.message}`)
+          await sendTo(evt, '网上没翻到合适的图，等会儿再让我试试？')
         }
         return
       }

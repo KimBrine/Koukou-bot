@@ -377,6 +377,8 @@ export function loadConfig() {
     stickerPickMode: ['context','model','random'].includes(env.STICKER_PICK_MODE) ? env.STICKER_PICK_MODE : 'context',
     stickerCooldownSeconds: Math.max(0, Math.min(86400, num('STICKER_COOLDOWN_SECONDS', 0))),
     stickerMaxPerReply: Math.max(1, Math.min(3, Math.floor(num('STICKER_MAX_PER_REPLY', 1)))),
+    // 用户明确要图且本地库没有/说了“搜/找/网上”时，用必应图片搜索找一张发过去
+    stickerWebSearch: String(env.STICKER_WEB_SEARCH ?? '1').trim() !== '0',
     temperature: Math.min(2, Math.max(0, num('TEMPERATURE', 1.2))),
     // 默认给足空间：思考强度开启时 500 会被推理吃光，导致回复被截断/空回复
     maxTokens: Math.max(256, Math.floor(num('MAX_TOKENS', 4096))),
@@ -385,8 +387,7 @@ export function loadConfig() {
     maxConcurrency: Math.max(1, Math.min(8, Math.floor(num('MAX_CONCURRENCY', 2)))),
 
     // 文件发送与打包：上限、格式、压缩次数（控制台可调；jm 打包与 /发文件共用）
-    fileUploadMaxMb: Math.max(1, Math.min(8192, Math.floor(num('FILE_UPLOAD_MAX_MB', 1024)))),
-    archiveFormat: ['zip', '7z'].includes(String(env.ARCHIVE_FORMAT ?? 'zip').trim().toLowerCase())
+    fileUploadMaxMb: Math.max(1, Math.min(8192, Math.floor(num('FILE_UPLOAD_MAX_MB', 1024)))),    archiveFormat: ['zip', '7z'].includes(String(env.ARCHIVE_FORMAT ?? 'zip').trim().toLowerCase())
       ? String(env.ARCHIVE_FORMAT).trim().toLowerCase() : 'zip',
     archivePasses: Math.max(1, Math.min(5, Math.floor(num('ARCHIVE_PASSES', 1)))),
     sevenZipPath: String(env.SEVEN_ZIP_PATH ?? '').trim(),

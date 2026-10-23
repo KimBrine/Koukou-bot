@@ -119,6 +119,7 @@ const EDITABLE = [
   { key: 'STICKER_SEND_GROUPS', label: '表情包指定发送群', live: true, type: 'text' },
   { key: 'STICKER_PICK_MODE', label: '表情包选图方式', hint: 'context / model / random', live: true, type: 'text' },
   { key: 'STICKER_COOLDOWN_SECONDS', label: '同一会话配图间隔（秒）', hint: '0不额外限制', live: true, type: 'number' },
+  { key: 'STICKER_WEB_SEARCH', label: '允许联网找表情包', hint: '开启后，用户说「给我找张表情包」这类话会用必应图片搜索一张发过去（本地库优先）；不需要额外 Key', live: true, type: 'bool' },
   { key: 'DEEPSEEK_API_KEY', label: '模型 Key', live: true, type: 'secret' },
   { key: 'VISION_REASONING', label: '识图思考强度', hint: 'none 最稳（默认）；low/high 更细但更慢，也更容易吃光 token 预算', live: true, type: 'text' },
   { key: 'VISION_MAX_TOKENS', label: '识图 token 预算', hint: '64～4000，默认 300；复杂图片可调高', live: true, type: 'number' },
@@ -775,6 +776,9 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         break
       case 'SEVEN_ZIP_PATH':
         config.sevenZipPath = String(value || '').trim()
+        break
+      case 'STICKER_WEB_SEARCH':
+        config.stickerWebSearch = bool(value)
         break
       case 'DEEPSEEK_BASE_URL': {
         const v = String(value || '').trim().replace(/\/+$/, '')
