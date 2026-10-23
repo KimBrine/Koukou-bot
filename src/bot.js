@@ -984,8 +984,12 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
             logger.info(`[表情包] 改用必应兜底，候选 ${candidates.length} 张`)
           }
           if (!candidates.length) throw new Error('没搜到候选图')
-          const image = await pickBestWebImage(candidates, sendText)
-          if (!image) throw new Error('候选图都被筛掉了')
+          let image = await pickBestWebImage(candidates, sendText)
+          if (!image) {
+            // 筛图全部否掉时别让用户空手而归：退回第一张，并记录原因
+            image = candidates[0]
+            logger.warn('[表情包] 候选图都被识图筛掉，退回第一张发送')
+          }
           const segment = typeof onebot.imageSegment === 'function'
             ? await onebot.imageSegment(image.dataUrl, { sticker: true })
             : { type: 'image', data: { file: image.dataUrl, sub_type: 1 } }
