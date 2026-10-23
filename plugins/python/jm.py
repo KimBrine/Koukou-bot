@@ -1,5 +1,5 @@
 # name: 禁漫下载
-# desc: 下载、查详情、发图、打包 zip，都能在聊天里完成
+# desc: 下载、查详情、发图、打包 zip/7z，都能在聊天里完成
 # usage: /py jm 帮助
 # admin: true
 # cmd: 初始化 [目录] | 生成配置文件（已有配置时只提示路径）
@@ -7,7 +7,7 @@
 # cmd: 查 350234 | 查详情：标题/作者/页数/标签/章节
 # cmd: 发图 350234 [张数] | 直接把前几张图发到聊天
 # cmd: 记录 350234 [张数] | 详情+整话图片打包成聊天记录
-# cmd: 打包 350234 [秒] | 压成 zip 发送并定时撤回
+# cmd: 打包 350234 [秒] [zip|7z] | 按控制台设置打包发送并定时撤回
 # cmd: 350234 | 后台下载整本
 # cmd: p350234 | 只下载某一章
 # cmd: 状态 | 当前任务进度
@@ -34,7 +34,7 @@ jm.py —— 机器人用的后台下载插件 + 详情查询
     查/查询/jmv 350234   查本子详情（不发图，纯文本）
     发图 350234 [张数]    直接把第一话前几张图发到聊天（默认3，最多6）
     记录 350234 [张数]    详情+整话图片打包成一条聊天记录卡片（不填张数=整话全部）
-    打包 350234 [秒]    压成 zip 以文件发送；默认按控制台开关（开=300 秒后撤回），给了秒数则一定撤回
+    打包 350234 [秒] [zip|7z]    按控制台设置打包（格式/次数可调，默认 zip、1 次）以文件发送；默认按控制台开关（开=300 秒后撤回），给了秒数则一定撤回
     123456          下载本子(album)
     p345678         下载单个章节(photo)
     状态/status     当前任务进度
@@ -666,13 +666,86 @@ def _plugin_settings():
         return 300, True
 
 
-def cmd_pack(raw='', minutes_arg=''):
-    """把已下载的本子目录压成 zip，交给机器人以文件形式发送（可自动撤回）。"""
+def _archive_prefs():
+    """压缩格式/次数/7-Zip 路径：控制台下发的环境变量优先，其次 settings.json，默认 zip、1 次。"""
+    fmt = (os.environ.get('KOUKOU_ARCHIVE_FORMAT') or '').strip().lower()
+    passes = os.environ.get('KOUKOU_ARCHIVE_PASSES') or ''
+    seven = (os.environ.get('KOUKOU_SEVEN_ZIP') or os.environ.get('SEVEN_ZIP_PATH') or '').strip()
+    raw = {}
+    try:
+        raw = json.loads((HERE / 'settings.json').read_text(encoding='utf-8-sig'))
+    except Exception:
+        raw = {}
+    if not fmt:
+        fmt = str(raw.get('archiveFormat') or 'zip').strip().lower()
+    if not passes:
+        passes = raw.get('archivePasses') or 1
+    if not seven:
+        seven = str(raw.get('sevenZipPath') or '').strip()
+    if fmt not in ('zip', '7z'):
+        fmt = 'zip'
+    try:
+        n = max(1, min(5, int(passes)))
+    except Exception:
+        n = 1
+    return fmt, n, find_seven_zip(seven)
+
+
+SEVEN_ZIP_CANDIDATES = [
+    r'C:\Program Files\7-Zip\7z.exe',
+    r'C:\Program Files (x86)\7-Zip\7z.exe',
+    r'D:\7-Zip\7z.exe',
+    '/usr/bin/7z', '/usr/bin/7zz', '/usr/local/bin/7z', '/opt/homebrew/bin/7z',
+]
+
+
+def find_seven_zip(pref=''):
+    for p in [pref, *(os.environ.get('SEVEN_ZIP_PATH') or '').split(os.pathsep), *SEVEN_ZIP_CANDIDATES]:
+        if p and Path(p).is_file():
+            return p
+    return ''
+
+
+def _pack_once(source, out_path, fmt, seven):
+    """source 可以是目录，也可以是上一轮的压缩包。"""
+    import subprocess
     import zipfile
 
+    if seven:
+        args = [seven, 'a', '-t' + fmt, '-mx=9', '-y', str(out_path), source.name]
+        if source.is_dir():
+            args.append('-r')
+        result = subprocess.run(args, cwd=str(source.parent), capture_output=True, text=True, timeout=3600)
+        if result.returncode != 0:
+            tail = (result.stderr or result.stdout or '').strip().splitlines()
+            raise RuntimeError(tail[-1] if tail else f'7-Zip 退出码 {result.returncode}')
+        return
+    if fmt == '7z':
+        raise RuntimeError('没装 7-Zip，无法生成 7z；可设置 SEVEN_ZIP_PATH 或改回 zip')
+    with zipfile.ZipFile(out_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+        if source.is_dir():
+            for f in sorted(source.rglob('*')):
+                if f.is_file():
+                    zf.write(f, f.relative_to(source.parent))
+        else:
+            zf.write(source, source.name)
+
+
+def cmd_pack(raw='', minutes_arg=''):
+    """把已下载的本子目录按配置打包（zip/7z、可多次压缩），交给机器人以文件形式发送。"""
     base = download_dir()
     if not base.is_dir():
         return '下载目录还不存在，先 /py jm 350234 下载。'
+
+    arg = (minutes_arg or '').strip()
+    fmt_override = ''
+    seconds_arg = ''
+    for token in arg.split():
+        low = token.lower()
+        if low in ('zip', '7z'):
+            fmt_override = low
+        elif re.fullmatch(r'\d+', token):
+            seconds_arg = token
 
     digits = re.findall(r'\d+', raw or '')
     target = None
@@ -690,36 +763,37 @@ def cmd_pack(raw='', minutes_arg=''):
             return '下载目录里还没有本子。'
         target = max(dirs, key=lambda p: p.stat().st_mtime)
 
-    arg = (minutes_arg or '').strip()
     default_seconds, recall_enabled = _plugin_settings()
-    if arg:
-        try:
-            seconds = int(arg)
-            recall_enabled = True          # 显式给了秒数，就按用户要求撤回
-        except ValueError:
-            seconds = default_seconds
+    if seconds_arg:
+        seconds = int(seconds_arg)
+        recall_enabled = True          # 显式给了秒数，就按用户要求撤回
     else:
         seconds = default_seconds
     seconds = max(5, min(seconds, 7200))
 
+    fmt, passes, seven = _archive_prefs()
+    if fmt_override:
+        fmt = fmt_override
+
     outdir = state_dir() / 'exports'
     outdir.mkdir(parents=True, exist_ok=True)
-    zip_path = outdir / f'{target.name}.zip'
-
+    current = target
     try:
-        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_STORED) as zf:
-            for f in sorted(target.rglob('*')):
-                if f.is_file():
-                    zf.write(f, f.relative_to(target.parent))
+        for round_no in range(1, passes + 1):
+            suffix = '' if round_no == 1 else f'.{round_no}'
+            out_path = outdir / f'{target.name}{suffix}.{fmt}'
+            _pack_once(current, out_path, fmt, seven)
+            current = out_path
     except Exception as e:
         return f'打包失败：{type(e).__name__}: {e}'
 
-    size_mb = zip_path.stat().st_size / 1024 / 1024
+    size_mb = current.stat().st_size / 1024 / 1024
+    label = f'{fmt}，压缩 {passes} 次' if passes > 1 else fmt
     payload = {
-        'path': zip_path.as_posix(),
-        'name': zip_path.name,
+        'path': current.as_posix(),
+        'name': current.name,
         'recall_seconds': seconds if recall_enabled else 0,
-        'text': f'打包完成：{zip_path.name}（{size_mb:.1f} MB）',
+        'text': f'打包完成：{current.name}（{label}，{size_mb:.1f} MB）',
     }
     return '@@FILE@@' + json.dumps(payload, ensure_ascii=False)
 

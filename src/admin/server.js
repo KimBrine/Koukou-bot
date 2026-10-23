@@ -136,6 +136,10 @@ const EDITABLE = [
   { key: 'TEMPERATURE', label: '采样温度', hint: '越高越随性', live: false, type: 'number' },
   { key: 'PRIVATE_WHITELIST', label: '私聊白名单', hint: '允许私聊的 QQ 号，逗号分隔；留空 = 只回管理员和控制台里添加过的私聊', live: true, type: 'text', wide: true },
   { key: 'MAX_TOKENS', label: '单次回复 token 上限', hint: '256～200000，即时生效；思考强度开启时建议 ≥2000，否则推理会吃掉输出预算导致回复被截断', live: true, type: 'number' },
+  { key: 'FILE_UPLOAD_MAX_MB', label: '文件发送上限 (MB)', hint: '/发文件 与 Python 脚本结果共用；1～8192，即时生效。QQ 与协议端本身还有自己的上限', live: true, type: 'number' },
+  { key: 'ARCHIVE_FORMAT', label: '打包格式', hint: 'zip 或 7z；/发文件 指定目录时、jm 打包都用它。7z 需要本机安装 7-Zip', live: true, type: 'text' },
+  { key: 'ARCHIVE_PASSES', label: '压缩次数', hint: '1～5；2 次表示把上一次的压缩包再压一遍（生成 name.2.zip 这类嵌套包），次数越多越耗时、体积通常不会更小', live: true, type: 'number' },
+  { key: 'SEVEN_ZIP_PATH', label: '7-Zip 路径', hint: '留空自动找 C:\\Program Files\\7-Zip\\7z.exe 等常见位置；只影响打包，改完下次打包生效', live: true, type: 'text' },
   { key: 'LOG_LEVEL', label: '日志级别', hint: 'debug/info/warn/error', live: false, type: 'text' },
 ]
 
@@ -277,6 +281,9 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     if (key === 'STICKER_PICK_MODE' && !['context', 'model', 'random'].includes(value)) throw new Error('选图方式无效')
     if (key === 'STICKER_MAX_PER_REPLY' && (!Number.isInteger(Number(value)) || Number(value) < 1 || Number(value) > 3)) throw new Error('每次最多1到3张')
     if (key === 'MAX_TOKENS' && (!Number.isInteger(Number(value)) || Number(value) < 256 || Number(value) > 200000)) throw new Error('单次回复 token 上限应为 256～200000')
+    if (key === 'FILE_UPLOAD_MAX_MB' && (!Number.isInteger(Number(value)) || Number(value) < 1 || Number(value) > 8192)) throw new Error('文件发送上限应为 1～8192 MB 的整数')
+    if (key === 'ARCHIVE_FORMAT' && !['zip', '7z'].includes(String(value).trim().toLowerCase())) throw new Error('打包格式只支持 zip 或 7z')
+    if (key === 'ARCHIVE_PASSES' && (!Number.isInteger(Number(value)) || Number(value) < 1 || Number(value) > 5)) throw new Error('压缩次数应为 1～5 的整数')
     if (key === 'STICKER_AUTO_RATE' && (Number(value) < 0 || Number(value) > 100)) throw new Error('配图概率应为0到100')
     if (key === 'STICKER_COOLDOWN_SECONDS' && (Number(value) < 0 || Number(value) > 86400)) throw new Error('配图间隔应为0到86400秒')
     if (key === 'SUMMARY_MAX_TOKENS' && (!Number.isInteger(Number(value)) || Number(value) < 500 || Number(value) > 16000)) throw new Error('总结输出 token 上限应为 500～16000 的整数')
@@ -754,6 +761,20 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
           .split(',')
           .map((x) => x.trim())
           .filter(Boolean)
+        break
+      // 文件发送 / 打包参数：调用时现读 config，所以即时生效
+      case 'FILE_UPLOAD_MAX_MB':
+        config.fileUploadMaxMb = Math.min(8192, Math.max(1, Math.floor(num(value, config.fileUploadMaxMb ?? 1024))))
+        break
+      case 'ARCHIVE_FORMAT':
+        config.archiveFormat = ['zip', '7z'].includes(String(value || '').trim().toLowerCase())
+          ? String(value).trim().toLowerCase() : 'zip'
+        break
+      case 'ARCHIVE_PASSES':
+        config.archivePasses = Math.min(5, Math.max(1, Math.floor(num(value, config.archivePasses ?? 1))))
+        break
+      case 'SEVEN_ZIP_PATH':
+        config.sevenZipPath = String(value || '').trim()
         break
       case 'DEEPSEEK_BASE_URL': {
         const v = String(value || '').trim().replace(/\/+$/, '')

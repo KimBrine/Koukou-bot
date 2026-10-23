@@ -384,6 +384,13 @@ export function loadConfig() {
     maxRetries: Math.max(0, Math.min(5, Math.floor(num('MAX_RETRIES', 2)))),
     maxConcurrency: Math.max(1, Math.min(8, Math.floor(num('MAX_CONCURRENCY', 2)))),
 
+    // 文件发送与打包：上限、格式、压缩次数（控制台可调；jm 打包与 /发文件共用）
+    fileUploadMaxMb: Math.max(1, Math.min(8192, Math.floor(num('FILE_UPLOAD_MAX_MB', 1024)))),
+    archiveFormat: ['zip', '7z'].includes(String(env.ARCHIVE_FORMAT ?? 'zip').trim().toLowerCase())
+      ? String(env.ARCHIVE_FORMAT).trim().toLowerCase() : 'zip',
+    archivePasses: Math.max(1, Math.min(5, Math.floor(num('ARCHIVE_PASSES', 1)))),
+    sevenZipPath: String(env.SEVEN_ZIP_PATH ?? '').trim(),
+
     logLevel: String(env.LOG_LEVEL ?? 'info').toLowerCase(),
   }
 }

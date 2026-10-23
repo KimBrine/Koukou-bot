@@ -13,6 +13,7 @@ import { conversationRules } from './conversationRules.js'
 import { stripInternalReplyMetadata, hasInternalToolMarkup, REPLY_REPAIR_HINT } from './replySanitizer.js'
 import { parseMusicRequest, resolveMusicRequest, searchSong, musicPlatformName } from './music.js'
 import { parseMessage } from './cq.js'
+import { createArchive, archiveErrorHint } from './archive.js'
 import { isBotAdmin, hasAdmins, adminHint } from './permissions.js'
 import { renderReply } from './customCommands.js'
 import { extractStickerMarkers } from './stickers.js'
@@ -308,6 +309,9 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
     ttlMs: config.visionCacheTtlMs,
     logger,
   }) : null)
+  // 打包与文件发送共用：上限、格式、压缩次数都走 config（控制台可改）
+  const archive = createArchive({ sevenZipPath: config.sevenZipPath, logger })
+  const fileMaxBytes = Math.max(1, Number(config.fileUploadMaxMb) || 1024) * 1024 * 1024
   // 只缓存客观画面；模型或识图提示词改变后使用新描述，不缓存聊天口吻。
   const stickerSend = createStickerSendPolicy({config,stickers,rand})
   const failedRecently = new Map() // 私聊报错提示限频：key -> 上次提示时间戳
@@ -837,12 +841,30 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         const targetId = Number((sendFileMatch || sendLinkMatch)[2])
         if (sendFileMatch) {
           const filePath = path.resolve(sendFileMatch[3].trim().replace(/^"|"$/g, ''))
-          if (!existsSync(filePath) || !statSync(filePath).isFile()) { await sendTo(evt, '文件不存在：' + filePath); return }
+          if (!existsSync(filePath)) { await sendTo(evt, '文件不存在：' + filePath); return }
+          const limitMb = Math.round(fileMaxBytes / 1024 / 1024)
+          const sendUpload = async (forSend, name) => {
+            if (targetType === '群') await onebot.api('upload_group_file', { group_id: targetId, file: forSend, name }, 600000)
+            else await onebot.api('upload_private_file', { user_id: targetId, file: forSend, name }, 600000)
+          }
           const st = statSync(filePath)
-          if (st.size > 1024 * 1024 * 1024) { await sendTo(evt, '文件超过 1GB，未发送'); return }
+          if (st.isDirectory()) {
+            // 目录：按配置的格式与压缩次数打包后再发（和 jm 打包同一套参数）
+            let packed = null
+            try {
+              packed = archive.pack(filePath, { format: config.archiveFormat, passes: config.archivePasses })
+              const size = statSync(packed.file).size
+              if (size > fileMaxBytes) { await sendTo(evt, `打包后 ${(size / 1024 / 1024).toFixed(1)}MB，超过上限 ${limitMb}MB，未发送`); return }
+              await sendUpload(packed.file, packed.name)
+              await sendTo(evt, `已发送打包文件：${packed.name}（${packed.format}，压缩 ${packed.passes} 次，${(size / 1024 / 1024).toFixed(1)}MB）`)
+            } catch (err) { await sendTo(evt, '打包发送失败：' + archiveErrorHint(err)) }
+            finally { packed?.cleanup?.() }
+            return
+          }
+          if (!st.isFile()) { await sendTo(evt, '不是文件或目录：' + filePath); return }
+          if (st.size > fileMaxBytes) { await sendTo(evt, `文件超过 ${limitMb}MB，未发送`); return }
           try {
-            if (targetType === '群') await onebot.api('upload_group_file', { group_id: targetId, file: filePath, name: path.basename(filePath) }, 600000)
-            else await onebot.api('upload_private_file', { user_id: targetId, file: filePath, name: path.basename(filePath) }, 600000)
+            await sendUpload(filePath, path.basename(filePath))
             await sendTo(evt, '已发送文件：' + path.basename(filePath))
           } catch (err) { await sendTo(evt, '文件发送失败：' + err.message) }
           return
@@ -904,7 +926,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
               const spec = JSON.parse(out.slice('@@FILE@@'.length))
               const filePath = path.resolve(String(spec.path || ''))
               if (!existsSync(filePath) || !statSync(filePath).isFile()) throw new Error('文件不存在：' + filePath)
-              if (statSync(filePath).size > 1024 * 1024 * 1024) throw new Error('文件超过 1GB')
+              if (statSync(filePath).size > fileMaxBytes) throw new Error(`文件超过 ${Math.round(fileMaxBytes / 1024 / 1024)}MB（可在控制台调大「文件发送上限」）`)
               const name = String(spec.name || path.basename(filePath))
               // 单位秒，兼容旧脚本仍在用的 recall_minutes
               const seconds = Math.min(7200, Math.max(0, Number(
