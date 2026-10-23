@@ -518,15 +518,59 @@ def cmd_info(raw):
     return text
 
 
+def _image_ok(path: Path) -> bool:
+    """确认下载结果是真图片：非空、够大、文件头是 jpg/png/webp/gif。"""
+    try:
+        if not path.is_file() or path.stat().st_size < 1024:
+            return False
+        head = path.open('rb').read(12)
+    except OSError:
+        return False
+    return (head[:3] == b'\xff\xd8\xff' or head[:8] == b'\x89PNG\r\n\x1a\n'
+            or head[:4] == b'GIF8' or (head[:4] == b'RIFF' and head[8:12] == b'WEBP'))
+
+
+def prune_downloads(root: Path, since: float | None = None) -> tuple[int, int]:
+    """清理空文件与空目录：jmcomic 下载失败/重试时会留下 0 字节图片和空章节文件夹。"""
+    if not root.exists():
+        return 0, 0
+    files = dirs = 0
+    for dirpath, _dirnames, filenames in os.walk(root, topdown=False):
+        folder = Path(dirpath)
+        for name in filenames:
+            target = folder / name
+            try:
+                if target.is_file() and target.stat().st_size == 0 and (since is None or target.stat().st_mtime >= since - 1):
+                    target.unlink(missing_ok=True)
+                    files += 1
+            except OSError:
+                pass
+        try:
+            if folder != root and not any(folder.iterdir()):
+                folder.rmdir()
+                dirs += 1
+        except OSError:
+            pass
+    return dirs, files
+
+
 def _download_one(client, img, photo, outdir, retry=2):
     save_path = outdir / img.filename
     for attempt in range(retry + 1):
         try:
-            if save_path.is_file() and save_path.stat().st_size > 0:
+            if save_path.is_file() and _image_ok(save_path):
                 return save_path
+            # 上一次失败留下的空文件/残图先删掉，别让下一轮误判成已完成
+            try:
+                if save_path.is_file():
+                    save_path.unlink()
+            except OSError:
+                pass
             client.download_image(img.download_url, str(save_path),
                                   photo.scramble_id, decode_image=True)
-            return save_path
+            if _image_ok(save_path):
+                return save_path
+            raise RuntimeError('下载结果不是有效图片（可能是空文件或错误页）')
         except Exception:
             if attempt >= retry:
                 raise
@@ -866,6 +910,11 @@ def worker(job_id):
                 option.download_photo(int(rec['jm_id']))
             else:
                 option.download_album(int(rec['jm_id']))
+            # jmcomic 失败重试会留下空章节文件夹/0 字节图，下完顺手清掉
+            removed_dirs, removed_files = prune_downloads(Path(rec['base_dir']), rec['start'])
+            if removed_dirs or removed_files:
+                jm_log('bot_job', f'清理空目录 {removed_dirs} 个、空文件 {removed_files} 个')
+                print(f'[clean] 空目录 {removed_dirs} 个，空文件 {removed_files} 个', flush=True)
 
         rec['status'] = 'done'
         rec['end'] = time.time()
