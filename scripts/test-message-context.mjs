@@ -133,12 +133,11 @@ try {
     let repairCalls=0
     const promise=setup({stickers,config:{stickersEnabled:true,stickerAutoRate:0},chat:()=>++repairCalls===1?'图来啦，拿去拿去 [贴纸: 猫猫问号]':'这轮先用文字陪你聊呀'})
     await promise.bot.handleMessage(promise.event([at(),text('给我发张表情包')]))
-    assert.equal(repairCalls,2);assert.equal(promise.sent.length,1)
-    assert.doesNotMatch(promise.sent[0],/图来啦|拿去|贴纸/)
-    assert.match(promise.requests.at(-1)[0],/本轮没有图片可发送/)
+    // 用户明确索图时不再依赖模型标记，也不受自动概率限制：图确实发出，文案不算撒谎
+    assert.equal(repairCalls,1);assert.equal(promise.sent.length,2);assert.equal(promise.sent[1][0].type,'image')
     const failedRepair=setup({stickers,config:{stickersEnabled:true,stickerAutoRate:0},chat:()=> '图片来啦，收好'})
     await failedRepair.bot.handleMessage(failedRepair.event([at(),text('来张表情包')]))
-    assert.equal(failedRepair.sent.length,1);assert.match(failedRepair.sent[0],/没有配图/)
+    assert.equal(failedRepair.sent.length,2);assert.equal(failedRepair.sent[1][0].type,'image','用户索图时不需要模型也给标记')
     const requested=setup({stickers,config:{stickersEnabled:true,stickerAutoRate:0},chat:()=> '给你挑一张呀 [索要表情包][贴纸: 猫猫问号]'})
     await requested.bot.handleMessage(requested.event([at(),text('给我发张表情包')]))
     assert.equal(requested.sent.length,2);assert.equal(requested.sent[1][0].type,'image')

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import {createStickerSendPolicy} from '../src/stickerSend.js'
+import {createStickerSendPolicy,userAsksForSticker} from '../src/stickerSend.js'
 const event={message_type:'group',group_id:12345,user_id:1},item={id:'x',name:'猫猫'}
 const library={count:()=>1,find:q=>q==='猫猫'?item:null,pick:()=>item,random:()=>item}
 const config={stickersEnabled:true,stickerAutoRate:.35,stickerMaxPerReply:1,whitelistGroups:new Set([12345])}
@@ -33,4 +33,14 @@ assert.equal(policy.select(event,{text:'给你挑一张',requested:true}).items.
 assert.equal(fallbackCalls,1)
 assert.match(policy.select(event,{text:'自然回应',queries:['猫猫']}).source,/模型/)
 config.stickersEnabled=false;assert.equal(policy.allowed(event),false)
-console.log('配图策略通过：文字前提、35%统一门槛、范围、冷却、选图方式、去重、关闭。')
+// 用户明确索图用确定性判断，不依赖模型标记
+assert.equal(userAsksForSticker('给我发个表情包'),true)
+assert.equal(userAsksForSticker('给我张表情包'),true)
+assert.equal(userAsksForSticker('来张贴纸'),true)
+assert.equal(userAsksForSticker('发张图看看'),true)
+assert.equal(userAsksForSticker('这个图好看'),false)
+assert.equal(userAsksForSticker('你在干嘛'),false)
+config.stickersEnabled=true
+const reqPolicy=createStickerSendPolicy({config:{...config,stickerCooldownSeconds:0},stickers:library,rand:()=>0.99,now:()=>200000})
+assert.equal(reqPolicy.select(event,{text:'文字',queries:['不存在'],requested:userAsksForSticker('给我发个表情包')}).items.length,1,'索图即使没候选也会兜底选一张')
+console.log('配图策略通过：文字前提、35%统一门槛、范围、冷却、选图方式、去重、关闭、用户索图识别。')

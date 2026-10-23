@@ -1,5 +1,11 @@
 /** 普通文字回复之后的一次配图机会；模型选图也不能绕过概率或范围。 */
 export const claimsStickerDelivery = text => /(?:表情包|图片|图).{0,12}(?:来[啦了咯]|发[出送给]|拿去|收好)|(?:发[出送给]|给你发|拿去|收好).{0,12}(?:图|表情包)/u.test(String(text || ''))
+
+/**
+ * 用户在"要图"（确定性判断，不依赖模型自觉打 [索要表情包] 标记）。
+ * 只认带请求动词的短句，避免"这个图好看"这类描述误判。
+ */
+export const userAsksForSticker = text => /(?:给我|帮我|请|麻烦|来|发|整|要|换).{0,10}(?:表情包|贴纸|表情|图片|图)/u.test(String(text || ''))
 export function createStickerSendPolicy({config,stickers,rand=Math.random,now=Date.now}) {
   const last=new Map()
   const chatKey=e=>e.message_type==='private'?`p${e.user_id}`:`g${e.group_id}`

@@ -1,4 +1,4 @@
-import { createStickerSendPolicy, claimsStickerDelivery } from './stickerSend.js'
+import { createStickerSendPolicy, claimsStickerDelivery, userAsksForSticker } from './stickerSend.js'
 import {isOnebotError} from './onebotErrors.js'
 import { isQuestionMode, QUESTION_MODE_HINT, QUESTION_IMAGE_PROMPT } from './questionMode.js'
 import { readFileSync, existsSync, statSync } from 'node:fs'
@@ -1439,8 +1439,10 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         // 第一条的普通回复可能仍在生成；复读段已触发时取消这条迟到的搭话。
         if (!canContinue()) return
         // 先决定是否实际配图，再发送文字；重写文案不重新抽取概率。
-        let selection=questionMode?{items:[],reason:'解题不配表情包'}:stickerSend.select(evt,{text:reply,queries:stickerQueries,context:parsed.text,requested:stickerRequested,store:replyStickers})
-        if(stickerRequested&&!stickerRequestAllowed())selection={items:[],reason:'明确索图指令已关闭或范围/权限改变'}
+        // 用户原话明确要图时，不再依赖模型自觉打 [索要表情包]（模型偶尔漏标记会退回 10% 概率）
+        const userAskedSticker = !questionMode && userAsksForSticker(parsed.text)
+        let selection=questionMode?{items:[],reason:'解题不配表情包'}:stickerSend.select(evt,{text:reply,queries:stickerQueries,context:parsed.text,requested:stickerRequested||userAskedSticker,store:replyStickers})
+        if((stickerRequested||userAskedSticker)&&!stickerRequestAllowed())selection={items:[],reason:'明确索图指令已关闭或范围/权限改变'}
         selection.items=selection.items.filter(item=>replyStickers?.dataUrlOf(item))
         if(!questionMode&&!selection.items.length&&claimsStickerDelivery(reply)){
           logger.info(`[表情包文案] 本轮不配图（${selection.reason}），修正发图承诺`)
@@ -1493,7 +1495,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
             const file = item ? replyStickers.dataUrlOf(item) : null
             if (!file) { logger.warn(`[表情包] 「${item.name}」文件不可读，跳过`); continue }
             try {
-              if (!canContinue() || !stickerSend.allowed(evt) || (stickerRequested&&!stickerRequestAllowed())) break
+              if (!canContinue() || !stickerSend.allowed(evt) || ((stickerRequested || userAskedSticker) && !stickerRequestAllowed())) break
               stickerSend.begin(evt)
               // 按协议端补字段：LLBot 用 subType、NapCat 用原来的 sub_type；
               // 自定义/测试用的 OneBot 客户端没有 imageSegment 时退回原来的写法。
