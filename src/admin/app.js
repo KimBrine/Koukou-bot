@@ -538,13 +538,28 @@ function groupRateEditor(value){
   }).join('')
   return `<div class="rate-editor"><input type="hidden" data-cfg="PROACTIVE_RATE_PER_GROUP" value="${esc(value)}"><div class="group-list" id="groupRateRows">${rows}</div><div class="empty" id="rateEmpty" ${rows ? 'hidden' : ''}>没有单独设置的群，均沿用全局概率。</div><div class="inline-error" id="rateError" role="status"></div><div class="rate-add"><select id="rateGroupPick" aria-label="选择需要单独设置概率的群"><option value="">选择群聊…</option>${availableGroups().map(g => `<option value="${g.id}">${esc(g.name)}（${g.id}）</option>`).join('')}<option value="manual">手动输入群号</option></select><input id="rateGroupId" type="text" inputmode="numeric" aria-label="手动输入概率目标群号" placeholder="输入群号" hidden><button class="btn" id="addGroupRate" type="button">＋ 添加群概率</button></div></div>`
 }
+async function refreshContacts(){
+  // 好友/群在 QQ 上加完之后，控制台缓存（群 30 秒、好友 60 秒）可能还是旧的；
+  // 这里强制拉一次并更新内存列表，供"添加白名单/私聊"等选择框使用。
+  const [g,f]=await Promise.all([api('/api/groups?refresh=1'),api('/api/friends?refresh=1')])
+  if(Array.isArray(g?.items))joinedGroups=g.items
+  if(Array.isArray(f?.items))friendList=f.items
+  return {groups:joinedGroups,friends:friendList}
+}
 async function importWhitelist(options={}){
   const privateChat=options.privateChat===true, label=privateChat?'QQ号':'群号', subject=privateChat?'私聊白名单':'白名单群聊'
   const root=document.getElementById('modalRoot')
   const existing=()=>new Set((privateChat?state?.config?.privateWhitelist || []:state?.config?.whitelist || []).map(String))
   const contactName=id=>privateChat?(friendList.find(f=>String(f.id)===String(id))?.name || 'QQ用户'):groupName(id)
-  const candidates=privateChat?friendList:availableGroups()
-  root.innerHTML=`<div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="importTitle"><h2 id="importTitle">添加${subject}</h2><p>${privateChat?'选择好友或输入QQ号，支持批量添加。添加后新消息即时生效，不会自动发消息或补发旧回复。':'选择群聊，或粘贴多个群号。导入后即时生效。'}</p><label class="field-label" for="whitelistPick">从${privateChat?'好友':'已知群聊'}中选择</label><select id="whitelistPick"><option value="">选择${privateChat?'好友':'群聊'}…</option>${candidates.filter(c=>!existing().has(String(c.id))).map(c=>`<option value="${esc(c.id)}">${esc(c.name)}（${esc(c.id)}）</option>`).join('')}</select><div class="note">未显示在列表中时，也可以直接输入${label}。</div><label class="field-label" for="whitelistInput">${label}（支持批量导入）</label><textarea id="whitelistInput" placeholder="每行一个${label}，也支持逗号或空格分隔"></textarea><div id="whitelistPreview" class="import-preview" aria-live="polite"></div><div class="row"><button class="btn" id="importCancel">取消</button><button class="btn primary" id="importCommit" disabled>请先选择或输入${label}</button></div></div>`
+  const optionHtml=()=>{
+    const list=privateChat?friendList:availableGroups(), known=existing()
+    return list.filter(c=>!known.has(String(c.id))).map(c=>`<option value="${esc(c.id)}">${esc(c.name)}（${esc(c.id)}）</option>`).join('')
+  }
+  const buildOptions=()=>{
+    const sel=root.querySelector('#whitelistPick');if(!sel)return
+    sel.innerHTML='<option value="">选择'+(privateChat?'好友':'群聊')+'…</option>'+optionHtml()
+  }
+  root.innerHTML=`<div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="importTitle"><h2 id="importTitle">添加${subject}</h2><p>${privateChat?'选择好友或输入QQ号，支持批量添加。添加后新消息即时生效，不会自动发消息或补发旧回复。':'选择群聊，或粘贴多个群号。导入后即时生效。'}</p><label class="field-label" for="whitelistPick">从${privateChat?'好友':'已知群聊'}中选择</label><div class="flexbar" style="align-items:center;gap:8px"><select id="whitelistPick" style="flex:1"><option value="">选择${privateChat?'好友':'群聊'}…</option>${optionHtml()}</select><button class="btn sm" id="whitelistRefresh" type="button">刷新列表</button></div><div class="note">刚在 QQ 上加的好友/群没出现，点一下「刷新列表」。也可以直接输入${label}。</div><label class="field-label" for="whitelistInput">${label}（支持批量导入）</label><textarea id="whitelistInput" placeholder="每行一个${label}，也支持逗号或空格分隔"></textarea><div id="whitelistPreview" class="import-preview" aria-live="polite"></div><div class="row"><button class="btn" id="importCancel">取消</button><button class="btn primary" id="importCommit" disabled>请先选择或输入${label}</button></div></div>`
   root.classList.add('show');root.setAttribute('aria-hidden','false')
   const input=root.querySelector('#whitelistInput'),commit=root.querySelector('#importCommit')
   let newIds=[],pending=false
@@ -560,6 +575,15 @@ async function importWhitelist(options={}){
     commit.textContent=commit.disabled?(ids.length&&!invalid.length?'已在白名单中':`请先选择或输入${label}`):`添加${newIds.length}${privateChat?'人到私聊白名单':'个白名单群'}`
   }
   input.oninput=preview;root.querySelector('#whitelistPick').onchange=event=>{if(event.target.value){input.value+=(input.value.trim()?'\n':'')+event.target.value;event.target.value='';preview()}}
+  const refreshContactsBtn=root.querySelector('#whitelistRefresh')
+  if(refreshContactsBtn)refreshContactsBtn.onclick=async()=>{
+    const old=refreshContactsBtn.textContent;refreshContactsBtn.disabled=true;refreshContactsBtn.textContent='刷新中…'
+    try{await refreshContacts();buildOptions();toast('好友/群列表已更新')}
+    catch(err){toast('刷新失败：'+err.message,true)}
+    finally{refreshContactsBtn.disabled=false;refreshContactsBtn.textContent=old}
+  }
+  // 打开弹窗时后台再拉一次，刚在 QQ 上加的好友/群不用手动刷新也能出现
+  refreshContacts().then(()=>buildOptions()).catch(()=>{})
   commit.onclick=async()=>{
     preview();if(commit.disabled)return;pending=true;commit.disabled=true;commit.textContent='正在添加…'
     try{const result=await api(privateChat?'/api/action/add-private-whitelist':'/api/action/update-whitelist',privateChat?{userIds:newIds}:{operation:'add',groupIds:newIds});pending=false;close();await load();toast(privateChat?`已添加${result.changed}人到私聊白名单，下一条新消息起生效`:`已添加${result.changed}个白名单群，即时生效`)}
@@ -593,7 +617,7 @@ function pageHumanize(){
   const greetings=state?.config?.quietGreetings
   return `<h1>回复行为</h1><div class="sub">这里修改“沿用全局”的默认值；会话单独设置优先，其次是按群独立概率，最后才是全局概率。</div>
   <div class="flexbar"><a class="btn" href="#chats">管理白名单群聊 →</a><span class="note">概率填写百分比，例如 20%，不需要输入配置格式。</span></div>
-  <div class="card">${configForm(['PROACTIVE_RATE','PROACTIVE_RATE_PER_GROUP','PROACTIVE_COOLDOWN_MS','EMOJI_KEEP_RATE','HUMAN_DELAY_MIN_MS','HUMAN_DELAY_MAX_MS','REPLY_LENGTH_MATCH','REPLY_MIN_BUDGET','REPLY_MAX_LINES','REPLY_LINE_MAX_CHARS','LINE_GAP_MIN_MS','LINE_GAP_MAX_MS','RATE_LIMIT_PER_HOUR','RATE_LIMIT_MIN_GAP_MS','QUIET_HOURS','QUIET_GREETINGS_ENABLED','HISTORY_LIMIT','CONTEXT_REMEMBER_ALL','POKE_REPLY_ENABLED','AUTO_PLUS_ONE_ENABLED','PRIVATE_WHITELIST'],'修改全局概率不会覆盖已经单独设置的群；限流相关参数需重启生效。')}</div><div class="note">固定语库早晚安：${greetings?.enabled?'已启用':'未启用'}；语库就绪 ${greetings?.groups?.filter(g=>g.ready).length||0}/${greetings?.groups?.length||0} 群。检查时段、选句和发送均不调用 AI。<a href="#persona">前往人格页面编辑或导出语库 →</a> <button class="btn sm" id="catchUpMorning">补发本轮未发的早安</button></div>`
+  <div class="card">${configForm(['PROACTIVE_RATE','PROACTIVE_RATE_PER_GROUP','PROACTIVE_COOLDOWN_MS','EMOJI_KEEP_RATE','HUMAN_DELAY_MIN_MS','HUMAN_DELAY_MAX_MS','REPLY_LENGTH_MATCH','REPLY_MIN_BUDGET','REPLY_MAX_LINES','REPLY_LINE_MAX_CHARS','LINE_GAP_MIN_MS','LINE_GAP_MAX_MS','RATE_LIMIT_PER_HOUR','RATE_LIMIT_AT_PER_HOUR','RATE_LIMIT_MIN_GAP_MS','RATE_LIMIT_WAIT_MAX_MS','QUIET_HOURS','QUIET_GREETINGS_ENABLED','HISTORY_LIMIT','CONTEXT_REMEMBER_ALL','POKE_REPLY_ENABLED','AUTO_PLUS_ONE_ENABLED','PRIVATE_WHITELIST'],'修改全局概率不会覆盖已经单独设置的群；限流相关参数需重启生效。')}</div><div class="note">固定语库早晚安：${greetings?.enabled?'已启用':'未启用'}；语库就绪 ${greetings?.groups?.filter(g=>g.ready).length||0}/${greetings?.groups?.length||0} 群。检查时段、选句和发送均不调用 AI。<a href="#persona">前往人格页面编辑或导出语库 →</a> <button class="btn sm" id="catchUpMorning">补发本轮未发的早安</button></div>`
 }
 function webSearchCard(){
   const info = webSearchInfo || {}

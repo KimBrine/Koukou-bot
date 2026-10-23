@@ -53,7 +53,7 @@ function normalizeOutgoing(message) {
  * - 事件：'ready'（拿到登录信息）、'message'（收到消息事件）。
  */
 export class OneBotClient extends EventEmitter {
-  constructor({ url, logger, probeUserId = '' }) {
+  constructor({ url, logger, probeUserId = '', offlineGraceMs = 8000 }) {
     super()
     this.url = url
     this.logger = logger
@@ -75,6 +75,9 @@ export class OneBotClient extends EventEmitter {
     this.probeVerified = false
     this.probeError = ''
     this.accountStatusVersion = 0
+    // 离线去抖：短于 offlineGraceMs 的断开不判定离线（LLBot 重连一般 5 秒左右）
+    this.offlineSince = 0
+    this.offlineGraceMs = Math.max(0, Number(offlineGraceMs) || 0)
     this.messageTimeline = new MessageTimeline()
   }
 
@@ -162,7 +165,7 @@ export class OneBotClient extends EventEmitter {
         }
         // lifecycle 事件里也带 self_id，尽早拿到自己的 QQ 号
         if (data?.post_type === 'meta_event' && data.meta_event_type === 'heartbeat') {
-          this.updateAccountStatus(data.status)
+          this.updateAccountStatus(data.status, { immediate: true })
           return
         }
         if (data && data.post_type === 'meta_event' && data.meta_event_type === 'lifecycle' && data.self_id) {
@@ -171,7 +174,7 @@ export class OneBotClient extends EventEmitter {
         }
         // 通知类事件（拍一拍 / 群成员变动 / 戳一戳等）
         if (data && data.post_type === 'notice') {
-          if (data.notice_type === 'bot_offline') this.updateAccountStatus({ online: false, good: true })
+          if (data.notice_type === 'bot_offline') this.updateAccountStatus({ online: false, good: true }, { immediate: true })
           this.emit('notice', data)
           return
         }
@@ -237,8 +240,23 @@ export class OneBotClient extends EventEmitter {
     return { connected: open, online: qqOnline === true && qqGood !== false, qqOnline, qqGood, reportedOnline, probeVerified: verified, probeCheckedAt: this.probeCheckedAt, statusCheckedAt: this.statusCheckedAt, statusError: this.statusError || this.probeError, selfId: this.selfId, nickname: this.nickname }
   }
 
-  updateAccountStatus(data) {
+  updateAccountStatus(data, { immediate = false } = {}) {
     if (typeof data?.online !== 'boolean') return false
+    if (data.online) {
+      this.offlineSince = 0
+    } else if (this.qqOnline === true && !immediate) {
+      // LLBot 协议层断开后通常几秒内自动恢复（"协议层断开，等待重连…"）。
+      // 短抖动先维持在线，等超过 grace 仍没回来才判定离线，避免控制台一会在跑一会离线。
+      const grace = Number.isFinite(Number(this.offlineGraceMs)) ? Math.max(0, Number(this.offlineGraceMs)) : 8000
+      const first = this.offlineSince || Date.now()
+      if (Date.now() - first < grace) {
+        this.offlineSince = first
+        this.statusCheckedAt = Date.now()
+        this.statusError = ''
+        if (typeof data.good === 'boolean') this.qqGood = data.good
+        return true
+      }
+    }
     const previous = this.qqOnline
     if (data.online && previous === false) this.messageTimeline.begin()
     if (!data.online) this.messageTimeline.end()

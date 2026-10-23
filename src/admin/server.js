@@ -297,8 +297,8 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
   let groupListCache = { at: 0, items: [] }
   let friendListCache = { at: 0, items: [] }
 
-  async function getGroupList() {
-    if (Date.now() - groupListCache.at < 30000) return groupListCache.items
+  async function getGroupList(force = false) {
+    if (!force && Date.now() - groupListCache.at < 30000) return groupListCache.items
     try {
       const res = await onebot.api('get_group_list', {}, 6000)
       const items = (Array.isArray(res) ? res : res?.data ?? []).map((g) => ({
@@ -313,8 +313,8 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     return groupListCache.items
   }
 
-  async function getFriendList() {
-    if (Date.now() - friendListCache.at < 60000) return friendListCache.items
+  async function getFriendList(force = false) {
+    if (!force && Date.now() - friendListCache.at < 60000) return friendListCache.items
     try {
       const res = await onebot.api('get_friend_list', {}, 6000)
       const items = (Array.isArray(res) ? res : res?.data ?? []).map((f) => ({
@@ -542,8 +542,8 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     'GET /api/state': async () => buildState(),
     'GET /api/updates': async () => updateChecker.check(),
     'GET /api/chats': async () => ({ items: await buildChatList() }),
-    'GET /api/groups': async () => ({ items: await getGroupList() }),
-    'GET /api/friends': async () => ({ items: await getFriendList() }),
+    'GET /api/groups': async (query) => ({ items: await getGroupList(query?.refresh === '1') }),
+    'GET /api/friends': async (query) => ({ items: await getFriendList(query?.refresh === '1') }),
     'GET /api/custom-commands': async () => ({ items: typeof customCommands?.all === 'function' ? customCommands.all() : [],builtinItems:commandCenter?.all()||[],poke:commandCenter?.diagnostics()||{} }),
     'GET /api/personas': async () => ({ items: listPersonas(), active: config.activePersona || '', dir: personaDir }),
     'GET /api/memory-overview': async () => {
