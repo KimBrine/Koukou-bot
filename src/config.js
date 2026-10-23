@@ -393,6 +393,8 @@ export function loadConfig() {
 
     // LLBot 登录账号：启动时作为 --qq 传入，用保存的登录态恢复，避免重启后退到扫码
     llbotQq: String(env.LLBOT_QQ ?? '').trim(),
+    // 抓 LLBot 协议层断开原因时打开：启动参数加 --debug（只影响日志详细度）
+    llbotDebug: ['1', 'true'].includes(String(env.LLBOT_DEBUG ?? '').trim().toLowerCase()),
 
     logLevel: String(env.LOG_LEVEL ?? 'info').toLowerCase(),
   }

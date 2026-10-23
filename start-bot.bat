@@ -48,7 +48,7 @@ if not errorlevel 1 (
   call :mark "OneBot port already up, skip LLBot"
   goto WAITPORT
 )
-wscript //B //Nologo "%ROOT%\scripts\start-llbot-hidden.vbs" "%LLDIR%\LuckyLillia.exe" "%LLDIR%\bin\llbot" "%LLBOT_QQ%"
+wscript //B //Nologo "%ROOT%\scripts\start-llbot-hidden.vbs" "%LLDIR%\LuckyLillia.exe" "%LLDIR%\bin\llbot" "%LLBOT_QQ%" "%LLBOT_DEBUG%"
 set "LLBOT_STARTED=1"
 call :mark "LLBot launch requested, waiting for port"
 echo       First run: scan QR in console "QQ Login" page. This window shows progress.
