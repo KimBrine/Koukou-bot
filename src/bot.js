@@ -1050,33 +1050,50 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
           if (r.ok && out.startsWith('@@FILE@@')) {
             try {
               const spec = JSON.parse(out.slice('@@FILE@@'.length))
-              const filePath = path.resolve(String(spec.path || ''))
-              if (!existsSync(filePath) || !statSync(filePath).isFile()) throw new Error('文件不存在：' + filePath)
-              if (statSync(filePath).size > fileMaxBytes) throw new Error(`文件超过 ${Math.round(fileMaxBytes / 1024 / 1024)}MB（可在控制台调大「文件发送上限」）`)
-              const name = String(spec.name || path.basename(filePath))
+              // parts：大文件被脚本切成多卷时逐个发送；否则就是单个文件
+              const files = (Array.isArray(spec.parts) && spec.parts.length
+                ? spec.parts.map((p) => ({ path: path.resolve(String(p.path || p)), name: String(p.name || path.basename(String(p.path || p))) }))
+                : [{ path: path.resolve(String(spec.path || '')), name: String(spec.name || path.basename(String(spec.path || ''))) }])
+              for (const f of files) {
+                if (!existsSync(f.path) || !statSync(f.path).isFile()) throw new Error('文件不存在：' + f.path)
+                if (statSync(f.path).size > fileMaxBytes) throw new Error(`${f.name} 超过 ${Math.round(fileMaxBytes / 1024 / 1024)}MB（可在控制台调大「文件发送上限」）`)
+              }
               // 单位秒，兼容旧脚本仍在用的 recall_minutes
               const seconds = Math.min(7200, Math.max(0, Number(
                 spec.recall_seconds ?? (spec.recall_minutes ? Number(spec.recall_minutes) * 60 : 300)) || 0))
               const recallLabel = seconds >= 60 ? `${Math.round(seconds / 60)} 分钟` : `${seconds} 秒`
-              let receipt = null
-              try {
-                const segment = [{ type: 'file', data: { file: 'file:///' + filePath.replace(/\\/g, '/'), name } }]
-                receipt = evt.message_type === 'private'
-                  ? await onebot.sendPrivate(evt.user_id, segment, 600000)
-                  : await onebot.sendGroup(evt.group_id, segment, 600000)
-              } catch (segErr) {
-                if (!/不支持|unsupported|not implemented|unknown.*(?:segment|type)|file.*segment/i.test(String(segErr.message))) throw segErr
-                // 文件段不被支持时退回群文件/私聊文件上传（这种形式没有消息号，无法自动撤回）
-                if (evt.message_type === 'private') await onebot.api('upload_private_file', { user_id: evt.user_id, file: filePath, name }, 600000)
-                else await onebot.api('upload_group_file', { group_id: evt.group_id, file: filePath, name }, 600000)
+              const sentIds = []
+              if (files.length > 1) await sendTo(evt, `分 ${files.length} 卷发送，请稍等…`)
+              for (let i = 0; i < files.length; i++) {
+                const f = files[i]
+                let receipt = null
+                try {
+                  const segment = [{ type: 'file', data: { file: 'file:///' + f.path.replace(/\\/g, '/'), name: f.name } }]
+                  receipt = evt.message_type === 'private'
+                    ? await onebot.sendPrivate(evt.user_id, segment, 600000)
+                    : await onebot.sendGroup(evt.group_id, segment, 600000)
+                } catch (segErr) {
+                  if (!/不支持|unsupported|not implemented|unknown.*(?:segment|type)|file.*segment/i.test(String(segErr.message))) throw segErr
+                  // 文件段不被支持时退回群文件/私聊文件上传（这种形式没有消息号，无法自动撤回）
+                  if (evt.message_type === 'private') await onebot.api('upload_private_file', { user_id: evt.user_id, file: f.path, name: f.name }, 600000)
+                  else await onebot.api('upload_group_file', { group_id: evt.group_id, file: f.path, name: f.name }, 600000)
+                }
+                if (receipt && receipt.message_id) sentIds.push(receipt.message_id)
+                if (files.length > 1) await sendTo(evt, `已发送 ${i + 1}/${files.length}：${f.name}`)
               }
-              const mid = receipt && receipt.message_id
-              if (mid && seconds > 0) {
-                const t = setTimeout(() => { onebot.deleteMessage(mid).catch(() => {}) }, seconds * 1000)
-                if (typeof t.unref === 'function') t.unref()
+              if (seconds > 0) {
+                for (const mid of sentIds) {
+                  const t = setTimeout(() => { onebot.deleteMessage(mid).catch(() => {}) }, seconds * 1000)
+                  if (typeof t.unref === 'function') t.unref()
+                }
               }
-              await sendTo(evt, (spec.text || ('已发送文件：' + name)) + (mid && seconds > 0 ? `\n（${recallLabel}后自动撤回；机器人重启会中断计时）` : seconds > 0 ? '\n（当前发送方式无法自动撤回，请手动处理）' : ''))
-            } catch (err) { await sendTo(evt, '文件发送失败：' + err.message) }
+              const mid = sentIds[0]
+              await sendTo(evt, (spec.text || ('已发送文件：' + files[0].name)) + (mid && seconds > 0 ? `\n（${recallLabel}后自动撤回；机器人重启会中断计时）` : seconds > 0 ? '\n（当前发送方式无法自动撤回，请手动处理）' : ''))
+            } catch (err) {
+              const hint = /Highway|upload|retcode=1200/i.test(String(err.message))
+                ? '\n提示：大文件上传容易在几百 MB 处失败，可在「模型与接口 → 文件与打包」把「大文件分卷大小」调小后重发。' : ''
+              await sendTo(evt, '文件发送失败：' + err.message + hint)
+            }
             return
           }
           const body = out.slice(0, 1500)

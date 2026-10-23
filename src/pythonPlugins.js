@@ -75,6 +75,7 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
       KOUKOU_ARCHIVE_PASSES: String(config.archivePasses || 1),
       KOUKOU_SEVEN_ZIP: String(config.sevenZipPath || ''),
       KOUKOU_FILE_MAX_MB: String(config.fileUploadMaxMb || 1024),
+      KOUKOU_FILE_SPLIT_MB: String(config.fileSplitMb || 90),
     }
     return await new Promise((resolve) => {
       execFileImpl(pythonPath, ['-X', 'utf8', full, ...args], { cwd: dir, timeout: callTimeout, maxBuffer: 1024 * 1024, windowsHide: true, encoding: 'utf8', env: childEnv }, (err, stdout, stderr) => {

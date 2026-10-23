@@ -555,6 +555,28 @@ def prune_downloads(root: Path, since: float | None = None) -> tuple[int, int]:
     return dirs, files
 
 
+def split_file(src: Path, size_mb: int) -> list[Path]:
+    """把大压缩包按字节切成多卷（.part001…），避免 QQ 上传到几百 MB 时失败。"""
+    chunk_size = max(5, int(size_mb)) * 1024 * 1024
+    for old in src.parent.glob(src.name + '.part*'):
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    parts = []
+    with src.open('rb') as f:
+        index = 1
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            part = src.with_name(f'{src.name}.part{index:03d}')
+            part.write_bytes(chunk)
+            parts.append(part)
+            index += 1
+    return parts
+
+
 def _download_one(client, img, photo, outdir, retry=2):
     save_path = outdir / img.filename
     for attempt in range(retry + 1):
@@ -844,6 +866,15 @@ def cmd_pack(raw='', minutes_arg=''):
 
     size_mb = current.stat().st_size / 1024 / 1024
     label = f'{fmt}，压缩 {passes} 次' if passes > 1 else fmt
+    if size_mb > int(os.environ.get('KOUKOU_FILE_SPLIT_MB') or 90):
+        parts = split_file(current, int(os.environ.get('KOUKOU_FILE_SPLIT_MB') or 90))
+        if parts:
+            return '@@FILE@@' + json.dumps({
+                'parts': [{'path': p.as_posix(), 'name': p.name} for p in parts],
+                'recall_seconds': seconds if recall_enabled else 0,
+                'text': (f'打包完成：{current.name}（{label}，{size_mb:.1f} MB）\n'
+                         f'文件太大，已切成 {len(parts)} 卷发送；全部下载后按顺序从 .part001 用 7-Zip 解压。'),
+            }, ensure_ascii=False)
     payload = {
         'path': current.as_posix(),
         'name': current.name,

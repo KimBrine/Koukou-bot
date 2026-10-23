@@ -642,7 +642,7 @@ function pageApi(){
   <div class="card"><strong>当前生效的识图模型：</strong>${esc(state?.bot?.visionModel || '未启用')}<div class="mut" style="margin-top:5px">图片识别与群聊报告分别配置；下方的 DashScope 模型只有切换识图服务商后才会用于读图。</div></div>
   <div class="card">${configForm(['TEMPERATURE','MAX_TOKENS','DASHSCOPE_API_KEY','BAIDU_QIANFAN_API_KEY','LOG_LEVEL'],'已设置的密钥不会显示；留空保持原值。',{scope:'api-model'})}</div>
   <h2>文件与打包</h2>
-  <div class="card">${configForm(['FILE_UPLOAD_MAX_MB','ARCHIVE_FORMAT','ARCHIVE_PASSES','SEVEN_ZIP_PATH'],'/发文件（含目录）与 Python 脚本结果共用这些设置；格式和压缩次数也用于 jm 打包。改完下一次发送/打包就生效。',{scope:'api-files'})}</div>`
+  <div class="card">${configForm(['FILE_UPLOAD_MAX_MB','FILE_SPLIT_MB','ARCHIVE_FORMAT','ARCHIVE_PASSES','SEVEN_ZIP_PATH'],'/发文件（含目录）与 Python 脚本结果共用这些设置；超过「大文件分卷大小」会自动切成多卷发送。改完下一次发送/打包就生效。',{scope:'api-files'})}</div>`
 }
 function pageReport(){
   return `<h1>群聊报告</h1><div class="sub">每日自动生成「群聊日常分析报告」，也可以在这里随时手动生成</div>
