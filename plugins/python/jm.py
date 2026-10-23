@@ -8,7 +8,7 @@
 # cmd: 查 350234 | 查详情：标题/作者/页数/标签/章节
 # cmd: 发图 350234 [张数] | 直接把前几张图发到聊天
 # cmd: 记录 350234 [张数] | 详情+整话图片打包成聊天记录
-# cmd: 打包 [编号] [秒] [普通|加密] [zip|7z|rar] | 已有现成的包直接发送，没有才压缩；按设置定时撤回
+# cmd: 打包 [编号] [秒] [zip|7z|rar] | 已有现成的包直接发送，没有才压缩；按设置定时撤回
 # cmd: 350234 | 后台下载整本
 # cmd: p350234 | 只下载某一章
 # cmd: 状态 | 当前任务进度
@@ -35,8 +35,7 @@ jm.py —— 机器人用的后台下载插件 + 详情查询
     查/查询/jmv 350234   查本子详情（不发图，纯文本）
     发图 350234 [张数]    直接把第一话前几张图发到聊天（默认3，最多6）
     记录 350234 [张数]    详情+整话图片打包成一条聊天记录卡片（不填张数=整话全部）
-    打包 350234 [秒] [普通|加密] [zip|7z|rar]    按控制台设置打包（格式/次数可调，默认 zip、1 次）以文件发送；默认按控制台开关（开=300 秒后撤回），给了秒数则一定撤回
-    打包 加密        最新已下载目录：ZIP→7z→RAR，每层去后缀；无密码，收到文件后按RAR→7z→ZIP恢复
+    打包 350234 [秒] [zip|7z|rar]    按控制台设置打包（格式/次数可调，默认 zip、1 次）以文件发送；默认按控制台开关（开=300 秒后撤回），给了秒数则一定撤回
     123456          下载本子(album)
     p345678         下载单个章节(photo)
     状态/status     当前任务进度
@@ -818,12 +817,14 @@ def _pack_once(source, out_path, fmt, seven, timeout_seconds=540):
             zf.write(source, source.name)
 
 
-def _cmd_pack(raw='', minutes_arg='', layered=False):
+def cmd_pack(raw='', minutes_arg=''):
     """把已下载的本子目录按配置打包（zip/7z/rar、可多次压缩），交给机器人以文件形式发送。"""
     base = download_dir()
     if not base.is_dir():
         return '下载目录还不存在，先 /py jm 350234 下载。'
 
+    if any(t.lower() in ('加密', 'encrypted') for t in (str(raw)+' '+str(minutes_arg)).split()):
+        return '该打包模式已移除。请使用：/py jm 打包 编号 [秒] [zip|7z|rar]'
     arg = (minutes_arg or '').strip()
     fmt_override = ''
     seconds_arg = ''
@@ -861,14 +862,10 @@ def _cmd_pack(raw='', minutes_arg='', layered=False):
     fmt, passes, seven = _archive_prefs()
     if fmt_override:
         fmt = fmt_override
-    if layered:
-        if not seven: return '加密模式需要7-Zip，请设置 SEVEN_ZIP_PATH。'
-        if not find_rar(): return '加密模式需要RAR程序，请设置 RAR_PATH。'
 
     import time
     pack_deadline = time.monotonic() + 540
     outdir = state_dir() / 'exports'
-    if layered: outdir = outdir / 'layered-v1' / target.name
     outdir.mkdir(parents=True, exist_ok=True)
     current = target
     reused = False
@@ -877,14 +874,10 @@ def _cmd_pack(raw='', minutes_arg='', layered=False):
             newest = max((f.stat().st_mtime for f in target.rglob('*') if f.is_file()), default=0)
         except OSError:
             newest = 0
-        sequence = ['zip', '7z', 'rar'] if layered else [fmt] * passes
+        sequence = [fmt] * passes
         for round_no, fmt in enumerate(sequence, 1):
             suffix = '' if round_no == 1 else f'.{round_no}'
             out_path = outdir / f'{target.name}{suffix}.{fmt}'
-            if layered:
-                layer_dir = outdir / str(round_no)
-                layer_dir.mkdir(parents=True, exist_ok=True)
-                out_path = layer_dir / target.name.replace('.', '_')
             # 已有的包不比源文件旧就直接发，几百 MB 不重复压缩
             if out_path.is_file() and out_path.stat().st_size > 0 and out_path.stat().st_mtime >= newest:
                 current = out_path
@@ -905,7 +898,7 @@ def _cmd_pack(raw='', minutes_arg='', layered=False):
         return f'打包失败：{type(e).__name__}: {e}'
 
     size_mb = current.stat().st_size / 1024 / 1024
-    label = '加密模式：ZIP→7z→RAR，每层无后缀、无密码' if layered else (f'{fmt}，压缩 {passes} 次' if passes > 1 else fmt)
+    label = f'{fmt}，压缩 {passes} 次' if passes > 1 else fmt
     if size_mb > int(os.environ.get('KOUKOU_FILE_SPLIT_MB') or 90):
         parts = split_file(current, int(os.environ.get('KOUKOU_FILE_SPLIT_MB') or 90))
         if parts:
@@ -923,52 +916,6 @@ def _cmd_pack(raw='', minutes_arg='', layered=False):
                  else f'打包完成：{current.name}（{label}，{size_mb:.1f} MB）'),
     }
     return '@@FILE@@' + json.dumps(payload, ensure_ascii=False)
-
-
-LAYERED_PACK_HELP = ('使用说明：此“加密”模式是ZIP→7z→RAR三层套包，每层去后缀，不设密码。'
-                     '收到分卷时先下载齐全并按编号合并。将最终无后缀文件加上.rar并解压；'
-                     '再将取出的无后缀文件加上.7z并解压；最后加上.zip并解压得到原文件。'
-                     '不要只给最外层改后缀，里面两层也需要逐层恢复。')
-
-
-def parse_pack_args(raw='', options=''):
-    album = ''
-    seconds = ''
-    fmt = ''
-    mode = None
-    for token in (str(raw) + ' ' + str(options)).split():
-        low = token.lower()
-        if low in ('普通', 'normal', '加密', 'encrypted'):
-            selected = low in ('加密', 'encrypted')
-            if mode is not None and mode != selected: raise ValueError('普通与加密模式不能同时指定')
-            mode = selected
-        elif low in ('zip', '7z', 'rar'):
-            fmt = low
-        elif re.fullmatch(r'(?:jm)?[0-9]+', low):
-            if not album: album = re.sub(r'^jm', '', low)
-            elif not seconds: seconds = low
-            else: raise ValueError('数字参数过多：编号后只需一个撤回秒数')
-        else:
-            raise ValueError('不认识打包参数：' + token)
-    if mode and fmt: raise ValueError('加密模式固定ZIP→7z→RAR，不再指定单一格式')
-    return album, ' '.join(x for x in (seconds, fmt) if x), bool(mode)
-
-
-def cmd_pack(raw='', minutes_arg=''):
-    layered = any(t.lower() in ('加密', 'encrypted') for t in (str(raw)+' '+str(minutes_arg)).split())
-    try:
-        album, options, layered = parse_pack_args(raw, minutes_arg)
-        result = _cmd_pack(album, options, layered=layered)
-    except Exception as error:
-        result = '打包失败：' + str(error)
-    if layered:
-        if result.startswith('@@FILE@@'):
-            payload = json.loads(result[len('@@FILE@@'):])
-            payload['instructions'] = LAYERED_PACK_HELP
-            payload['text'] = str(payload.get('text', '')) + '\n' + LAYERED_PACK_HELP
-            return '@@FILE@@' + json.dumps(payload, ensure_ascii=False)
-        return result + '\n本次未发送文件。\n' + LAYERED_PACK_HELP
-    return result
 
 
 # ---------- 提交 ----------
