@@ -44,6 +44,7 @@ const scripts = [
   'test-py-calc.mjs',
   'test-archive.mjs',
   'test-onebot-status.mjs',
+  'test-sticker-segment.mjs',
 ]
 for (const file of scripts) {
   const result = spawnSync(process.execPath, [path.join(root, 'scripts', file)], { cwd: root, stdio: 'inherit', windowsHide: true })
