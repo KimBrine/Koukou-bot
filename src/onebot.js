@@ -80,6 +80,9 @@ export class OneBotClient extends EventEmitter {
     this.offlineGraceMs = Math.max(0, Number(offlineGraceMs) || 0)
     // 协议端能力探测（表情包字段名 LLBot 用 subType、NapCat 用 sub_type）
     this.backendCache = null
+    // 启动时 LLBot 端口往往还没就绪：第一次连接失败属于正常等待，不该刷警告
+    this.everConnected = false
+    this.connectFailures = 0
     this.messageTimeline = new MessageTimeline()
   }
 
@@ -89,7 +92,13 @@ export class OneBotClient extends EventEmitter {
         await this.#connectOnce()
       } catch (err) {
         if (this.stopped) return
-        this.logger.warn(`OneBot 连接失败：${err.message}（${Math.round(this.reconnectDelay / 1000)}s 后重连）`)
+        this.connectFailures++
+        // 首次连上之前最多安静等 60 秒：LLBot 冷启动要十几秒，这段失败是预期内的
+        if (!this.everConnected && this.connectFailures <= 60) {
+          if (this.connectFailures === 1) this.logger.info('等待 OneBot 就绪（LLBot 还在启动，自动重试）')
+        } else {
+          this.logger.warn(`OneBot 连接失败：${err.message}（${Math.round(this.reconnectDelay / 1000)}s 后重连）`)
+        }
       }
       if (this.stopped) return
       await sleep(this.reconnectDelay)
@@ -132,6 +141,8 @@ export class OneBotClient extends EventEmitter {
         // 已被新连接取代的旧 socket 即使握手成功也不能接管状态
         if (this.ws !== ws) { try { ws.close() } catch { /* ignore */ } return }
         this.messageTimeline.begin()
+        this.everConnected = true
+        this.connectFailures = 0
         this.logger.info(`已连接 OneBot：${String(this.url).replace(/([?&]access_token=)[^&]*/i, '$1***')}`)
         this.reconnectDelay = 1000
         this.refreshStatus({ maxAgeMs: 0 }).catch(() => {})
@@ -218,7 +229,7 @@ export class OneBotClient extends EventEmitter {
       const onError = (event) => {
         if (!settled) {
           settled = true
-          reject(new Error(`WebSocket 错误（${event?.message || 'unknown'}）`))
+          reject(new Error(`WebSocket 错误（${event?.message || (event?.code ? 'code ' + event.code : 'unknown')}）`))
         }
         // 主动关掉出错的 socket：否则它可能延迟很久才 close，届时会误伤新连接
         try { ws.close() } catch { /* ignore */ }
