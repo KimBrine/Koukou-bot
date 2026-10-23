@@ -326,7 +326,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
     if (!client || typeof client.chat !== 'function') return [base]
     try {
       const text = await client.chat(
-        '你负责把用户想要的表情包需求转成 2~4 个中文图片搜索词，每行一个；只输出搜索词，不要编号、解释或标点。',
+        '你负责把用户想要的表情包需求转成 2~4 个中文图片搜索词，每行一个；保留人名、角色、作品名等关键词（如 deepseek、claude、初音未来），不要统一改写成泛泛的“表情包”；只输出搜索词，不要编号、解释或标点。',
         [{ role: 'user', content: base }],
         // 思考强度与输出预算跟随全局配置（MAX_TOKENS / DEEPSEEK_REASONING_EFFORT），这里只压温度
         { temperature: 0.3 },
@@ -968,16 +968,24 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
           const queries = await expandStickerQueries(query)
           // 必应直连可用，走代理反而搜不到；Giphy/Tenor 等境外接口才走代理
           const proxy = config.stickerSearchProvider === 'bing' ? '' : config.stickerSearchProxy
-          const candidates = await collectWebImages(queries, {
+          const options = {
             provider: config.stickerSearchProvider,
             urlTemplate: config.stickerSearchUrl,
             key: config.stickerSearchKey,
             proxy,
             maxBytes: STICKER_MAX_BYTES,
             limit: config.stickerSearchFilter === false ? 1 : 4,
-          })
+          }
+          let candidates = await collectWebImages(queries, options)
+          logger.info(`[表情包] 联网搜图「${queries.join(' / ')}」候选 ${candidates.length} 张`)
+          // Giphy/Tenor 搜不到冷门角色时，用必应再兜一次（不带代理）
+          if (!candidates.length && config.stickerSearchProvider !== 'bing') {
+            candidates = await collectWebImages(queries, { ...options, provider: 'bing', proxy: '' })
+            logger.info(`[表情包] 改用必应兜底，候选 ${candidates.length} 张`)
+          }
+          if (!candidates.length) throw new Error('没搜到候选图')
           const image = await pickBestWebImage(candidates, sendText)
-          if (!image) throw new Error('没有筛到合适的表情包')
+          if (!image) throw new Error('候选图都被筛掉了')
           const segment = typeof onebot.imageSegment === 'function'
             ? await onebot.imageSegment(image.dataUrl, { sticker: true })
             : { type: 'image', data: { file: image.dataUrl, sub_type: 1 } }

@@ -369,8 +369,10 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         if (existsSync(file)) {
           msgToday = readFileSync(file, 'utf8').split(/\r?\n/).filter((l) => l.trim()).length
         }
+        if (!msgToday) msgToday = countMemoryToday(key)
       } else {
         name = friendMap.get(String(uid))?.name ?? ''
+        msgToday = countMemoryToday(key)
       }
       const history = Array.isArray(mem[key]) ? mem[key] : []
       // 不在白名单、没有任何消息、也没有单独设置的群：视为残留空壳，不显示
@@ -419,6 +421,14 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
     return path.join(personaDir, `${safe}.txt`)
   }
 
+  function countMemoryToday(key) {
+    try {
+      if (!memory?.get) return 0
+      const start = new Date(); start.setHours(0, 0, 0, 0)
+      return (memory.get(key) || []).filter((e) => e.role === 'user' && Number(e.time || 0) >= start.getTime()).length
+    } catch { return 0 }
+  }
+
   function todayStats() {
     const pad2 = (n) => String(n).padStart(2, '0')
     const d = new Date()
@@ -437,6 +447,13 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       }
     } catch {
       /* ignore */
+    }
+    // 日常总结没开时 data/daily 下没有文件，退回按记忆里的时间统计今天，避免工作台永远是 0
+    if (!total && memory?.keys) {
+      for (const key of memory.keys()) {
+        const n = countMemoryToday(key)
+        if (n > 0) { perGroup.push({ groupId: key, count: n }); total += n }
+      }
     }
     perGroup.sort((a, b) => b.count - a.count)
     return { date: key, total, perGroup }
