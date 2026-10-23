@@ -8,8 +8,7 @@
 # cmd: 查 350234 | 查详情：标题/作者/页数/标签/章节
 # cmd: 发图 350234 [张数] | 直接把前几张图发到聊天
 # cmd: 记录 350234 [张数] | 详情+整话图片打包成聊天记录
-# cmd: 打包 350234 [秒] [zip|7z] | 按控制台设置打包发送并定时撤回
-# cmd: 发包 [350234] | 直接发送已经打好的压缩包，不重新压缩
+# cmd: 打包 350234 [秒] [zip|7z] | 已有现成的包直接发送，没有才压缩；按设置定时撤回
 # cmd: 350234 | 后台下载整本
 # cmd: p350234 | 只下载某一章
 # cmd: 状态 | 当前任务进度
@@ -824,13 +823,19 @@ def cmd_pack(raw='', minutes_arg=''):
     outdir = state_dir() / 'exports'
     outdir.mkdir(parents=True, exist_ok=True)
     current = target
+    reused = False
     try:
+        try:
+            newest = max((f.stat().st_mtime for f in target.rglob('*') if f.is_file()), default=0)
+        except OSError:
+            newest = 0
         for round_no in range(1, passes + 1):
             suffix = '' if round_no == 1 else f'.{round_no}'
             out_path = outdir / f'{target.name}{suffix}.{fmt}'
-            # 已经有比源目录新的包就直接复用，别把 4GB 的图重新压一遍
-            if out_path.is_file() and out_path.stat().st_size > 0 and out_path.stat().st_mtime >= target.stat().st_mtime:
+            # 已有的包不比源文件旧就直接发，几百 MB 不重复压缩
+            if out_path.is_file() and out_path.stat().st_size > 0 and out_path.stat().st_mtime >= newest:
                 current = out_path
+                reused = True
                 continue
             _pack_once(current, out_path, fmt, seven)
             current = out_path
@@ -843,35 +848,10 @@ def cmd_pack(raw='', minutes_arg=''):
         'path': current.as_posix(),
         'name': current.name,
         'recall_seconds': seconds if recall_enabled else 0,
-        'text': f'打包完成：{current.name}（{label}，{size_mb:.1f} MB）',
+        'text': (f'发送已有压缩包：{current.name}（{label}，{size_mb:.1f} MB）' if reused
+                 else f'打包完成：{current.name}（{label}，{size_mb:.1f} MB）'),
     }
     return '@@FILE@@' + json.dumps(payload, ensure_ascii=False)
-
-
-def cmd_send_existing(raw: str) -> str:
-    """把 state/exports 里已经打好的包直接发出去（不重新压缩）。"""
-    outdir = state_dir() / 'exports'
-    if not outdir.is_dir():
-        return '还没有打包结果，先 /py jm 打包 350234。'
-    files = sorted((p for p in outdir.iterdir() if p.is_file() and p.suffix.lower() in ('.zip', '.7z')),
-                   key=lambda p: p.stat().st_mtime, reverse=True)
-    if not files:
-        return '还没有打包结果，先 /py jm 打包 350234。'
-    digits = re.findall(r'\d+', raw or '')
-    if digits:
-        key = ''.join(digits)
-        matched = [p for p in files if key in p.name]
-        if not matched:
-            return f'exports 里没有包含 {key} 的压缩包。'
-        files = matched
-    target = files[0]
-    seconds, recall_enabled = _plugin_settings()
-    return '@@FILE@@' + json.dumps({
-        'path': target.as_posix(),
-        'name': target.name,
-        'recall_seconds': seconds if recall_enabled else 0,
-        'text': f'发送已有压缩包：{target.name}（{target.stat().st_size/1024/1024:.1f} MB）',
-    }, ensure_ascii=False)
 
 
 # ---------- 提交 ----------
@@ -1053,12 +1033,9 @@ def main(argv):
         print(cmd_card(argv[1] if len(argv) > 1 else '',
                        argv[2] if len(argv) > 2 else ''))
         return 0
-    if low in ('打包', 'zip', '压缩', '文件'):
+    if low in ('打包', 'zip', '压缩', '文件', '发包', '发文件', 'send'):
         print(cmd_pack(argv[1] if len(argv) > 1 else '',
                        argv[2] if len(argv) > 2 else ''))
-        return 0
-    if low in ('发包', '发文件', 'send'):
-        print(cmd_send_existing(argv[1] if len(argv) > 1 else ''))
         return 0
     if low in ('状态', 'status', '进度'):
         print(cmd_status())
