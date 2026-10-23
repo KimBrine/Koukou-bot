@@ -385,6 +385,8 @@ export function loadConfig() {
     stickerSearchUrl: String(env.STICKER_SEARCH_URL ?? '').trim(),
     stickerSearchKey: String(env.STICKER_SEARCH_KEY ?? '').trim(),
     stickerSearchModel: String(env.STICKER_SEARCH_MODEL ?? '').trim(),
+    // 是否用模型把用户原话改写成搜索词；关掉就只用规则提取的关键词
+    stickerSearchRewrite: String(env.STICKER_SEARCH_REWRITE ?? '1').trim() !== '0',
     stickerSearchFilter: String(env.STICKER_SEARCH_FILTER ?? '1').trim() !== '0',
     // 搜图单独走代理（Giphy/Tenor 国内直连超时）；不填则直连，模型请求不受影响
     stickerSearchProxy: String(env.STICKER_SEARCH_PROXY ?? '').trim(),

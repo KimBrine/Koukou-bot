@@ -1139,6 +1139,7 @@ function pageStickers(){
     '<label style="display:block;margin:12px 0">自定义搜图 URL <input id="stkSearchUrl" value="' + esc(settings.searchUrl || '') + '" placeholder="https://api.example.com/search?q={query}&limit={count}&key={key}" style="width:100%;max-width:560px"><div class="mut">仅「自定义接口」用；支持 {query} {key} {count}，返回 JSON，程序会自动找图片直链。</div></label>',
     '<label style="display:block;margin:12px 0">搜图 API Key <input id="stkSearchKey" type="password" placeholder="' + (settings.searchKeyConfigured ? '已设置，留空不修改' : '未设置') + '" autocomplete="new-password" style="width:280px"><div class="mut">Giphy / Tenor / 自定义接口用；保存后不会回显。</div></label>',
     '<label style="display:block;margin:12px 0">搜图改写模型 <input id="stkSearchModel" value="' + esc(settings.searchModel || '') + '" placeholder="留空=主对话模型" style="width:220px"><div class="mut">先用这个模型把你的话改写成几个搜索词，再去找图。</div></label>',
+    '<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:12px 0"><input type="checkbox" id="stkSearchRewrite"' + (settings.searchRewrite !== false ? ' checked' : '') + '> 用模型改写搜索词（关掉则只提取原话里的关键词）</label>',
     '<label style="display:block;margin:12px 0">搜图代理 <input id="stkSearchProxy" value="' + esc(settings.searchProxy || '') + '" placeholder="http://127.0.0.1:7890" style="width:260px"><div class="mut">只影响搜图请求（Giphy/Tenor 国内需代理）；留空直连，模型请求不走这里。</div></label>',
     '<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:12px 0"><input type="checkbox" id="stkSearchFilter"' + (settings.searchFilter !== false ? ' checked' : '') + '> 用识图模型筛掉不像表情包的图（logo/截图/真人照/广告）</label>',
     '<div class="mut">筛图会让每次找图多 1~3 次识图调用；关掉则取第一张合格图片。</div>',
@@ -2140,6 +2141,7 @@ async function bind(){
         STICKER_SEARCH_PROVIDER: document.getElementById('stkSearchProvider').value,
         STICKER_SEARCH_URL: document.getElementById('stkSearchUrl').value.trim(),
         STICKER_SEARCH_MODEL: document.getElementById('stkSearchModel').value.trim(),
+        STICKER_SEARCH_REWRITE: document.getElementById('stkSearchRewrite').checked?'1':'0',
         STICKER_SEARCH_FILTER: document.getElementById('stkSearchFilter').checked?'1':'0',
         STICKER_SEARCH_PROXY: document.getElementById('stkSearchProxy').value.trim(),
       }
@@ -2155,6 +2157,7 @@ async function bind(){
         STICKER_SEARCH_PROVIDER: cur.searchProvider || 'bing',
         STICKER_SEARCH_URL: cur.searchUrl || '',
         STICKER_SEARCH_MODEL: cur.searchModel || '',
+        STICKER_SEARCH_REWRITE: cur.searchRewrite===false?'0':'1',
         STICKER_SEARCH_FILTER: cur.searchFilter===false?'0':'1',
         STICKER_SEARCH_PROXY: cur.searchProxy || '',
       }

@@ -322,6 +322,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
   const stickerSearchClient = () => stickerSearchLLM || llm
   /** 用配置的模型把用户原话改写成 2~4 个搜索词（失败就退回原词） */
   async function expandStickerQueries(base) {
+    if (config.stickerSearchRewrite === false) return [base]
     const client = stickerSearchClient()
     if (!client || typeof client.chat !== 'function') return [base]
     try {
@@ -984,12 +985,9 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
             logger.info(`[表情包] 改用必应兜底，候选 ${candidates.length} 张`)
           }
           if (!candidates.length) throw new Error('没搜到候选图')
-          let image = await pickBestWebImage(candidates, sendText)
-          if (!image) {
-            // 筛图全部否掉时别让用户空手而归：退回第一张，并记录原因
-            image = candidates[0]
-            logger.warn('[表情包] 候选图都被识图筛掉，退回第一张发送')
-          }
+          const image = await pickBestWebImage(candidates, sendText)
+          // 筛不出合适的就如实说没找到，不拿无关的图凑数
+          if (!image) throw new Error('没找到合适的表情包')
           const segment = typeof onebot.imageSegment === 'function'
             ? await onebot.imageSegment(image.dataUrl, { sticker: true })
             : { type: 'image', data: { file: image.dataUrl, sub_type: 1 } }
@@ -1002,8 +1000,8 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
           try { metrics?.replied?.() } catch {}
         } catch (err) {
           logger.warn(`[表情包] 联网找图失败：${err.message}`)
-          rememberExchange('（联网找图失败）')
-          await sendTo(evt, '网上没翻到合适的图，等会儿再让我试试？')
+          rememberExchange('（没找到合适的表情包）')
+          await sendTo(evt, '没找到合适的表情包，换个说法再让我试试？')
           try { metrics?.replied?.() } catch {}
         }
         return
