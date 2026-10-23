@@ -129,12 +129,13 @@ try{
     for(const message of ['OneBot API 超时：send_group_msg','不支持file消息段']){
       const t=fixture(),file=path.join(t.dir,'demo.txt');writeFileSync(file,'offline')
       t.commandCenter={allows:id=>id==='python',get:()=>({}),allowed:()=>false}
-      t.pythonPlugins={isEnabled:()=>true,async run(){return {ok:true,stdout:'@@FILE@@'+JSON.stringify({path:file,recall_seconds:10})}}}
+      t.pythonPlugins={isEnabled:()=>true,async run(){return {ok:true,stdout:'@@FILE@@'+JSON.stringify({path:file,recall_seconds:10,instructions:'使用说明：按RAR→7z→ZIP恢复',text:'文件完成；使用说明：按RAR→7z→ZIP恢复'})}}}
       const b=bot(t,{async chat(){throw Error('不应调用模型')}});let uploads=0
       b.onebot.sendGroup=async(g,text)=>{if(Array.isArray(text))throw Error(message);b.sent.push({g,text});return {message_id:9}}
       b.onebot.api=async action=>{assert.equal(action,'upload_group_file');uploads++}
       await b.instance.handleMessage(event('/py mock'))
       assert.equal(uploads,message.startsWith('不支持')?1:0)
+      assert.ok(b.sent.some(x=>String(x.text).includes('使用说明：按RAR→7z→ZIP恢复')))
       assert.ok(b.sent.some(x=>String(x.text).includes(uploads?'无法自动撤回':'文件发送失败')))
     }
   })
