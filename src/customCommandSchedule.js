@@ -39,7 +39,7 @@ export async function verifyCustomDelivery(onebot, entry) {
 
 /** 五分钟内在线核验与有限重试，回执持久化；不明确的发送不盲目重发。 */
 export function createCustomCommandSchedule({ file, commands, onebot, memory, rateLimiter, logger,
-  now = Date.now, retryWindowMs = 5*60000, retryDelayMs = 30000, verify = entry => verifyCustomDelivery(onebot, entry) }) {
+  canSend = () => true, now = Date.now, retryWindowMs = 5*60000, retryDelayMs = 30000, verify = entry => verifyCustomDelivery(onebot, entry) }) {
   let records = {}, blocked = false, busy = false, timer = null, stopped = false
   try {
     if (existsSync(file)) {
@@ -74,6 +74,11 @@ export function createCustomCommandSchedule({ file, commands, onebot, memory, ra
         if (stopped) break
         if (now()-item.targetAt >= retryWindowMs) continue
         const key = item.slotKey, chatKey = `g${item.groupId}`
+        if (!canSend(chatKey)) {
+          // 消费当前定时槽位，避免结束睡眠后补发夜间动作。
+          if (!records[key]) { records[key] = { targetAt: item.targetAt, status: 'abandoned', reason: '寂静时段' }; save() }
+          continue
+        }
         let entry = records[key]
         if (entry?.status === 'sent' || entry?.status === 'abandoned' || now() < (entry?.nextAttemptAt || 0)) continue
         const memoryToken = memory?.version?.(chatKey)
@@ -96,6 +101,7 @@ export function createCustomCommandSchedule({ file, commands, onebot, memory, ra
         if (!current || !current.scheduleGroups.includes(item.groupId) || !current.scheduleTimes.includes(JSON.parse(key)[3])) continue
         if (!commandScopeAllows(current,{isPrivate:false,groupId:item.groupId})) continue
         if (stopped) break
+        if (!canSend(chatKey)) continue
         entry = records[key] = {
           ...entry, groupId: item.groupId, targetAt: item.targetAt, selfId: String(onebot.selfId || ''),
           text: entry?.text ?? renderReply(current.reply, { now: now() }), memoryBoundary: memory?.cutoff?.(chatKey),

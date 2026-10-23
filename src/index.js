@@ -33,6 +33,7 @@ import { createCustomCommandSchedule } from './customCommandSchedule.js'
 import { createTargetWatch } from './targetWatch.js'
 import { createChatSettings } from './chatSettings.js'
 import { createDailyPing } from './dailyPing.js'
+import { quietBlocked } from './quietPolicy.js'
 import { createQuietGreetings } from './quietGreetings.js'
 import { createPersonaGreetingLibrary } from './personaGreetings.js'
 import { createAdminServer } from './admin/server.js'
@@ -429,6 +430,7 @@ const summaryPromptFn = (opts) => {
 const summaryChat = async (prompt, messages, options) => summaryLLM.chat(prompt, messages, options)
 
 const dailySummary = createDailySummary({ config, logger, onebot, llm: { chat: summaryChat },
+  canPublish: groupId => !quietBlocked(config, chatSettings, `g${groupId}`),
   visionLLM: summaryVisionLLM, imageCache: sharedImageCache,
   loadImage: (image, signal) => imageToDataUrl(image, onebot, config, logger, {signal}), buildSummaryPromptFn: summaryPromptFn })
 
@@ -447,6 +449,7 @@ const targetWatch = createTargetWatch({ config, logger, onebot, llm, memory, bui
 // 定时指令：按配置时点到指定群 @ 目标账号，发送固定内容。
 const dailyPing = createDailyPing({
   config,
+  chatSettings,
   logger,
   onebot,
   rateLimiter,
@@ -605,7 +608,7 @@ setInterval(() => {
 // 独立持久化发送状态，重启后先核对已发送/待核验记录。
 const customSchedule = createCustomCommandSchedule({
   file: path.join(config.dataDir, 'custom-command-delivery.json'), commands: customCommands,
-  onebot, memory, rateLimiter, logger,
+  onebot, memory, rateLimiter, logger, canSend: key => !quietBlocked(config, chatSettings, key),
 })
 customSchedule.start()
 

@@ -32,6 +32,7 @@ const scripts = [
   'test-sticker-learn.mjs',
   'test-summary-request-recovery.mjs',
   'test-quiet-greetings.mjs',
+  'test-quiet-policy.mjs',
   'test-memory-edit.mjs', 'test-memory-retry.mjs',
   'test-dev-integration.mjs', 'test-dev-merge-safety.mjs',
   'test-reply-budget.mjs',

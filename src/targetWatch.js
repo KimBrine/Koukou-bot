@@ -74,8 +74,9 @@ export function createTargetWatch({ config, logger, onebot, llm, memory, longMem
 
     // 反检测限流 + 安静时段：盯人回复是活动量最大的路径，必须一起纳入管控
     const chatKey = `g${G()}`
-    if (isQuietHour(config.quietHours)) {
-      logger.debug(`[盯人] 安静时段，暂不主动回复（保留 ${pending.length} 条待下个时段）`)
+    if (isQuietHour(chatSettings?.get?.(chatKey)?.quietHours ?? config.quietHours)) {
+      logger.debug('[盯人] 安静时段，清除待回复消息，不在醒来后补答')
+      pending.length = 0
       return
     }
     if (rateLimiter) {
@@ -99,6 +100,7 @@ export function createTargetWatch({ config, logger, onebot, llm, memory, longMem
       const batch = pending.slice()
       const latest = batch.at(-1)
       const canContinue = () => targetToken === targetRevision && isEnabled() && groupId === G() && userId === U() &&
+        !isQuietHour(chatSettings?.get?.(memoryKey)?.quietHours ?? config.quietHours) &&
         samePersona() && sameSessionPersona(config, chatSettings, memoryKey, personaText) &&
         replyStillCurrent(onebot, latest.evt, { latestOnly: true }) && !repliedIds.has(latest.id)
       if (!canContinue()) {

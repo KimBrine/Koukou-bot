@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { createImageCache } from './imageCache.js'
 import { createAutoPlusOne } from './autoPlusOne.js'
+import { quietBlocked, quietTransport } from './quietPolicy.js'
 import { replyStillCurrent, messageTime, currentMessageHint, LIVE_MESSAGE_MAX_AGE_MS } from './messageFreshness.js'
 import { modelHistory } from './memory.js'
 import { buildReplyFocus } from './replyFocus.js'
@@ -302,6 +303,9 @@ const SEARCH_TOOLS = [{
 }]
 
 export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, commandCenter, longMemory, stickers = null, stickerLearner = null, musicSearch = searchSong, rand = Math.random, metrics = null, pythonPlugins = null, stickerSearchLLM = null }) {
+  const sleeping = key => quietBlocked(config, chatSettings, key)
+  const awake = evt => !sleeping(evt.group_id ? `g${evt.group_id}` : `p${evt.user_id}`)
+  onebot = quietTransport(onebot, sleeping)
   const imageCache = sharedImageCache ?? (config.dataDir && config.visionCacheEnabled !== false ? createImageCache({
     dir: path.join(config.dataDir, 'image-cache'),
     maxBytes: config.visionCacheMaxBytes,
@@ -374,11 +378,11 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
   const lastReplayNote = new Map()
   const privateSkipNotes = new Map()
   const quotedMessages = createQuotedMessageResolver({ onebot, logger })
-  const groupMute = createGroupMute({onebot,commandCenter,llm,logger,config,canExecute:evt=>replyStillCurrent(onebot,evt)})
-  const selfActions = createSelfActions({onebot,commandCenter,llm,logger,config,canExecute:evt=>replyStillCurrent(onebot,evt)})
+  const groupMute = createGroupMute({onebot,commandCenter,llm,logger,config,canExecute:evt=>awake(evt)&&replyStillCurrent(onebot,evt)})
+  const selfActions = createSelfActions({onebot,commandCenter,llm,logger,config,canExecute:evt=>awake(evt)&&replyStillCurrent(onebot,evt)})
   const autoPlusOne = createAutoPlusOne({ config, onebot, logger,
     isEnabled:commandCenter ? id=>commandCenter.allowed({...commandCenter.get('auto-plus-one'),adminOnly:false},{isPrivate:false,groupId:id}) : undefined,
-    canTrigger:commandCenter ? evt=>commandCenter.allows('auto-plus-one',{isPrivate:false,groupId:evt.group_id,userId:evt.user_id}) : undefined,
+    canTrigger:evt=>awake(evt)&&(!commandCenter||commandCenter.allows('auto-plus-one',{isPrivate:false,groupId:evt.group_id,userId:evt.user_id})),
     onSent(evt) {
     const key = `g${evt.group_id}`
     const parsed = parseMessage(evt.message ?? evt.raw_message, onebot.selfId)
@@ -390,11 +394,12 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
   } })
 
   async function sendTo(evt, text) {
-    if (!replyStillCurrent(onebot, evt)) return
+    if (!awake(evt) || !replyStillCurrent(onebot, evt)) return
     // 把模型写的 [表情:微笑] 转成 QQ 真实表情的 CQ 码
     const outgoing = renderFacesToCq(text)
     let confirmed=true
     for (const piece of splitLongMessage(outgoing)) {
+      if (!awake(evt)) return
       const receipt = evt.message_type === 'private' ? await onebot.sendPrivate(evt.user_id, piece) : await onebot.sendGroup(evt.group_id, piece)
       quotedMessages.rememberSent(evt, receipt, piece)
       if(receipt?.message_id==null)confirmed=false
@@ -690,6 +695,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
     },
     /** 拍一拍 / 戳一戳回应：NapCat/LLBot 以 notice(notify/poke) 事件推送；私聊同样处理 */
     async handleNotice(evt) {
+      if (!awake(evt)) return
       const isPoke = (evt?.notice_type === 'notify' && ['poke', 'shake'].includes(evt?.sub_type)) || evt?.notice_type === 'poke'
       if (!isPoke) return
       // 群里任何人拍任何人都推给机器人，只有拍夜璃才需要处理；其余只记 debug，避免刷屏
@@ -735,7 +741,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         const personaText=ownPersona||config.persona
         const policyVersion=JSON.stringify(commandCenter?.get('poke'))
         const reply=renderFacesToCq(useRule ? await commandCenter.respond(command,{...context,name,persona:(personaText||'')+conversationRules(config)}) : (pokeReplier?.(name)||''))
-        if(!reply||personaToken!==(config.personaRevision||0)||memoryToken!==memory.version?.(key))return
+        if(!awake(evt)||!reply||personaToken!==(config.personaRevision||0)||memoryToken!==memory.version?.(key))return
         if(commandCenter&&(!commandCenter.allows('poke',context)||(selected&&!commandCenter.current(selected,context))))return
         if(commandCenter&&policyVersion!==JSON.stringify(commandCenter.get('poke')))return
         if(command?.responseMode==='ai'&&sessionPersona(config,chatSettings?.get?.(key)?.persona||'').text!==ownPersona)return
@@ -755,7 +761,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       const personaRevision = config.personaRevision || 0
       const conversationKey = evt.message_type === 'private' ? `p${evt.user_id}` : `g${evt.group_id}`
       let memoryRevision = memory.version?.(conversationKey)
-      const samePersona = () => personaRevision === (config.personaRevision || 0) && memoryRevision === memory.version?.(conversationKey)
+      const samePersona = () => awake(evt) && personaRevision === (config.personaRevision || 0) && memoryRevision === memory.version?.(conversationKey)
       const privateAllowed = (uid) => {
         const id = Number(uid)
         if (config.privateWhitelist instanceof Set && config.privateWhitelist.has(id)) return true
@@ -797,13 +803,28 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
           (onebot.selfId && String(evt.user_id) === String(onebot.selfId))) return
       const muteFollowup=groupMute.reserveFollowup(evt)
       const selfFollowup=selfActions.reserveFollowup(evt)
-      // 用户指定：自动 +1 在白名单群独立运行，不受静音、安静时段、搭话概率控制。
+      // 自动 +1 独立于普通聊天开关；彻底寂静时段同样休眠。
       const repeatTask = muteFollowup||selfFollowup?Promise.resolve():autoPlusOne.send(repetition)
 
       const isPrivate = evt.message_type === 'private'
       const groupId = evt.group_id
 
       const parsed = parseMessage(evt.message ?? evt.raw_message, onebot.selfId)
+      if (!awake(evt)) {
+        // 睡眠期间只存档，不执行指令、不读取引用/识图、不调用聊天模型，也不排队补做。
+        dailySummary?.capture(evt, parsed)
+        const tracked = isPrivate ? privateAllowed(evt.user_id) :
+          (config.whitelistGroups.has(Number(groupId)) || dailySummary?.summaryGroups().includes(Number(groupId)))
+        if (tracked && config.contextRememberAll && parsed.text) {
+          const name = evt.sender?.card || evt.sender?.nickname || String(evt.user_id)
+          memory.push(conversationKey, 'user', isPrivate ? parsed.text : `【${name}】${parsed.text}`,
+            { time: messageTime(evt) ?? Date.now(), messageId: evt.message_id, userId: evt.user_id, senderName: name })
+        }
+        runtimeStats?.noteSkip?.()
+        logger.debug(`[寂静时段] ${conversationKey} 仅存档，不回复或执行互动`)
+        await repeatTask
+        return
+      }
       // 表情包学习：独立指定群里别人发的图，按配置自动收录（异步，不影响回复）
       if (config.stickerLearnEnabled && (!isPrivate || config.stickerLearnPrivate) && stickerLearner && parsed.images.length > 0) {
         stickerLearner
@@ -1082,7 +1103,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
               }
               if (seconds > 0) {
                 for (const mid of sentIds) {
-                  const t = setTimeout(() => { onebot.deleteMessage(mid).catch(() => {}) }, seconds * 1000)
+                  const t = setTimeout(() => { if (awake(evt)) onebot.deleteMessage(mid).catch(() => {}) }, seconds * 1000)
                   if (typeof t.unref === 'function') t.unref()
                 }
               }

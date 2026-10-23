@@ -21,6 +21,13 @@ function fixture(groups=[200000002]){
   return {dir,commands,onebot,memory,sent,options,advance:ms=>clock+=ms,offline:()=>online=false,online:()=>online=true,now:()=>clock}
 }
 try{
+  await test('寂静时段不发送，醒来后也不补做已跳过的定时槽位',async()=>{
+    const t=fixture();let awake=false
+    const s=createCustomCommandSchedule({...t.options,canSend:()=>awake})
+    await s.tick();assert.equal(t.sent.length,0)
+    assert.equal(Object.values(s.status().deliveries)[0].status,'abandoned')
+    awake=true;await s.tick();assert.equal(t.sent.length,0)
+  })
   await test('成功回执持久化，同一分钟重复检查及重启都不重复发送',async()=>{
     const t=fixture(),a=createCustomCommandSchedule(t.options)
     await a.tick();await a.tick();assert.equal(t.sent.length,1)
