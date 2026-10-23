@@ -59,8 +59,8 @@ export class DeepSeekClient {
     } else this.active -= 1
   }
 
-  /** 纯文本对话：messages 为 [{role, content}] 历史（不含 system） */
-  async chat(systemPrompt, messages, { rejectTruncated = false, signal, maxTokens, unlimited = false, temperature = this.temperature } = {}) {
+  /** 纯文本对话：messages 为 [{role, content}] 历史（不含 system）；effort 可单次覆盖思考强度 */
+  async chat(systemPrompt, messages, { rejectTruncated = false, signal, maxTokens, unlimited = false, temperature = this.temperature, effort } = {}) {
     const baseMax = typeof this.maxTokens === 'function' ? this.maxTokens() : this.maxTokens
     const configured=Number.isFinite(baseMax)&&baseMax>0?Math.floor(baseMax):undefined
     const requested=Number.isFinite(maxTokens)&&maxTokens>0?Math.max(1,Math.floor(maxTokens)):undefined
@@ -78,7 +78,7 @@ export class DeepSeekClient {
           temperature: Number.isFinite(temperature)?Math.max(0,Math.min(2,temperature)):this.temperature,
           max_tokens: outputBudget,
           stream: false,
-        }, signal)
+        }, signal, effort)
         const finishReason = data?.choices?.[0]?.finish_reason
         if (finishReason === 'content_filter') {
           const err = new Error(`${this.label} 内容检查未通过`)
