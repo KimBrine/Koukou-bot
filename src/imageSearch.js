@@ -201,7 +201,8 @@ export async function searchGiphy(query, { key = '', count = 10, fetchImpl, prox
   if (!res.ok) throw new Error('Giphy 返回 HTTP ' + res.status)
   const data = await res.json().catch(() => null)
   return (Array.isArray(data?.data) ? data.data : [])
-    .map((item) => item?.images?.original?.url || item?.images?.fixed_width?.url || '')
+    // 优先取 fixed_width：体积小、QQ 发送更稳；没有再退回原图
+    .map((item) => item?.images?.fixed_width?.url || item?.images?.original?.url || '')
     .filter(Boolean).slice(0, count).map((url) => ({ url }))
 }
 

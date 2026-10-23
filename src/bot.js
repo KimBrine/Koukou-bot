@@ -355,7 +355,11 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         )
         if (/^\s*是/.test(String(answer || ''))) return image
         logger.info(`[表情包] 联网筛图跳过：${String(answer || '').slice(0, 40)}`)
-      } catch { /* 识图失败不阻断，继续下一张 */ }
+      } catch (err) {
+        // 识图失败（例如动图不支持）时不要整批丢弃，放行这一张
+        logger.info(`[表情包] 筛图不可用，直接采用：${err.message}`)
+        return image
+      }
     }
     return null
   }
