@@ -386,6 +386,8 @@ export function loadConfig() {
     stickerSearchKey: String(env.STICKER_SEARCH_KEY ?? '').trim(),
     stickerSearchModel: String(env.STICKER_SEARCH_MODEL ?? '').trim(),
     stickerSearchFilter: String(env.STICKER_SEARCH_FILTER ?? '1').trim() !== '0',
+    // 搜图单独走代理（Giphy/Tenor 国内直连超时）；不填则直连，模型请求不受影响
+    stickerSearchProxy: String(env.STICKER_SEARCH_PROXY ?? '').trim(),
     temperature: Math.min(2, Math.max(0, num('TEMPERATURE', 1.2))),
     // 默认给足空间：思考强度开启时 500 会被推理吃光，导致回复被截断/空回复
     maxTokens: Math.max(256, Math.floor(num('MAX_TOKENS', 4096))),

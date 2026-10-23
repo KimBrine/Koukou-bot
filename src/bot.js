@@ -951,10 +951,13 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         const query = buildStickerQuery(sendText)
         try {
           const queries = await expandStickerQueries(query)
+          // 必应直连可用，走代理反而搜不到；Giphy/Tenor 等境外接口才走代理
+          const proxy = config.stickerSearchProvider === 'bing' ? '' : config.stickerSearchProxy
           const candidates = await collectWebImages(queries, {
             provider: config.stickerSearchProvider,
             urlTemplate: config.stickerSearchUrl,
             key: config.stickerSearchKey,
+            proxy,
             maxBytes: STICKER_MAX_BYTES,
             limit: config.stickerSearchFilter === false ? 1 : 4,
           })

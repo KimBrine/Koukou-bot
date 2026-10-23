@@ -125,6 +125,7 @@ const EDITABLE = [
   { key: 'STICKER_SEARCH_KEY', label: '搜图 API Key', hint: 'Giphy / Tenor / 自定义接口用；留空不修改', live: true, type: 'secret' },
   { key: 'STICKER_SEARCH_MODEL', label: '搜图改写模型', hint: '留空=主对话模型；填模型名（如 deepseek-flash）给它单独用', live: true, type: 'text' },
   { key: 'STICKER_SEARCH_FILTER', label: '用识图模型筛图', hint: '下载后用识图模型判断像不像表情包，跳过 logo/截图/真人照', live: true, type: 'bool' },
+  { key: 'STICKER_SEARCH_PROXY', label: '搜图代理', hint: '只影响搜图请求（Giphy/Tenor 国内需代理），如 http://127.0.0.1:7890；留空直连', live: true, type: 'text' },
   { key: 'DEEPSEEK_API_KEY', label: '模型 Key', live: true, type: 'secret' },
   { key: 'VISION_REASONING', label: '识图思考强度', hint: 'none 最稳（默认）；low/high 更细但更慢，也更容易吃光 token 预算', live: true, type: 'text' },
   { key: 'VISION_MAX_TOKENS', label: '识图 token 预算', hint: '64～4000，默认 300；复杂图片可调高', live: true, type: 'number' },
@@ -626,7 +627,7 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       learned: stickers && typeof stickers.learned === 'function' ? stickers.learned() : 0,
       scenes: STICKER_SCENES,
       learn: { ...stickers?.learningStatus?.(), enabled: Boolean(config.stickerLearnEnabled) && stickers?.learningAllowed?.() !== false, private: Boolean(config.stickerLearnPrivate), perHour: config.stickerLearnPerHour, groups: [...(config.stickerLearnGroups || [])] },
-      settings: { enabled: Boolean(config.stickersEnabled), autoRate: Math.round((config.stickerAutoRate ?? .35) * 100), maxPerReply: config.stickerMaxPerReply || 1, scope: config.stickerSendScope || 'all', groups: [...(config.stickerSendGroups || [])], pickMode: config.stickerPickMode || 'context', cooldownSeconds: config.stickerCooldownSeconds || 0, webSearch: config.stickerWebSearch !== false, searchProvider: config.stickerSearchProvider || 'bing', searchUrl: config.stickerSearchUrl || '', searchKeyConfigured: Boolean(config.stickerSearchKey), searchModel: config.stickerSearchModel || '', searchFilter: config.stickerSearchFilter !== false },
+      settings: { enabled: Boolean(config.stickersEnabled), autoRate: Math.round((config.stickerAutoRate ?? .35) * 100), maxPerReply: config.stickerMaxPerReply || 1, scope: config.stickerSendScope || 'all', groups: [...(config.stickerSendGroups || [])], pickMode: config.stickerPickMode || 'context', cooldownSeconds: config.stickerCooldownSeconds || 0, webSearch: config.stickerWebSearch !== false, searchProvider: config.stickerSearchProvider || 'bing', searchUrl: config.stickerSearchUrl || '', searchKeyConfigured: Boolean(config.stickerSearchKey), searchModel: config.stickerSearchModel || '', searchFilter: config.stickerSearchFilter !== false, searchProxy: config.stickerSearchProxy || '' },
     }),
     'GET /api/config': async () => {
       const env = readEnvFile(envFile)
@@ -802,6 +803,9 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
         break
       case 'STICKER_SEARCH_FILTER':
         config.stickerSearchFilter = bool(value)
+        break
+      case 'STICKER_SEARCH_PROXY':
+        config.stickerSearchProxy = String(value || '').trim()
         break
       case 'DEEPSEEK_BASE_URL': {
         const v = String(value || '').trim().replace(/\/+$/, '')
