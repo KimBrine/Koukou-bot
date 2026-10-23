@@ -488,6 +488,10 @@ try {
     await t.bot.handleMessage(t.event('拍一拍我',{message_type:'private'}))
     assert.equal(t.apis.at(-1).action,'friend_poke')
     assert.equal(Number(t.apis.at(-1).params.user_id),user)
+    // 提前返回的分支也要把用户原话和回复写进会话记忆（控制台才看得到）
+    const records=t.memory.get('p'+user)
+    assert.match(records.at(-2)?.content||'',/拍一拍我/)
+    assert.match(records.at(-1)?.content||'',/拍回去/,'')
     await t.bot.handleMessage(t.event([at(),text('戳戳我')]))
     assert.equal(t.apis.at(-1).action,'group_poke')
     assert.equal(Number(t.apis.at(-1).params.group_id),group)

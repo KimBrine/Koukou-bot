@@ -931,6 +931,15 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         }
         return
       }
+      // 提前返回的分支也要落会话记忆，否则控制台会话里看不到用户说过什么
+      const rememberExchange = (assistantText) => {
+        try {
+          if (!config.contextRememberAll) return
+          const userName = evt.sender?.card || evt.sender?.nickname || String(evt.user_id)
+          if (parsed.text) memory.push(conversationKey, 'user', `【${userName}】${parsed.text}`, { time: messageTime(evt) ?? Date.now(), messageId: evt.message_id, userId: evt.user_id, senderName: userName })
+          if (assistantText) memory.push(conversationKey, 'assistant', assistantText)
+        } catch { /* 记忆写入失败不影响发送 */ }
+      }
       // 让机器人拍一拍 / 戳一戳你：「拍一拍我」「戳戳我」这类原话，群聊私聊都支持
       const pokeMeMatch = /^(?:请|麻烦|帮忙)?\s*(?:拍一拍我|拍拍我|戳一戳我|戳戳我|戳我一下|拍我一下)[呀啊吧哦嘛了呢~！!。.]*$/u.exec(sendText)
       if (pokeMeMatch && directReply && (!isPrivate || privateAllowed(evt.user_id))) {
@@ -940,7 +949,9 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
           else if (isPrivate) await onebot.api('friend_poke', { user_id: Number(evt.user_id) })
           else await onebot.api('group_poke', { group_id: Number(groupId), user_id: Number(evt.user_id) })
           logger.info(`[拍一拍] 已按请求拍 ${isPrivate ? '私聊' : '群 ' + groupId} 的 ${evt.user_id}`)
+          rememberExchange('（拍回去了）')
           await sendTo(evt, isPrivate ? '戳回去啦，收到没有～' : '拍回去啦～')
+          try { metrics?.replied?.() } catch {}
         } catch (err) {
           logger.warn(`[拍一拍] 主动拍失败：${err.message}`)
           await sendTo(evt, '想拍你的，但是没戳动……')
@@ -974,10 +985,14 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
           else await onebot.sendGroup(groupId, [segment])
           stickerSend.begin(evt)
           logger.info(`[表情包] 联网找图「${queries.join(' / ')}」已发送：${image.sourceUrl}`)
+          rememberExchange('[表情包]')
           await sendTo(evt, '从网上给你找了一张，看看合不合口味～')
+          try { metrics?.replied?.() } catch {}
         } catch (err) {
           logger.warn(`[表情包] 联网找图失败：${err.message}`)
+          rememberExchange('（联网找图失败）')
           await sendTo(evt, '网上没翻到合适的图，等会儿再让我试试？')
+          try { metrics?.replied?.() } catch {}
         }
         return
       }
