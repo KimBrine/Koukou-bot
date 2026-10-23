@@ -886,6 +886,22 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         }
         return
       }
+      // 让机器人拍一拍 / 戳一戳你：「拍一拍我」「戳戳我」这类原话，群聊私聊都支持
+      const pokeMeMatch = /^(?:请|麻烦|帮忙)?\s*(?:拍一拍我|拍拍我|戳一戳我|戳戳我|戳我一下|拍我一下)[呀啊吧哦嘛了呢~！!。.]*$/u.exec(sendText)
+      if (pokeMeMatch && directReply && (!isPrivate || privateAllowed(evt.user_id))) {
+        if (!featureAllowed('poke')) { await sendTo(evt, '拍一拍功能现在关着呢～'); return }
+        try {
+          if (typeof onebot.poke === 'function') await onebot.poke({ groupId: isPrivate ? undefined : groupId, userId: evt.user_id })
+          else if (isPrivate) await onebot.api('friend_poke', { user_id: Number(evt.user_id) })
+          else await onebot.api('group_poke', { group_id: Number(groupId), user_id: Number(evt.user_id) })
+          logger.info(`[拍一拍] 已按请求拍 ${isPrivate ? '私聊' : '群 ' + groupId} 的 ${evt.user_id}`)
+          await sendTo(evt, isPrivate ? '戳回去啦，收到没有～' : '拍回去啦～')
+        } catch (err) {
+          logger.warn(`[拍一拍] 主动拍失败：${err.message}`)
+          await sendTo(evt, '想拍你的，但是没戳动……')
+        }
+        return
+      }
       const pyMatch = PY_CMD_RE.exec(String(parsed.text || '').trim())
       if (pyMatch) {
         if (!commandCenter || !commandCenter.allows('python', commandContext)) {

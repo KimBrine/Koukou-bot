@@ -25,11 +25,12 @@ function setup({config={},getMsg,forwards={},chat,chatSettings,rateLimiter,visio
   let time=Math.floor(Date.now()/1000)*1000
   const timeline=new MessageTimeline({now:()=>time});timeline.begin()
   const memory=new MemoryStore({file:path.join(dir,`${++files}.json`),limit:99,logger});stores.push(memory)
-  const sent=[],requests=[],lookups=[],forwardReads=[],captured=[]
+  const sent=[],requests=[],lookups=[],forwardReads=[],captured=[],apis=[]
   const onebot={selfId,messageTimeline:timeline,
     async sendGroup(g,t){sent.push(t);return {message_id:++ids}},async sendPrivate(u,t){sent.push(t);return {message_id:++ids}},
     async getMsg(id){lookups.push(id);return getMsg?getMsg(id):{message_id:id,group_id:group,user_id:selfId,sender:{nickname:'测试机器人',user_id:selfId},message:[text('之前的答案')]}},
     async getForwardMsg(id){forwardReads.push(id);if(forwards[id] instanceof Error)throw forwards[id];return {messages:forwards[id]??[]}},
+    async api(action,params){apis.push({action,params});return {}},
   }
   const cfg={whitelistGroups:new Set([group]),mutedGroups:new Set(),proactiveRate:0,proactiveCooldownMs:0,
     quietHours:'',contextRememberAll:true,autoPlusOneEnabled:false,replyMaxLines:3,replyLineMaxChars:40,
@@ -41,7 +42,7 @@ function setup({config={},getMsg,forwards={},chat,chatSettings,rateLimiter,visio
   function event(message,extra={}){time=Math.max(time,Math.floor(Date.now()/1000)*1000);const evt={post_type:'message',message_type:'group',user_id:user,group_id:group,
     message_id:++ids,time:time/1000,sender:{nickname:'群友甲'},message:typeof message==='string'?[text(message)]:message,...extra}
     evt.messageContext=timeline.receive(evt);return evt}
-  return {bot,memory,cfg,timeline,onebot,sent,requests,lookups,forwardReads,captured,event,advance:ms=>{time+=ms},time:()=>time}
+  return {bot,memory,cfg,timeline,onebot,sent,requests,lookups,forwardReads,captured,apis,event,advance:ms=>{time+=ms},time:()=>time}
 }
 const lastUser=t=>t.requests.at(-1)[1].at(-1).content
 const shape=t=>t.requests.at(-1)[0].match(/【本次回复的形态要求[^]*?(?=\n\n【|$)/)?.[0]
@@ -481,6 +482,18 @@ try {
     assert.equal(t.sent.length,2,'拍别人不回应')
     await t.bot.handleNotice({...base,notice_type:'poke',sub_type:undefined})
     assert.equal(t.sent.length,3,'兼容只带 notice_type=poke 的端')
+  })
+  await test('让机器人拍一拍我：私聊 friend_poke、群聊 group_poke，陌生私聊不拍',async()=>{
+    const t=setup({config:{pokeEnabled:true}})
+    await t.bot.handleMessage(t.event('拍一拍我',{message_type:'private'}))
+    assert.equal(t.apis.at(-1).action,'friend_poke')
+    assert.equal(Number(t.apis.at(-1).params.user_id),user)
+    await t.bot.handleMessage(t.event([at(),text('戳戳我')]))
+    assert.equal(t.apis.at(-1).action,'group_poke')
+    assert.equal(Number(t.apis.at(-1).params.group_id),group)
+    const stranger=setup({config:{pokeEnabled:true,privateWhitelist:new Set()}})
+    await stranger.bot.handleMessage(stranger.event('拍一拍我',{message_type:'private'}))
+    assert.equal(stranger.apis.length,0,'陌生私聊不能让它戳人')
   })
   console.log(`${passed} cases passed`)
 }finally {

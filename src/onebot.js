@@ -248,6 +248,14 @@ export class OneBotClient extends EventEmitter {
     return this.backendCache
   }
 
+  /** 主动拍一拍/戳一戳：群聊用 group_poke，私聊用 friend_poke（LLBot 与 NapCat 都支持这组动作名） */
+  async poke({ groupId, userId, timeoutMs = 8000 } = {}) {
+    const uid = Number(userId)
+    if (!Number.isFinite(uid) || uid <= 0) throw new Error('缺少要拍的人')
+    if (groupId) return this.api('group_poke', { group_id: Number(groupId), user_id: uid }, timeoutMs)
+    return this.api('friend_poke', { user_id: uid }, timeoutMs)
+  }
+
   /** 图片段：sticker=true 时按协议端补字段；NapCat 保持原来的 sub_type */
   async imageSegment(file, { sticker = false } = {}) {
     const data = { file }
