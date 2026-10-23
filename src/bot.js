@@ -643,12 +643,17 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         list: verdict.list ? verdict.list.map((b) => ({ userId: b.userId, name: b.name })) : [],
       }
     },
-    /** 拍一拍（双击头像）回应：NapCat 以 notice(notify/poke) 事件推送 */
+    /** 拍一拍 / 戳一戳回应：NapCat/LLBot 以 notice(notify/poke) 事件推送；私聊同样处理 */
     async handleNotice(evt) {
-      if (evt?.notice_type !== 'notify' || evt?.sub_type !== 'poke') return
+      const isPoke = (evt?.notice_type === 'notify' && ['poke', 'shake'].includes(evt?.sub_type)) || evt?.notice_type === 'poke'
+      if (!isPoke) return
+      logger.info(`[拍一拍] 收到：kind=${evt.notice_type}/${evt.sub_type || ''} user=${evt.user_id} target=${evt.target_id} group=${evt.group_id ?? '私聊'}`)
       if (commandCenter && !commandCenter.poke(evt,onebot.selfId)) return
       // 只回应"拍机器人自己"，且忽略机器人自己拍自己
-      if (String(evt.target_id) !== String(onebot.selfId)) return
+      if (String(evt.target_id) !== String(onebot.selfId)) {
+        logger.info(`[拍一拍] 跳过：拍的不是我（target=${evt.target_id}，self=${onebot.selfId}）`)
+        return
+      }
       if (String(evt.user_id) === String(onebot.selfId)) return
 
       const groupId = evt.group_id

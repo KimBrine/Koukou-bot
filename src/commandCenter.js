@@ -72,7 +72,9 @@ export function createCommandCenter({file,customCommands,config,logger,llm,now=D
   function enabled(id){return get(id)?.enabled===true}
   function detect(text){return DEFINITIONS.find(d=>d.pattern?.test(String(text).trim()))?.id||null}
   function poke(evt,selfId){
-    if(evt?.notice_type!=='notify'||evt?.sub_type!=='poke')return false
+    // 兼容各协议端的写法：notify/poke、notify/shake，以及只带 notice_type=poke
+    const isPoke=(evt?.notice_type==='notify'&&['poke','shake'].includes(evt?.sub_type))||evt?.notice_type==='poke'
+    if(!isPoke)return false
     diagnostics={count:diagnostics.count+1,lastAt:now(),lastGroupId:evt.group_id??null,lastUserId:evt.user_id??null,targetBot:String(evt.target_id)===String(selfId)}
     const key=[evt.group_id||'private',evt.user_id,evt.target_id,evt.time||''].join(':')
     const last=recentPokes.get(key)||0;recentPokes.set(key,now())

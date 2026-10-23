@@ -21,7 +21,7 @@ const node=(name, content)=>({sender:{nickname:name,user_id:200000020},time:1,me
 const dir=mkdtempSync(path.join(os.tmpdir(),'koukou-context-')),stores=[]
 let files=0,ids=1000,passed=0
 async function test(name,fn){await fn();passed++;console.log(`PASS ${name}`)}
-function setup({config={},getMsg,forwards={},chat,chatSettings,rateLimiter,visionLLM,imageCache,webSearch,chatRaw,stickers,musicSearch,summaryGroups=[group]}={}) {
+function setup({config={},getMsg,forwards={},chat,chatSettings,rateLimiter,visionLLM,imageCache,webSearch,chatRaw,stickers,musicSearch,pokeReplier,summaryGroups=[group]}={}) {
   let time=Math.floor(Date.now()/1000)*1000
   const timeline=new MessageTimeline({now:()=>time});timeline.begin()
   const memory=new MemoryStore({file:path.join(dir,`${++files}.json`),limit:99,logger});stores.push(memory)
@@ -35,7 +35,7 @@ function setup({config={},getMsg,forwards={},chat,chatSettings,rateLimiter,visio
     quietHours:'',contextRememberAll:true,autoPlusOneEnabled:false,replyMaxLines:3,replyLineMaxChars:40,
     humanDelayMinMs:0,humanDelayMaxMs:0,lineGapMinMs:0,lineGapMaxMs:0,emojiKeepRate:0,replyLengthMatch:true,
     visionMaxImages:2,rateLimitAtPerHour:45,...config}
-  const bot=createBot({config:cfg,logger,onebot,memory,chatSettings,rateLimiter,visionLLM,imageCache,webSearch,stickers,musicSearch,rand:()=>0.5,
+  const bot=createBot({config:cfg,logger,onebot,memory,chatSettings,rateLimiter,visionLLM,imageCache,webSearch,stickers,musicSearch,pokeReplier,rand:()=>0.5,
     buildSystemPrompt:createChatPromptBuilder({config:{persona:'群聊人设'},longMemory:{}}),llm:{async chat(...args){requests.push(args);return chat?chat(...args):'明白了，继续聊呀'},async chatRaw(messages,tools){requests.push([messages[0].content,messages.slice(1)]);return chatRaw?chatRaw(messages,tools):{content:'这是本轮回答',toolCalls:null}}},
     dailySummary:{capture(evt){captured.push(evt.message_id)},summaryGroups:()=>summaryGroups}})
   function event(message,extra={}){time=Math.max(time,Math.floor(Date.now()/1000)*1000);const evt={post_type:'message',message_type:'group',user_id:user,group_id:group,
@@ -468,6 +468,19 @@ try {
     const records=[{userId:String(user),name:'群友甲',time:1,text:'[合并聊天记录]'}]
     const stats=computeSummaryStats(records)
     assert.equal(stats.total,1);assert.equal(stats.chars,0);assert.equal(profileSummaryContent(records).ordinaryCount,0)
+  })
+  await test('拍一拍私聊与群聊都回应，戳一戳同样处理，拍别人不回应',async()=>{
+    const t=setup({config:{pokeEnabled:true,pokeCooldownMs:0},pokeReplier:()=>'被拍到了～'})
+    const base={notice_type:'notify',sub_type:'poke',user_id:user,target_id:selfId,time:Math.floor(Date.now()/1000)}
+    await t.bot.handleNotice(base)
+    assert.equal(t.sent.length,1,'私聊拍一拍要回应')
+    assert.match(String(t.sent[0]),/被拍到/)
+    await t.bot.handleNotice({...base,group_id:group})
+    assert.equal(t.sent.length,2,'群聊拍一拍要回应')
+    await t.bot.handleNotice({...base,target_id:user+9})
+    assert.equal(t.sent.length,2,'拍别人不回应')
+    await t.bot.handleNotice({...base,notice_type:'poke',sub_type:undefined})
+    assert.equal(t.sent.length,3,'兼容只带 notice_type=poke 的端')
   })
   console.log(`${passed} cases passed`)
 }finally {
