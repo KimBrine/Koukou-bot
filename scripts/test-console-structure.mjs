@@ -38,6 +38,7 @@ assert.match(groupRow,/被 @ \/ 引用时回复/)
 assert.equal(vm.runInContext('Object.keys(proactiveSettingsPatch({querySelector(){return null}})).length',context),0,'私聊保存不访问不存在的概率输入框，也不提交群聊专属设置')
 const patch=vm.runInContext(`proactiveSettingsPatch({querySelector(s){return s.includes('data-global')?{checked:false}:s.includes('proactiveEnabled')?{checked:false}:{value:'.25'}}})`,context)
 assert.equal(patch.proactiveEnabled,false);assert.equal(patch.proactiveRate,.25)
+assert.match(app,/const cur = stickerSettings \|\| \{\}/,'表情包保存用全局 stickerSettings，不引用只在页面作用域里的 settings')
 console.log('控制台结构及私聊设置检查通过：私聊不展示/提交群聊概率，群聊设置保留。')
 
 // QQ真实群名不能被会话占位名覆盖；满库时两个学习开关仍须禁用。

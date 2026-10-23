@@ -2125,7 +2125,7 @@ async function bind(){
     const ids=['stkAutoRate','stkMax','stkCooldown'];if(ids.some(id=>!document.getElementById(id).value.trim()||!document.getElementById(id).checkValidity())){toast('请检查概率、张数和间隔范围',true);return}
     stkRulesSave.disabled=true
     try{
-      const cur = settings || {}
+      const cur = stickerSettings || {}
       const want = {
         STICKERS_ENABLED: document.getElementById('stkEnabled').checked?'1':'0',
         STICKER_AUTO_RATE: probability.value,
