@@ -61,6 +61,13 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
     if (!existsSync(full)) throw new Error('脚本不存在：' + file)
     if (!isEnabled(id)) throw new Error('脚本已停用：' + id + '（管理员可在控制台「指令中心 → Python 脚本」开启）')
     const args = splitArgs(rawArgs).slice(0, 20)
+    // 脚本可在头部声明 # timeout-ms: N 覆盖默认 20 秒（jm 打包大文件需要更久）
+    let callTimeout = timeoutMs
+    try {
+      const head = readFileSync(full, 'utf8').slice(0, 4096)
+      const m = /^#\s*timeout-ms:\s*(\d{3,6})\s*$/mi.exec(head)
+      if (m) callTimeout = Math.max(1000, Math.min(600000, Number(m[1])))
+    } catch { /* 读不到就用默认 */ }
     const childEnv = {
       ...process.env, PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8',
       // 打包与文件上限下发给脚本（jm.py 等），控制台改完下一次调用即生效
@@ -70,7 +77,7 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
       KOUKOU_FILE_MAX_MB: String(config.fileUploadMaxMb || 1024),
     }
     return await new Promise((resolve) => {
-      execFileImpl(pythonPath, ['-X', 'utf8', full, ...args], { cwd: dir, timeout: timeoutMs, maxBuffer: 1024 * 1024, windowsHide: true, encoding: 'utf8', env: childEnv }, (err, stdout, stderr) => {
+      execFileImpl(pythonPath, ['-X', 'utf8', full, ...args], { cwd: dir, timeout: callTimeout, maxBuffer: 1024 * 1024, windowsHide: true, encoding: 'utf8', env: childEnv }, (err, stdout, stderr) => {
         resolve({
           ok: !err, code: err?.code ?? 0, killed: err?.killed === true,
           stdout: String(stdout || '').trim(), stderr: String(stderr || '').trim(),

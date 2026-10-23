@@ -693,11 +693,12 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
     async handleNotice(evt) {
       const isPoke = (evt?.notice_type === 'notify' && ['poke', 'shake'].includes(evt?.sub_type)) || evt?.notice_type === 'poke'
       if (!isPoke) return
-      logger.info(`[拍一拍] 收到：kind=${evt.notice_type}/${evt.sub_type || ''} user=${evt.user_id} target=${evt.target_id} group=${evt.group_id ?? '私聊'}`)
+      // 群里任何人拍任何人都推给机器人，只有拍夜璃才需要处理；其余只记 debug，避免刷屏
+      logger.debug(`[拍一拍] 收到：kind=${evt.notice_type}/${evt.sub_type || ''} user=${evt.user_id} target=${evt.target_id} group=${evt.group_id ?? '私聊'}`)
       if (commandCenter && !commandCenter.poke(evt,onebot.selfId)) return
       // 只回应"拍机器人自己"，且忽略机器人自己拍自己
       if (String(evt.target_id) !== String(onebot.selfId)) {
-        logger.info(`[拍一拍] 跳过：拍的不是我（target=${evt.target_id}，self=${onebot.selfId}）`)
+        logger.debug(`[拍一拍] 跳过：拍的不是我（target=${evt.target_id}，self=${onebot.selfId}）`)
         return
       }
       if (String(evt.user_id) === String(onebot.selfId)) return
