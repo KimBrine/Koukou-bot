@@ -380,7 +380,7 @@ export function loadConfig() {
     // 用户明确要图且本地库没有/说了“搜/找/网上”时，用必应图片搜索找一张发过去
     stickerWebSearch: String(env.STICKER_WEB_SEARCH ?? '1').trim() !== '0',
     // 联网搜表情包的来源与模型：bing 或 custom（URL 模板），可用单独模型改写搜索词/筛图
-    stickerSearchProvider: ['bing', 'custom'].includes(String(env.STICKER_SEARCH_PROVIDER ?? '').trim().toLowerCase())
+    stickerSearchProvider: ['bing', 'custom', 'giphy', 'tenor'].includes(String(env.STICKER_SEARCH_PROVIDER ?? '').trim().toLowerCase())
       ? String(env.STICKER_SEARCH_PROVIDER).trim().toLowerCase() : 'bing',
     stickerSearchUrl: String(env.STICKER_SEARCH_URL ?? '').trim(),
     stickerSearchKey: String(env.STICKER_SEARCH_KEY ?? '').trim(),
