@@ -42,7 +42,7 @@ const scripts = [
   'test-id-check-kick.mjs',
   'test-qq-login.mjs',
   'test-py-calc.mjs',
-  'test-archive.mjs',
+  'test-archive.mjs', 'test-jm-pack.mjs',
   'test-onebot-status.mjs',
   'test-sticker-segment.mjs',
   'test-image-search.mjs',

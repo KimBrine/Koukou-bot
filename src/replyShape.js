@@ -236,19 +236,15 @@ export function splitOneLine(text, maxLines, lineCap) {
 }
 
 /**
- * 把模型输出的整段文本整理成 1..plan.lines 行，并压进字数预算。
- * - 模型多给了行 → 合并进最后一行再统一裁剪（不丢信息）；
- * - 模型只给一行但内容超长、且本次计划有多行 → 按句子边界拆成多条；
- * - 单行超长 → 按句子边界裁到 perLineCap；
- * - 总长超预算 → 从最后一行往前收，保住开头最核心的表达。
+ * 预算和单行长度是生成目标，不是发送时的字符截刀。
+ * 只清理列表标记并整理分行；多余行合并，保留完整正文与原有标点。
  */
 export function shapeReply(raw, plan) {
   const maxLines = Math.max(1, plan?.lines ?? 1)
   const lineCap = Math.max(8, plan?.perLineCap ?? plan?.lineMaxChars ?? 40)
-  const budget = Math.max(4, plan?.budget ?? lineCap)
   const fallback = () => {
     const t = cleanLine(String(raw ?? '').replace(/\s*\n\s*/g, ' '))
-    return t ? [trimTo(t, Math.min(lineCap, budget))] : []
+    return t ? [t] : []
   }
 
   let lines = String(raw ?? '')
@@ -267,20 +263,8 @@ export function shapeReply(raw, plan) {
     const tail = lines.slice(maxLines - 1).join('')
     lines = [...head, tail]
   }
-  // 单行上限：装饰符号不占额度，所以把该行装饰占掉的字符数补回给 trimTo
-  lines = lines.map((s) => trimTo(s, lineCap + decorationChars(s))).filter((s) => s.length > 0)
-  if (lines.length === 0) return fallback()
+  return lines.filter(s => s && s.trim().length > 0)
 
-  // 总预算只用来约束“多行合并起来的体量”；单行不再按预算二次裁剪，
-  // 否则「最小预算 20」会把一句完整的话砍在半截（用户看到的 …）。
-  let total = contentLength(lines.join(''))
-  for (let i = lines.length - 1; lines.length > 1 && i >= 0 && total > budget; i--) {
-    const allow = Math.max(4, budget - (total - contentLength(lines[i])))
-    lines[i] = trimTo(lines[i], allow + decorationChars(lines[i]))
-    total = contentLength(lines.join(''))
-  }
-  const out = lines.filter((s) => s && s.trim().length > 0)
-  return out.length > 0 ? out : fallback()
 }
 
 /** 装饰类型与权重由实例明确提供；缺省时按当前人格自行选择。 */
@@ -316,17 +300,17 @@ export function ensureDecoration(lines, sourceText, { kind = 'persona', rand = M
 
 /**
  * 生成本条消息的"形态要求"，追加到系统提示词末尾。
- * 这是长度自适应的主要手段（代码层的裁剪只是兜底，避免模型越写越长）。
+ * 长度目标用于聊天节奏；发送层不硬裁正文。
  */
 export function shapeHint(plan) {
   const { targetLen, lines, budget, lineMaxChars } = plan
   const perLine = Math.max(4, Math.min(lineMaxChars, Math.round(budget / Math.max(1, lines))))
   if (lines <= 1) {
     const lo = Math.max(3, Math.round(budget * 0.6))
-    return `\n\n【本次回复的形态要求（系统自动生成，绝不要提及它）】对方这条消息大约 ${targetLen} 字。请你也用差不多的长度回：一行写完，${lo}~${budget} 字（不超过 ${lineMaxChars} 字），像微信/QQ 里随口接一句话那样自然。`
+    return `\n\n【本次回复的形态要求（系统自动生成，绝不要提及它）】对方这条消息大约 ${targetLen} 字。请你也用差不多的长度回：一行写完，${lo}~${budget} 字（不超过 ${lineMaxChars} 字），像微信/QQ 里随口接一句话那样自然。字数是目标，请完整表达，不要用省略号代替没说完的后文。`
   }
   // 关键是给出"目标区间"而不是"上限"：只说上限，模型会理解成"尽量短"，长度就跟不上对方
   const lo = Math.max(4, Math.round((budget / lines) * 0.7))
   const totalLo = lo * lines
-  return `\n\n【本次回复的形态要求（系统自动生成，绝不要提及它）】对方这次说的内容大约 ${targetLen} 字，你的回复长度要和他相当。请分成 ${lines} 行写（用换行分隔），每行 ${lo}~${perLine} 字、整体 ${totalLo}~${budget} 字——这是目标长度，请写满一些，不要只丢一句很短的话。系统会把你每一行单独作为一条消息发出去，所以每一行都要是能独立成立、读起来自然的一句话，不要编号、不要列表符号、不要把某一行写成上一行的续句。`
+  return `\n\n【本次回复的形态要求（系统自动生成，绝不要提及它）】对方这次说的内容大约 ${targetLen} 字，你的回复长度要和他相当。请分成 ${lines} 行写（用换行分隔），每行 ${lo}~${perLine} 字、整体 ${totalLo}~${budget} 字——这是目标长度，请写满一些，不要只丢一句很短的话。系统会把你每一行单独作为一条消息发出去，所以每一行都要是能独立成立、读起来自然的一句话，不要编号、不要列表符号、不要把某一行写成上一行的续句。字数是目标，请完整表达，不要用省略号代替没说完的后文。`
 }

@@ -74,6 +74,7 @@ export function createPythonPlugins({ config, logger, pythonPath = 'python', tim
       KOUKOU_ARCHIVE_FORMAT: String(config.archiveFormat || 'zip'),
       KOUKOU_ARCHIVE_PASSES: String(config.archivePasses || 1),
       KOUKOU_SEVEN_ZIP: String(config.sevenZipPath || ''),
+      KOUKOU_RAR: String(config.rarPath || ''),
       KOUKOU_FILE_MAX_MB: String(config.fileUploadMaxMb || 1024),
       KOUKOU_FILE_SPLIT_MB: String(config.fileSplitMb || 90),
     }

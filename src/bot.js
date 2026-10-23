@@ -27,7 +27,7 @@ import { expandForwardRecords } from './forwardRecords.js'
 import { createQuotedMessageResolver } from './quotedMessage.js'
 import { renderFacesToCq } from './qqFace.js'
 import { limitDecorationLines, hasDecoration, typingDelay, isQuietHour } from './humanize.js'
-import { measureText, backlogLength, planReply, shapeReply, shapeHint, decorationHint, ensureDecoration, pickDecorationKind } from './replyShape.js'
+import { measureText, contentLength, backlogLength, planReply, shapeReply, shapeHint, decorationHint, ensureDecoration, pickDecorationKind } from './replyShape.js'
 import {
   checkMembers,
   buildReminderMessages,
@@ -311,8 +311,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
     logger,
   }) : null)
   // 打包与文件发送共用：上限、格式、压缩次数都走 config（控制台可改）
-  const archive = createArchive({ sevenZipPath: config.sevenZipPath, logger })
-  const fileMaxBytes = Math.max(1, Number(config.fileUploadMaxMb) || 1024) * 1024 * 1024
+  const fileMaxBytesNow = () => Math.max(1, Number(config.fileUploadMaxMb) || 1024) * 1024 * 1024
   // 只缓存客观画面；模型或识图提示词改变后使用新描述，不缓存聊天口吻。
   const stickerSend = createStickerSendPolicy({config,stickers,rand})
   const failedRecently = new Map() // 私聊报错提示限频：key -> 上次提示时间戳
@@ -894,7 +893,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         if (sendFileMatch) {
           const filePath = path.resolve(sendFileMatch[3].trim().replace(/^"|"$/g, ''))
           if (!existsSync(filePath)) { await sendTo(evt, '文件不存在：' + filePath); return }
-          const limitMb = Math.round(fileMaxBytes / 1024 / 1024)
+          const limitMb = Math.round(fileMaxBytesNow() / 1024 / 1024)
           const sendUpload = async (forSend, name) => {
             if (targetType === '群') await onebot.api('upload_group_file', { group_id: targetId, file: forSend, name }, 600000)
             else await onebot.api('upload_private_file', { user_id: targetId, file: forSend, name }, 600000)
@@ -904,9 +903,9 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
             // 目录：按配置的格式与压缩次数打包后再发（和 jm 打包同一套参数）
             let packed = null
             try {
-              packed = archive.pack(filePath, { format: config.archiveFormat, passes: config.archivePasses })
+              packed = await createArchive({sevenZipPath:config.sevenZipPath,rarPath:config.rarPath}).pack(filePath, { format: config.archiveFormat, passes: config.archivePasses })
               const size = statSync(packed.file).size
-              if (size > fileMaxBytes) { await sendTo(evt, `打包后 ${(size / 1024 / 1024).toFixed(1)}MB，超过上限 ${limitMb}MB，未发送`); return }
+              if (size > fileMaxBytesNow()) { await sendTo(evt, `打包后 ${(size / 1024 / 1024).toFixed(1)}MB，超过上限 ${limitMb}MB，未发送`); return }
               await sendUpload(packed.file, packed.name)
               await sendTo(evt, `已发送打包文件：${packed.name}（${packed.format}，压缩 ${packed.passes} 次，${(size / 1024 / 1024).toFixed(1)}MB）`)
             } catch (err) { await sendTo(evt, '打包发送失败：' + archiveErrorHint(err)) }
@@ -914,7 +913,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
             return
           }
           if (!st.isFile()) { await sendTo(evt, '不是文件或目录：' + filePath); return }
-          if (st.size > fileMaxBytes) { await sendTo(evt, `文件超过 ${limitMb}MB，未发送`); return }
+          if (st.size > fileMaxBytesNow()) { await sendTo(evt, `文件超过 ${limitMb}MB，未发送`); return }
           try {
             await sendUpload(filePath, path.basename(filePath))
             await sendTo(evt, '已发送文件：' + path.basename(filePath))
@@ -1015,6 +1014,8 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         }
         if (!pythonPlugins) { await sendTo(evt, 'Python 插件未启用。'); return }
         const pyName = String(pyMatch[1] || '').trim()
+        const packFailureHelp = /^(?:打包|zip|压缩|文件)(?:\s|$)/.test(pyMatch[2] || '') && /(?:^|\s)(?:加密|encrypted)(?:\s|$)/i.test(pyMatch[2] || '')
+          ? '\n使用说明：此模式为ZIP→7z→RAR逐层去后缀套包，不设密码。收到分卷先下载齐并合并；外层补.rar解压，内层补.7z解压，再补.zip解压。超时或失败时请先核对已收文件，不要直接重复上传。' : ''
         if (!pyName || /^(列表|list|帮助|help|指令|命令)$/i.test(pyName)) {
           try { await sendTo(evt, pythonPlugins.helpText()) }
           catch (err) { await sendTo(evt, '读取脚本列表失败：' + err.message) }
@@ -1048,15 +1049,17 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
             return
           }
           if (r.ok && out.startsWith('@@FILE@@')) {
+            let fileInstructions = ''
             try {
               const spec = JSON.parse(out.slice('@@FILE@@'.length))
+              fileInstructions = String(spec.instructions || '').slice(0, 1200)
               // parts：大文件被脚本切成多卷时逐个发送；否则就是单个文件
               const files = (Array.isArray(spec.parts) && spec.parts.length
                 ? spec.parts.map((p) => ({ path: path.resolve(String(p.path || p)), name: String(p.name || path.basename(String(p.path || p))) }))
                 : [{ path: path.resolve(String(spec.path || '')), name: String(spec.name || path.basename(String(spec.path || ''))) }])
               for (const f of files) {
                 if (!existsSync(f.path) || !statSync(f.path).isFile()) throw new Error('文件不存在：' + f.path)
-                if (statSync(f.path).size > fileMaxBytes) throw new Error(`${f.name} 超过 ${Math.round(fileMaxBytes / 1024 / 1024)}MB（可在控制台调大「文件发送上限」）`)
+                if (statSync(f.path).size > fileMaxBytesNow()) throw new Error(`${f.name} 超过 ${Math.round(fileMaxBytesNow() / 1024 / 1024)}MB（可在控制台调大「文件发送上限」）`)
               }
               // 单位秒，兼容旧脚本仍在用的 recall_minutes
               const seconds = Math.min(7200, Math.max(0, Number(
@@ -1092,13 +1095,13 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
             } catch (err) {
               const hint = /Highway|upload|retcode=1200/i.test(String(err.message))
                 ? '\n提示：大文件上传容易在几百 MB 处失败，可在「模型与接口 → 文件与打包」把「大文件分卷大小」调小后重发。' : ''
-              await sendTo(evt, '文件发送失败：' + err.message + hint)
+              await sendTo(evt, '文件发送失败：' + err.message + (fileInstructions ? '\n部分分卷可能已送达，超时请先核对，勿直接重复上传。\n' + fileInstructions : '') + hint)
             }
             return
           }
           const body = out.slice(0, 1500)
-          await sendTo(evt, (r.ok ? '✅ ' : '⚠️ ') + body + (r.killed ? '\n（超时已终止）' : ''))
-        } catch (err) { await sendTo(evt, '脚本执行失败：' + err.message) }
+          await sendTo(evt, (r.ok ? '✅ ' : '⚠️ ') + body + (r.killed ? '\n（超时已终止）' : '') + (!r.ok ? packFailureHelp : ''))
+        } catch (err) { await sendTo(evt, '脚本执行失败：' + err.message + packFailureHelp) }
         return
       }
       const selfResult=!questionMode&&!muteFollowup&&selfActions.applies(evt,parsed,selfFollowup)?await selfActions.handle(evt,parsed,{followup:selfFollowup,quotedRaw,canReply:samePersona,replyPrompt:()=>{
@@ -1596,8 +1599,9 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
           if(!reply.trim()||claimsStickerDelivery(reply))reply='这次没有配图，先用文字陪你聊呀。'
           if(!canContinue())return
         }
-        // 形态裁剪：按本次计划的行数与字数预算整理（超长在句子/逗号边界截断，不会砍出半句话）
+        // 长度只指导生成，发送前不再按字符硬裁正文，避免半句话加省略号。
         let lines = questionMode ? [reply.trim()] : shapeReply(reply, plan)
+        if (!questionMode && (contentLength(reply) > plan.budget || lines.some(line => contentLength(line) > plan.perLineCap))) logger.info(`[回复形态] 正文${contentLength(reply)}字，目标预算${plan.budget}字；保留完整表达，不按字数截断`)
         if (lines.length === 0) lines = [shortenReply(reply, config.replyLineMaxChars)]
         // 这次要卖萌却因裁剪丢了装饰 → 按本次种类补一个（模型自己带了就不动，不做强制配对）
         if (allowDecoration) lines = ensureDecoration(lines, reply, { kind: decoKind, rand, preset: decorationPreset })
