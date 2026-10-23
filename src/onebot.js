@@ -96,6 +96,9 @@ export class OneBotClient extends EventEmitter {
         // 首次连上之前最多安静等 60 秒：LLBot 冷启动要十几秒，这段失败是预期内的
         if (!this.everConnected && this.connectFailures <= 60) {
           if (this.connectFailures === 1) this.logger.info('等待 OneBot 就绪（LLBot 还在启动，自动重试）')
+        } else if (this.connectFailures <= 2) {
+          // LLBot 偶发的协议层重置：1~2 次内恢复只记 info，不算警告
+          this.logger.info(`OneBot 连接中断，正在重连（第 ${this.connectFailures} 次）：${err.message}`)
         } else {
           this.logger.warn(`OneBot 连接失败：${err.message}（${Math.round(this.reconnectDelay / 1000)}s 后重连）`)
         }
