@@ -28,7 +28,7 @@ const DEFINITIONS=[
   {id:'owner-mute',name:'群管理自然语言禁言',trigger:'@机器人 禁言/解禁 指定成员',description:'所选群的群主，或同时拥有本群管理权限的已配置机器人管理员，可指定成员、引用发言人或明确上下文对象，支持批量与数学时长；默认一分钟，超过30天不执行',ai:'required',management:true},
   {id:'self-mute',name:'自助自然语言禁言',trigger:'@机器人 禁言我 十分钟',description:'仅所选群，由本人主动申请禁言自己；AI 理解当前请求，默认一分钟，超过30天不执行，不能替别人申请',ai:'required',management:true},
   {id:'python',name:'运行 Python 脚本',trigger:'/py 脚本名 [参数]',description:'运行 plugins/python 下的白名单脚本，参数按命令行传入；直接发 /py 或 /py 列表 可看已装脚本、作用和用法。默认仅管理员。脚本以机器人权限运行，请只导入可信脚本',ai:'none',adminDefault:true,pattern:PY_CMD_RE},
-  {id:'send-file',name:'发送文件',trigger:'/发文件 群/私聊 号码 服务器文件路径',description:'把服务器上存在的文件上传到指定群或私聊，单文件上限 200MB；路径按机器人所在机器解析。默认仅管理员，可在指令中心放开',ai:'none',adminDefault:true,pattern:SEND_FILE_RE},
+  {id:'send-file',name:'发送文件',trigger:'/发文件 群/私聊 号码 服务器文件路径',description:'把服务器上存在的文件上传到指定群或私聊，单文件上限 1GB（1024MiB）；路径按机器人所在机器解析。默认仅管理员，可在指令中心放开',ai:'none',adminDefault:true,pattern:SEND_FILE_RE},
   {id:'send-link',name:'发送链接卡片',trigger:'/发链接 群/私聊 号码 网址 [标题]',description:'把网址以链接卡片发到指定群或私聊，失败自动回退成文字链接。默认仅管理员，可在指令中心放开',ai:'none',adminDefault:true,pattern:SEND_LINK_RE},
   {id:'whole-mute',name:'全员禁言开关',trigger:'@机器人 开启/关闭全员禁言',description:'所选群的群主，或同时拥有本群管理权限的已配置机器人管理员，可要求切换 QQ 原生全员禁言，不设置发言频率；暂不支持原生时段计划。此处开关只控制指令能力，不改变 QQ 当前禁言状态',ai:'required',management:true},
 ]

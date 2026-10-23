@@ -839,10 +839,10 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
           const filePath = path.resolve(sendFileMatch[3].trim().replace(/^"|"$/g, ''))
           if (!existsSync(filePath) || !statSync(filePath).isFile()) { await sendTo(evt, '文件不存在：' + filePath); return }
           const st = statSync(filePath)
-          if (st.size > 200 * 1024 * 1024) { await sendTo(evt, '文件超过 200MB，未发送'); return }
+          if (st.size > 1024 * 1024 * 1024) { await sendTo(evt, '文件超过 1GB，未发送'); return }
           try {
-            if (targetType === '群') await onebot.api('upload_group_file', { group_id: targetId, file: filePath, name: path.basename(filePath) })
-            else await onebot.api('upload_private_file', { user_id: targetId, file: filePath, name: path.basename(filePath) })
+            if (targetType === '群') await onebot.api('upload_group_file', { group_id: targetId, file: filePath, name: path.basename(filePath) }, 600000)
+            else await onebot.api('upload_private_file', { user_id: targetId, file: filePath, name: path.basename(filePath) }, 600000)
             await sendTo(evt, '已发送文件：' + path.basename(filePath))
           } catch (err) { await sendTo(evt, '文件发送失败：' + err.message) }
           return
@@ -904,7 +904,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
               const spec = JSON.parse(out.slice('@@FILE@@'.length))
               const filePath = path.resolve(String(spec.path || ''))
               if (!existsSync(filePath) || !statSync(filePath).isFile()) throw new Error('文件不存在：' + filePath)
-              if (statSync(filePath).size > 200 * 1024 * 1024) throw new Error('文件超过 200MB')
+              if (statSync(filePath).size > 1024 * 1024 * 1024) throw new Error('文件超过 1GB')
               const name = String(spec.name || path.basename(filePath))
               // 单位秒，兼容旧脚本仍在用的 recall_minutes
               const seconds = Math.min(7200, Math.max(0, Number(
@@ -914,13 +914,13 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
               try {
                 const segment = [{ type: 'file', data: { file: 'file:///' + filePath.replace(/\\/g, '/'), name } }]
                 receipt = evt.message_type === 'private'
-                  ? await onebot.sendPrivate(evt.user_id, segment)
-                  : await onebot.sendGroup(evt.group_id, segment)
+                  ? await onebot.sendPrivate(evt.user_id, segment, 600000)
+                  : await onebot.sendGroup(evt.group_id, segment, 600000)
               } catch (segErr) {
                 if (!/不支持|unsupported|not implemented|unknown.*(?:segment|type)|file.*segment/i.test(String(segErr.message))) throw segErr
                 // 文件段不被支持时退回群文件/私聊文件上传（这种形式没有消息号，无法自动撤回）
-                if (evt.message_type === 'private') await onebot.api('upload_private_file', { user_id: evt.user_id, file: filePath, name })
-                else await onebot.api('upload_group_file', { group_id: evt.group_id, file: filePath, name })
+                if (evt.message_type === 'private') await onebot.api('upload_private_file', { user_id: evt.user_id, file: filePath, name }, 600000)
+                else await onebot.api('upload_group_file', { group_id: evt.group_id, file: filePath, name }, 600000)
               }
               const mid = receipt && receipt.message_id
               if (mid && seconds > 0) {
