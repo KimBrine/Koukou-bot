@@ -581,6 +581,7 @@ function configForm(keys, hint){
     else if (i.key === 'VISION_PROVIDER' || i.key === 'SUMMARY_PROVIDER') input = `<select data-cfg="${i.key}"><option value="deepseek" ${v==='deepseek'?'selected':''}>DeepSeek</option><option value="dashscope" ${v==='dashscope'?'selected':''}>DashScope（通义千问）</option></select>`
     else if (i.key === 'DEEPSEEK_REASONING_EFFORT') input = `<select data-cfg="${i.key}">${[['','沿用服务端默认'],['none','关闭思考'],['low','Low · 较少思考'],['high','High · 充分思考'],['max','Max · 最大思考投入']].map(([value,label])=>`<option value="${value}" ${v===value?'selected':''}>${label}</option>`).join('')}</select>`
     else if (i.key === 'SUMMARY_SEND_MODE') input = `<select data-cfg="${i.key}"><option value="forward" ${v==='forward'?'selected':''}>合并转发卡片</option><option value="split" ${v==='split'?'selected':''}>按空行逐段发送</option></select>`
+    else if (i.key === 'ARCHIVE_FORMAT') input = `<select data-cfg="${i.key}"><option value="zip" ${v==='zip'?'selected':''}>zip（兼容性最好）</option><option value="7z" ${v==='7z'?'selected':''}>7z（需要 7-Zip）</option></select>`
     else if (i.key === 'LOG_LEVEL') input = `<select data-cfg="${i.key}"><option value="debug" ${v==='debug'?'selected':''}>详细调试</option><option value="info" ${v==='info'?'selected':''}>正常信息</option><option value="warn" ${v==='warn'?'selected':''}>只看警告与错误</option><option value="error" ${v==='error'?'selected':''}>只看错误</option></select>`
     else input = `<input type="${i.type==='number'?'number':'text'}" data-cfg="${i.key}" value="${esc(v)}">`
     if (inactive) input = `<fieldset disabled style="border:0;padding:0;margin:0;opacity:.5">${input}</fieldset>`
@@ -613,7 +614,9 @@ function webSearchCard(){
 function pageApi(){
   return modelPickerCard() + visionCard() + webSearchCard() + `<h1>模型与接口</h1><div class="sub">对话模型、思考强度改完立刻生效；下方视觉模型与其它项按标注生效。</div>
   <div class="card"><strong>当前生效的识图模型：</strong>${esc(state?.bot?.visionModel || '未启用')}<div class="mut" style="margin-top:5px">图片识别与群聊报告分别配置；下方的 DashScope 模型只有切换识图服务商后才会用于读图。</div></div>
-  <div class="card">${configForm(['TEMPERATURE','MAX_TOKENS','DASHSCOPE_API_KEY','BAIDU_QIANFAN_API_KEY','LOG_LEVEL'],'已设置的密钥不会显示；留空保持原值。')}</div>`
+  <div class="card">${configForm(['TEMPERATURE','MAX_TOKENS','DASHSCOPE_API_KEY','BAIDU_QIANFAN_API_KEY','LOG_LEVEL'],'已设置的密钥不会显示；留空保持原值。')}</div>
+  <h2>文件与打包</h2>
+  <div class="card">${configForm(['FILE_UPLOAD_MAX_MB','ARCHIVE_FORMAT','ARCHIVE_PASSES','SEVEN_ZIP_PATH'],'/发文件（含目录）与 Python 脚本结果共用这些设置；格式和压缩次数也用于 jm 打包。改完下一次发送/打包就生效。')}</div>`
 }
 function pageReport(){
   return `<h1>群聊报告</h1><div class="sub">每日自动生成「群聊日常分析报告」，也可以在这里随时手动生成</div>
