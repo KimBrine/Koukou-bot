@@ -718,7 +718,7 @@ logger.info(`群聊报告：${config.summarySendMode === 'forward' ? '合并转�
 logger.info(`总结调度：最多 ${config.summaryConcurrency} 群并行准备｜${config.summaryUnrestricted?`宽裕模式：不设本地输入取样、输出token及总准备时限；单次模型等待${config.summaryRequestTimeoutSeconds}秒`:`单群准备时限 ${config.summaryTaskTimeoutMinutes} 分钟`}｜报告发送串行，群间至少间隔 5 秒`)
 logger.info(`总结转发资料：先筛选群内关联再展开嵌套记录，仅作低权重参考｜读图 ${summaryVisionLLM ? `${summaryVisionLLM.model}（通义千问）` : '未启用，缺少 DashScope Key'}｜每份最多 ${config.summaryReferenceMaxImages} 张参考图片`)
 logger.info(config.replyLengthMatch
-  ? `回复长度自适应：跟着对方长度走｜最多 ${config.replyMaxLines} 行、单行 ≤${config.replyLineMaxChars} 字｜行间补句间隔 ${config.lineGapMinMs}-${config.lineGapMaxMs}ms｜多行时逐行分条发送`
+  ? `回复长度自适应：跟着对方长度走｜最多 ${config.replyMaxLines} 行、单行目标 ${config.replyLineMaxChars} 字（不硬裁正文）｜行间补句间隔 ${config.lineGapMinMs}-${config.lineGapMaxMs}ms｜多行时逐行分条发送`
   : '回复长度自适应已关闭（固定单行）')
 logger.info(`OneBot 地址：${wsDisplay}`)
 logger.info(config.adminEnabled

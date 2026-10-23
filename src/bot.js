@@ -27,7 +27,7 @@ import { expandForwardRecords } from './forwardRecords.js'
 import { createQuotedMessageResolver } from './quotedMessage.js'
 import { renderFacesToCq } from './qqFace.js'
 import { limitDecorationLines, hasDecoration, typingDelay, isQuietHour } from './humanize.js'
-import { measureText, backlogLength, planReply, shapeReply, shapeHint, decorationHint, ensureDecoration, pickDecorationKind } from './replyShape.js'
+import { measureText, contentLength, backlogLength, planReply, shapeReply, shapeHint, decorationHint, ensureDecoration, pickDecorationKind } from './replyShape.js'
 import {
   checkMembers,
   buildReminderMessages,
@@ -1599,8 +1599,9 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
           if(!reply.trim()||claimsStickerDelivery(reply))reply='这次没有配图，先用文字陪你聊呀。'
           if(!canContinue())return
         }
-        // 形态裁剪：按本次计划的行数与字数预算整理（超长在句子/逗号边界截断，不会砍出半句话）
+        // 长度只指导生成，发送前不再按字符硬裁正文，避免半句话加省略号。
         let lines = questionMode ? [reply.trim()] : shapeReply(reply, plan)
+        if (!questionMode && (contentLength(reply) > plan.budget || lines.some(line => contentLength(line) > plan.perLineCap))) logger.info(`[回复形态] 正文${contentLength(reply)}字，目标预算${plan.budget}字；保留完整表达，不按字数截断`)
         if (lines.length === 0) lines = [shortenReply(reply, config.replyLineMaxChars)]
         // 这次要卖萌却因裁剪丢了装饰 → 按本次种类补一个（模型自己带了就不动，不做强制配对）
         if (allowDecoration) lines = ensureDecoration(lines, reply, { kind: decoKind, rand, preset: decorationPreset })

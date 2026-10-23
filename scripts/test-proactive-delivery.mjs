@@ -96,5 +96,13 @@ try{
   await t.bot.handleMessage(at);assert.equal(t.calls.length,2);assert.deepEqual(t.sent,['我在听呢。'])
   done('刚才的话我听到了。');await pending;assert.equal(t.sent.length,2);assert.equal(t.counts.length,2)
  })
+ await test('短消息预算只引导生成，发送和记忆保留完整尾句',async()=>{
+  const t=fixture({replyLineMaxChars:12,replyMinBudget:0})
+  const full='前面这部分说明原因，后面这部分也需要把完整意思表达清楚'
+  t.setChat(async()=>full)
+  await t.bot.handleMessage(t.event('为什么'))
+  assert.equal(t.sent.join(''),full)
+  assert.ok(t.memory.get('g'+G).some(m=>m.role==='assistant'&&m.content===full))
+ })
  console.log(`${passed} delivery cases passed; no QQ or model API calls.`)
 }finally{for(const m of stores)if(m.timer)clearTimeout(m.timer);assert.equal(path.dirname(root),os.tmpdir());rmSync(root,{recursive:true,force:true})}
