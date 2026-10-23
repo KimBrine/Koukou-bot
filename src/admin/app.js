@@ -1130,6 +1130,8 @@ function pageStickers(){
     '<div class="note">表情包必须跟随已成功发送的普通聊天文字回复。用户明确要求发表情包时直接尝试发送，不抽概率；普通聊天的自动配图（含模型主动选图）遵守下方概率；名称或标签按匹配程度加权抽图，同名同分机会相等；没有匹配候选时不随机补图。仍遵守开关、范围、黑名单及冷却；群总结、指令回执和 /Q 解题不自动配图。</div>',
     '<label style="display:block;margin:12px 0">文字回复配图概率 <input id="stkAutoRange" type="range" min="0" max="100" value="' + (settings.autoRate ?? 35) + '"> <input id="stkAutoRate" type="number" min="0" max="100" value="' + (settings.autoRate ?? 35) + '" style="width:90px"> %</label>',
     '<div class="mut">自动配图默认35%；0关闭自动配图，100每次尝试。明确索图不受此概率限制；彻底禁用请关闭总开关。按整轮文字回复判断一次，不是每一行。</div>',
+    '<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:12px 0"><input type="checkbox" id="stkWebSearch"' + (settings.webSearch !== false ? ' checked' : '') + '> 允许联网找表情包</label>',
+    '<div class="mut">开启后，用户说「给我找张表情包 / 搜一张开心的图」会去必应图片搜一张发过去（本地库优先，不需要额外 Key）。</div>',
     '<label style="display:block;margin:12px 0">每次最多 <input id="stkMax" type="number" min="1" max="3" value="' + (settings.maxPerReply || 1) + '" style="width:90px"> 张</label>',
     '<label style="display:block;margin:12px 0">选图方式 <select id="stkPickMode">' + [['context','模型按语境选图，情绪接近即可'],['model','模型候选按匹配程度加权选图'],['random','随机选图']].map(x=>'<option value="'+x[0]+'"'+((settings.pickMode || 'context')===x[0]?' selected':'')+'>'+x[1]+'</option>').join('') + '</select></label>',
     '<label style="display:block;margin:12px 0">发送范围 <select id="stkSendScope">' + [['all','所有已允许回复的会话'],['whitelist','仅白名单群'],['selected','仅指定群'],['private','仅私聊']].map(x=>'<option value="'+x[0]+'"'+((settings.scope || 'all')===x[0]?' selected':'')+'>'+x[1]+'</option>').join('') + '</select></label>',
@@ -1368,7 +1370,7 @@ async function bind(){
       const q = learnSearch.value.trim().toLowerCase()
       document.querySelectorAll('#stkLearnGroupList label').forEach(function(l){ l.style.display = l.textContent.toLowerCase().includes(q) ? '' : 'none' })
     }
-    document.querySelectorAll('#stkEnabled,#stkAutoRange,#stkAutoRate,#stkMax,#stkPickMode,#stkSendScope,#stkCooldown,#stkLearnToggle,#stkLearnPrivate,#stkLearnPerHour,[data-stk-send-group],[data-stk-learn-group]').forEach(el=>el.addEventListener('input',()=>{stickerControlsDirty=true}))
+    document.querySelectorAll('#stkEnabled,#stkAutoRange,#stkAutoRate,#stkMax,#stkPickMode,#stkSendScope,#stkCooldown,#stkWebSearch,#stkLearnToggle,#stkLearnPrivate,#stkLearnPerHour,[data-stk-send-group],[data-stk-learn-group]').forEach(el=>el.addEventListener('input',()=>{stickerControlsDirty=true}))
   }
   const cleanGroups = document.getElementById('cleanGroups')
   if (cleanGroups) cleanGroups.onclick = async function(){
@@ -2114,7 +2116,7 @@ async function bind(){
     const ids=['stkAutoRate','stkMax','stkCooldown'];if(ids.some(id=>!document.getElementById(id).value.trim()||!document.getElementById(id).checkValidity())){toast('请检查概率、张数和间隔范围',true);return}
     stkRulesSave.disabled=true
     try{
-      await api('/api/action/set-config-batch',{patch:{STICKERS_ENABLED:document.getElementById('stkEnabled').checked?'1':'0',STICKER_AUTO_RATE:probability.value,STICKER_MAX_PER_REPLY:document.getElementById('stkMax').value,STICKER_PICK_MODE:document.getElementById('stkPickMode').value,STICKER_SEND_SCOPE:sendScope.value,STICKER_SEND_GROUPS:Array.from(document.querySelectorAll('[data-stk-send-group]:checked')).map(x=>x.dataset.stkSendGroup).join(','),STICKER_COOLDOWN_SECONDS:document.getElementById('stkCooldown').value}})
+      await api('/api/action/set-config-batch',{patch:{STICKERS_ENABLED:document.getElementById('stkEnabled').checked?'1':'0',STICKER_AUTO_RATE:probability.value,STICKER_MAX_PER_REPLY:document.getElementById('stkMax').value,STICKER_PICK_MODE:document.getElementById('stkPickMode').value,STICKER_SEND_SCOPE:sendScope.value,STICKER_SEND_GROUPS:Array.from(document.querySelectorAll('[data-stk-send-group]:checked')).map(x=>x.dataset.stkSendGroup).join(','),STICKER_COOLDOWN_SECONDS:document.getElementById('stkCooldown').value,STICKER_WEB_SEARCH:document.getElementById('stkWebSearch').checked?'1':'0'}})
       await load();toast('发送规则已保存，立即生效')
     }catch(e){toast('保存失败：'+e.message,true)}finally{stkRulesSave.disabled=false}
   }
