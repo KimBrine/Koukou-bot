@@ -1309,8 +1309,8 @@ export function createAdminServer({ config, logger, onebot, memory, chatSettings
       if(!receipt?.message_id&&!receipt?.data?.message_id)throw new Error('文字发送未确认，未继续发送图片')
       if (selected && !selected.current()) throw new Error('人格已变化，未继续发送旧人格图片')
       if (!library.dataUrlOf(item)) throw new Error('图片已删除或拉黑，未继续发送')
-      // subType 给 LLBot、sub_type 给 NapCat；只写一个会被其中一个协议端当成普通图片
-      await onebot.sendGroup(groupId, [{ type: 'image', data: { file, sub_type: 1, subType: 1 } }])
+      // 按协议端补字段：LLBot 用 subType、NapCat 用原来的 sub_type
+      await onebot.sendGroup(groupId, [await onebot.imageSegment(file, { sticker: true })])
       logger?.info?.(`[控制台] 测试发送表情包「${item.name}」到群 ${groupId}`)
       return { ok: true, name: item.name }
     },

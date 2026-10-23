@@ -78,6 +78,8 @@ export class OneBotClient extends EventEmitter {
     // 离线去抖：短于 offlineGraceMs 的断开不判定离线（LLBot 重连一般 5 秒左右）
     this.offlineSince = 0
     this.offlineGraceMs = Math.max(0, Number(offlineGraceMs) || 0)
+    // 协议端能力探测（表情包字段名 LLBot 用 subType、NapCat 用 sub_type）
+    this.backendCache = null
     this.messageTimeline = new MessageTimeline()
   }
 
@@ -227,6 +229,34 @@ export class OneBotClient extends EventEmitter {
       ws.addEventListener('close', onClose)
       ws.addEventListener('error', onError)
     })
+  }
+
+  /**
+   * 协议端能力探测：LLBot 的图片段读 subType（驼峰），NapCat 读 sub_type（下划线）。
+   * 只探测一次并缓存；探测失败时两个字段都带，避免某一端把表情当普通图片。
+   */
+  async backendInfo({ force = false } = {}) {
+    if (this.backendCache && !force) return this.backendCache
+    let appName = ''
+    try {
+      const info = await this.api('get_version_info', {}, 3000)
+      appName = String(info?.app_name || info?.appName || info?.data?.app_name || '')
+    } catch { /* 老版本或不支持时不阻断发送 */ }
+    const lower = appName.toLowerCase()
+    const style = /napcat/.test(lower) ? 'snake' : /llbot|luckylillia|llonebot/.test(lower) ? 'camel' : ''
+    this.backendCache = { appName, style }
+    return this.backendCache
+  }
+
+  /** 图片段：sticker=true 时按协议端补字段；NapCat 保持原来的 sub_type */
+  async imageSegment(file, { sticker = false } = {}) {
+    const data = { file }
+    if (sticker) {
+      const { style } = await this.backendInfo()
+      if (style !== 'snake') data.subType = 1
+      if (style !== 'camel') data.sub_type = 1
+    }
+    return { type: 'image', data }
   }
 
   /** 连接状态（控制台总览用） */

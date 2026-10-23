@@ -1495,9 +1495,8 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
             try {
               if (!canContinue() || !stickerSend.allowed(evt) || (stickerRequested&&!stickerRequestAllowed())) break
               stickerSend.begin(evt)
-              // LLBot 读的是 subType（驼峰），NapCat 读 sub_type（下划线）；两个都带上才能
-              // 不管下层是哪个协议端都按"表情"发，而不是普通图片。
-              const segments = [{ type: 'image', data: { file, sub_type: 1, subType: 1 } }]
+              // 按协议端补字段：LLBot 用 subType、NapCat 用原来的 sub_type（见 onebot.imageSegment）
+              const segments = [await onebot.imageSegment(file, { sticker: true })]
               if (evt.message_type === 'private') await onebot.sendPrivate(evt.user_id, segments)
               else await onebot.sendGroup(evt.group_id, segments)
               logger.info(`[表情包] 发送「${item.name}」到 ${evt.message_type === 'private' ? '私聊' : '群 ' + evt.group_id}`)
