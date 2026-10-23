@@ -1131,7 +1131,8 @@ function pageStickers(){
     '<label style="display:block;margin:12px 0">文字回复配图概率 <input id="stkAutoRange" type="range" min="0" max="100" value="' + (settings.autoRate ?? 35) + '"> <input id="stkAutoRate" type="number" min="0" max="100" value="' + (settings.autoRate ?? 35) + '" style="width:90px"> %</label>',
     '<div class="mut">自动配图默认35%；0关闭自动配图，100每次尝试。明确索图不受此概率限制；彻底禁用请关闭总开关。按整轮文字回复判断一次，不是每一行。</div>',
     '<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:12px 0"><input type="checkbox" id="stkWebSearch"' + (settings.webSearch !== false ? ' checked' : '') + '> 允许联网找表情包</label>',
-    '<div class="mut">开启后，用户说「给我找张表情包 / 搜一张开心的图」会去必应图片搜一张发过去（本地库优先，不需要额外 Key）。</div>',
+    '<div class="mut">开启后，用户说「给我找张表情包 / 搜一张开心的图」会去搜一张发过去（本地库优先）。</div>',
+    '<details class="learn-box" id="stkWebBox"><summary><b>联网搜索表情包（高级）</b> <span class="pill">' + ({bing:'必应',giphy:'Giphy',tenor:'Tenor',custom:'自定义'}[settings.searchProvider] || '必应') + '</span></summary><div style="padding:6px 0">',
     '<label style="display:block;margin:12px 0">搜图来源 <select id="stkSearchProvider">' + [['bing','必应图片（免 Key）'],['giphy','Giphy（表情包/GIF，需 Key）'],['tenor','Tenor（需 Key）'],['custom','自定义接口']].map(x=>'<option value="'+x[0]+'"'+((settings.searchProvider||'bing')===x[0]?' selected':'')+'>'+x[1]+'</option>').join('') + '</select></label>',
     '<label style="display:block;margin:12px 0">自定义搜图 URL <input id="stkSearchUrl" value="' + esc(settings.searchUrl || '') + '" placeholder="https://api.example.com/search?q={query}&limit={count}&key={key}" style="width:100%;max-width:560px"><div class="mut">仅「自定义接口」用；支持 {query} {key} {count}，返回 JSON，程序会自动找图片直链。</div></label>',
     '<label style="display:block;margin:12px 0">搜图 API Key <input id="stkSearchKey" type="password" placeholder="' + (settings.searchKeyConfigured ? '已设置，留空不修改' : '未设置') + '" autocomplete="new-password" style="width:280px"><div class="mut">Giphy / Tenor / 自定义接口用；保存后不会回显。</div></label>',
@@ -1139,6 +1140,7 @@ function pageStickers(){
     '<label style="display:block;margin:12px 0">搜图代理 <input id="stkSearchProxy" value="' + esc(settings.searchProxy || '') + '" placeholder="http://127.0.0.1:7890" style="width:260px"><div class="mut">只影响搜图请求（Giphy/Tenor 国内需代理）；留空直连，模型请求不走这里。</div></label>',
     '<label style="display:flex;align-items:center;gap:8px;font-size:14px;margin:12px 0"><input type="checkbox" id="stkSearchFilter"' + (settings.searchFilter !== false ? ' checked' : '') + '> 用识图模型筛掉不像表情包的图（logo/截图/真人照/广告）</label>',
     '<div class="mut">筛图会让每次找图多 1~3 次识图调用；关掉则取第一张合格图片。</div>',
+    '</div></details>',
     '<label style="display:block;margin:12px 0">每次最多 <input id="stkMax" type="number" min="1" max="3" value="' + (settings.maxPerReply || 1) + '" style="width:90px"> 张</label>',
     '<label style="display:block;margin:12px 0">选图方式 <select id="stkPickMode">' + [['context','模型按语境选图，情绪接近即可'],['model','模型候选按匹配程度加权选图'],['random','随机选图']].map(x=>'<option value="'+x[0]+'"'+((settings.pickMode || 'context')===x[0]?' selected':'')+'>'+x[1]+'</option>').join('') + '</select></label>',
     '<label style="display:block;margin:12px 0">发送范围 <select id="stkSendScope">' + [['all','所有已允许回复的会话'],['whitelist','仅白名单群'],['selected','仅指定群'],['private','仅私聊']].map(x=>'<option value="'+x[0]+'"'+((settings.scope || 'all')===x[0]?' selected':'')+'>'+x[1]+'</option>').join('') + '</select></label>',
@@ -2123,11 +2125,46 @@ async function bind(){
     const ids=['stkAutoRate','stkMax','stkCooldown'];if(ids.some(id=>!document.getElementById(id).value.trim()||!document.getElementById(id).checkValidity())){toast('请检查概率、张数和间隔范围',true);return}
     stkRulesSave.disabled=true
     try{
-      const extraPatch={STICKER_WEB_SEARCH:document.getElementById('stkWebSearch').checked?'1':'0',STICKER_SEARCH_PROVIDER:document.getElementById('stkSearchProvider').value,STICKER_SEARCH_URL:document.getElementById('stkSearchUrl').value.trim(),STICKER_SEARCH_MODEL:document.getElementById('stkSearchModel').value.trim(),STICKER_SEARCH_FILTER:document.getElementById('stkSearchFilter').checked?'1':'0',STICKER_SEARCH_PROXY:document.getElementById('stkSearchProxy').value.trim()}
-      const keyValue=document.getElementById('stkSearchKey').value.trim()
-      if(keyValue)extraPatch.STICKER_SEARCH_KEY=keyValue
-      await api('/api/action/set-config-batch',{patch:{STICKERS_ENABLED:document.getElementById('stkEnabled').checked?'1':'0',STICKER_AUTO_RATE:probability.value,STICKER_MAX_PER_REPLY:document.getElementById('stkMax').value,STICKER_PICK_MODE:document.getElementById('stkPickMode').value,STICKER_SEND_SCOPE:sendScope.value,STICKER_SEND_GROUPS:Array.from(document.querySelectorAll('[data-stk-send-group]:checked')).map(x=>x.dataset.stkSendGroup).join(','),STICKER_COOLDOWN_SECONDS:document.getElementById('stkCooldown').value,...extraPatch}})
-      await load();toast('发送规则已保存，立即生效')
+      const cur = settings || {}
+      const want = {
+        STICKERS_ENABLED: document.getElementById('stkEnabled').checked?'1':'0',
+        STICKER_AUTO_RATE: probability.value,
+        STICKER_MAX_PER_REPLY: document.getElementById('stkMax').value,
+        STICKER_PICK_MODE: document.getElementById('stkPickMode').value,
+        STICKER_SEND_SCOPE: sendScope.value,
+        STICKER_SEND_GROUPS: Array.from(document.querySelectorAll('[data-stk-send-group]:checked')).map(x=>x.dataset.stkSendGroup).join(','),
+        STICKER_COOLDOWN_SECONDS: document.getElementById('stkCooldown').value,
+        STICKER_WEB_SEARCH: document.getElementById('stkWebSearch').checked?'1':'0',
+        STICKER_SEARCH_PROVIDER: document.getElementById('stkSearchProvider').value,
+        STICKER_SEARCH_URL: document.getElementById('stkSearchUrl').value.trim(),
+        STICKER_SEARCH_MODEL: document.getElementById('stkSearchModel').value.trim(),
+        STICKER_SEARCH_FILTER: document.getElementById('stkSearchFilter').checked?'1':'0',
+        STICKER_SEARCH_PROXY: document.getElementById('stkSearchProxy').value.trim(),
+      }
+      const old = {
+        STICKERS_ENABLED: cur.enabled===false?'0':'1',
+        STICKER_AUTO_RATE: String(cur.autoRate ?? 35),
+        STICKER_MAX_PER_REPLY: String(cur.maxPerReply || 1),
+        STICKER_PICK_MODE: cur.pickMode || 'context',
+        STICKER_SEND_SCOPE: cur.scope || 'all',
+        STICKER_SEND_GROUPS: (cur.groups || []).map(String).join(','),
+        STICKER_COOLDOWN_SECONDS: String(cur.cooldownSeconds || 0),
+        STICKER_WEB_SEARCH: cur.webSearch===false?'0':'1',
+        STICKER_SEARCH_PROVIDER: cur.searchProvider || 'bing',
+        STICKER_SEARCH_URL: cur.searchUrl || '',
+        STICKER_SEARCH_MODEL: cur.searchModel || '',
+        STICKER_SEARCH_FILTER: cur.searchFilter===false?'0':'1',
+        STICKER_SEARCH_PROXY: cur.searchProxy || '',
+      }
+      // 只提交真正改动的项，控制台日志里就不会刷一屏没动过的配置
+      const patch = {}
+      for (const [k,v] of Object.entries(want)) if (String(v) !== String(old[k])) patch[k] = v
+      const keyValue = document.getElementById('stkSearchKey').value.trim()
+      if (keyValue) patch.STICKER_SEARCH_KEY = keyValue
+      const changed = Object.keys(patch)
+      if (!changed.length) { toast('没有改动'); return }
+      await api('/api/action/set-config-batch',{patch})
+      await load();toast('已保存 ' + changed.length + ' 项，立即生效')
     }catch(e){toast('保存失败：'+e.message,true)}finally{stkRulesSave.disabled=false}
   }
   const stkLearnSave = document.getElementById('stkLearnSave')
