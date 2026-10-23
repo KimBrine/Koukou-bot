@@ -326,10 +326,11 @@ const stickerFilterLLM = config.deepseekApiKey ? new DeepSeekClient({
   maxConcurrency: 1, logger, label: '表情包初筛(DeepSeek Flash)',
 }) : null
 // 联网搜表情包：可选一个单独模型来改写搜索词（留空则用主对话模型）
+// 思考强度与输出预算跟随全局配置，避免这里单独设小预算又把推理预算吃光。
 const stickerSearchLLM = config.stickerSearchModel ? new DeepSeekClient({
   apiKey: config.deepseekApiKey, baseUrl: config.deepseekBaseUrl, model: config.stickerSearchModel,
-  temperature: 0.3, maxTokens: 200, timeoutMs: Math.max(config.timeoutMs, 60000),
-  maxRetries: 1, maxConcurrency: 1, logger, label: '表情包搜索词',
+  temperature: 0.3, maxTokens: () => config.maxTokens, reasoningEffort: config.deepseekReasoningEffort,
+  timeoutMs: Math.max(config.timeoutMs, 60000), maxRetries: 1, maxConcurrency: 1, logger, label: '表情包搜索词',
 }) : null
 // 打标优先用 DashScope；没有 Key 时回退到 DeepSeek 读图（实测 1 秒、描述准确），
 // 这样表情包学习不需要额外申请 DashScope。

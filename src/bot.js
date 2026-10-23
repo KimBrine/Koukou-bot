@@ -328,8 +328,8 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       const text = await client.chat(
         '你负责把用户想要的表情包需求转成 2~4 个中文图片搜索词，每行一个；只输出搜索词，不要编号、解释或标点。',
         [{ role: 'user', content: base }],
-        // 只要几个词：关掉思考、给 400 预算，避免像之前那样推理把 120 全吃掉、内容为空
-        { maxTokens: 400, temperature: 0.3, effort: 'none' },
+        // 思考强度与输出预算跟随全局配置（MAX_TOKENS / DEEPSEEK_REASONING_EFFORT），这里只压温度
+        { temperature: 0.3 },
       )
       const list = String(text || '').split(/\r?\n/)
         .map((s) => s.replace(/^[\s\d.、:：\-—]+/, '').replace(/[。！？!?；;]+$/, '').trim())
