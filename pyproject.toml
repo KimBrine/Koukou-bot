@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "koukou-bot"
+version = "0.1.0a1"
+description = "Native Python backend migration of Koukou Studio"
+requires-python = ">=3.11"
+license = "GPL-3.0-only"
+dependencies = ["aiohttp>=3.11,<4"]
+
+[project.scripts]
+koukou = "koukou.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["python"]
+
+[tool.setuptools.package-data]
+koukou = ["*.json"]

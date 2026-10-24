@@ -1,3 +1,22 @@
+# `py` 分支：原生 Python 后端迁移中
+
+**本分支尚未完成整套后端的等价迁移，不能替换 main 的正式机器人。** 网页前端继续保留 HTML/CSS/JavaScript，Python 实现独立放在 `python/koukou`；旧 JavaScript 后端作为迁移对照保留，不是由 Python 再启动 Node 来包装运行。
+
+当前已建立 Python 配置、OneBot 通信、模型客户端、基础聊天流水线、记忆存储、插件 SDK/管理器和控制台基础接口。群总结、表情包、群管理、歌曲、定时任务、人格完整迁移、QQ登录管理与附件发送等仍须迁移和验证。详见 [Python 迁移清单](docs/PYTHON-MIGRATION.md)。
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python -m pip install -e .
+.\.venv\Scripts\python -m koukou migration
+.\.venv\Scripts\python -m koukou plugin new hello --description "我的第一个插件"
+.\.venv\Scripts\python -m koukou plugin run hello 你好
+.\.venv\Scripts\python -m koukou preview --port 8790
+```
+
+预览默认使用本分支的 `data-python`/`logs-python`，不连接 QQ。`run` 在完整迁移验收前明确拒绝启动；请勿把生产 `.env` 或数据目录交给开发预览。以上插件 SDK 只在本 Python 开发环境可用，main 中的现有独立 Python 脚本仍按原方式运行。
+
+---
+
 # Koukou · QQ 机器人与 Koukou Studio
 
 基于 Node.js 和 OneBot 11 的 QQ 聊天机器人，包含网页控制台、Windows 桌面入口和 NapCat 启动中心。使用 Node.js 内置模块，无需安装 npm 运行依赖。新安装使用通用助手人格，不附带个人角色、专属语料或识图标注。

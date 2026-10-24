@@ -24,3 +24,33 @@ jobs:
         run: npm run check:repo
       - name: Run offline tests
         run: npm test
+  python:
+    name: Python migration (${{ matrix.os }}, ${{ matrix.python }})
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.11', '3.14']
+    runs-on: ${{ matrix.os }}
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Install native Python backend
+        run: python -m pip install -e .
+      - name: Native Python offline regression
+        run: python -X utf8 -m unittest discover -s python/tests -v
+      - name: Compare pure behavior with JavaScript baseline
+        run: node scripts/test-python-parity.mjs
+      - name: Report pending migration (not production acceptance)
+        run: python -m koukou migration

@@ -64,3 +64,12 @@ plugins/python/settings.json
 
 # ===== DSH 长期记忆（本机专属，含内部路径与个人信息，绝不入库）=====
 .deepseek-harness/
+
+# Native Python backend build and isolated runtime
+.venv/
+*.egg-info/
+build/
+dist/
+data-python/
+logs-python/
+.pytest_cache/
