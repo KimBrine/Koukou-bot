@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { createImageCache } from './imageCache.js'
 import { createAutoPlusOne } from './autoPlusOne.js'
+import { quietBlocked, quietTransport } from './quietPolicy.js'
 import { replyStillCurrent, messageTime, currentMessageHint, LIVE_MESSAGE_MAX_AGE_MS } from './messageFreshness.js'
 import { modelHistory } from './memory.js'
 import { buildReplyFocus } from './replyFocus.js'
@@ -17,7 +18,7 @@ import { createArchive, archiveErrorHint } from './archive.js'
 import { isBotAdmin, hasAdmins, adminHint } from './permissions.js'
 import { renderReply } from './customCommands.js'
 import { extractStickerMarkers, STICKER_MAX_BYTES } from './stickers.js'
-import { collectWebImages, buildStickerQuery } from './imageSearch.js'
+import { findWebSticker } from './webSticker.js'
 import { SUMMARY_RE, CLEAR_RE, HELP_RE, SEND_FILE_RE, SEND_LINK_RE, PY_CMD_RE } from './commandCenter.js'
 import { formatCommandHelp } from './commandHelp.js'
 import { createGroupMute } from './groupMute.js'
@@ -301,7 +302,10 @@ const SEARCH_TOOLS = [{
   },
 }]
 
-export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, commandCenter, longMemory, stickers = null, stickerLearner = null, musicSearch = searchSong, rand = Math.random, metrics = null, pythonPlugins = null, stickerSearchLLM = null }) {
+export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, commandCenter, longMemory, stickers = null, stickerLearner = null, musicSearch = searchSong, rand = Math.random, metrics = null, pythonPlugins = null, stickerSearchLLM = null, stickerTagLLM = null, webStickerSearch = findWebSticker }) {
+  const sleeping = key => quietBlocked(config, chatSettings, key)
+  const awake = evt => !sleeping(evt.group_id ? `g${evt.group_id}` : `p${evt.user_id}`)
+  onebot = quietTransport(onebot, sleeping)
   const imageCache = sharedImageCache ?? (config.dataDir && config.visionCacheEnabled !== false ? createImageCache({
     dir: path.join(config.dataDir, 'image-cache'),
     maxBytes: config.visionCacheMaxBytes,
@@ -318,51 +322,6 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
   const lastProactive = new Map() // 白名单群主动搭话冷却：groupId -> 上次时间戳
   const pendingProactive = new Map() // 每群至多一轮主动生成；失败释放，不占成功冷却。
   const lastPoke = new Map() // 拍一拍回应冷却：会话 key -> 上次时间戳
-  const stickerSearchClient = () => stickerSearchLLM || llm
-  /** 用配置的模型把用户原话改写成 2~4 个搜索词（失败就退回原词） */
-  async function expandStickerQueries(base) {
-    if (config.stickerSearchRewrite === false) return [base]
-    const client = stickerSearchClient()
-    if (!client || typeof client.chat !== 'function') return [base]
-    try {
-      const text = await client.chat(
-        '你负责把用户想要的表情包需求转成 2~4 个中文图片搜索词，每行一个；保留人名、角色、作品名等关键词（如 deepseek、claude、初音未来），不要统一改写成泛泛的“表情包”；只输出搜索词，不要编号、解释或标点。',
-        [{ role: 'user', content: base }],
-        // 思考强度与输出预算跟随全局配置（MAX_TOKENS / DEEPSEEK_REASONING_EFFORT），这里只压温度
-        { temperature: 0.3 },
-      )
-      const list = String(text || '').split(/\r?\n/)
-        .map((s) => s.replace(/^[\s\d.、:：\-—]+/, '').replace(/[。！？!?；;]+$/, '').trim())
-        .filter((s) => s && s.length <= 30)
-      return list.length ? [...new Set([base, ...list])].slice(0, 4) : [base]
-    } catch (err) {
-      logger.debug(`[表情包] 搜索词改写失败：${err.message}`)
-      return [base]
-    }
-  }
-  /** 可选：用识图模型把不像表情包的图筛掉（logo/截图/真人照/广告） */
-  async function pickBestWebImage(images, requestText) {
-    if (!images.length) return null
-    if (config.stickerSearchFilter === false) return images[0]
-    const vision = typeof visionLLM?.snapshot === 'function' ? visionLLM.snapshot() : visionLLM
-    if (!vision || typeof vision.describeImages !== 'function') return images[0]
-    for (const image of images.slice(0, 4)) {
-      try {
-        const answer = await vision.describeImages(
-          '判断这张图是否适合当聊天表情包。合格：表情、梗图、动漫反应图、GIF；不合格：logo、网页截图、真人照片、纯文字广告、低清图标。只输出以“是”或“否”开头的一句话。',
-          '用户想要的：' + requestText,
-          [{ type: 'image_url', image_url: { url: image.dataUrl } }],
-        )
-        if (/^\s*是/.test(String(answer || ''))) return image
-        logger.info(`[表情包] 联网筛图跳过：${String(answer || '').slice(0, 40)}`)
-      } catch (err) {
-        // 识图失败（例如动图不支持）时不要整批丢弃，放行这一张
-        logger.info(`[表情包] 筛图不可用，直接采用：${err.message}`)
-        return image
-      }
-    }
-    return null
-  }
   // 最近一次 /id_check 的结果：groupId -> { group_id, at, bad, kicked }
   // 只活在内存里（5 分钟有效期）：机器人一重启就作废，踢人指令会静默失效 —— 这是安全方向
   const lastIdCheck = new Map()
@@ -374,11 +333,11 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
   const lastReplayNote = new Map()
   const privateSkipNotes = new Map()
   const quotedMessages = createQuotedMessageResolver({ onebot, logger })
-  const groupMute = createGroupMute({onebot,commandCenter,llm,logger,config,canExecute:evt=>replyStillCurrent(onebot,evt)})
-  const selfActions = createSelfActions({onebot,commandCenter,llm,logger,config,canExecute:evt=>replyStillCurrent(onebot,evt)})
+  const groupMute = createGroupMute({onebot,commandCenter,llm,logger,config,canExecute:evt=>awake(evt)&&replyStillCurrent(onebot,evt)})
+  const selfActions = createSelfActions({onebot,commandCenter,llm,logger,config,canExecute:evt=>awake(evt)&&replyStillCurrent(onebot,evt)})
   const autoPlusOne = createAutoPlusOne({ config, onebot, logger,
     isEnabled:commandCenter ? id=>commandCenter.allowed({...commandCenter.get('auto-plus-one'),adminOnly:false},{isPrivate:false,groupId:id}) : undefined,
-    canTrigger:commandCenter ? evt=>commandCenter.allows('auto-plus-one',{isPrivate:false,groupId:evt.group_id,userId:evt.user_id}) : undefined,
+    canTrigger:evt=>awake(evt)&&(!commandCenter||commandCenter.allows('auto-plus-one',{isPrivate:false,groupId:evt.group_id,userId:evt.user_id})),
     onSent(evt) {
     const key = `g${evt.group_id}`
     const parsed = parseMessage(evt.message ?? evt.raw_message, onebot.selfId)
@@ -390,14 +349,15 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
   } })
 
   async function sendTo(evt, text) {
-    if (!replyStillCurrent(onebot, evt)) return
+    if (!awake(evt) || !replyStillCurrent(onebot, evt)) return
     // 把模型写的 [表情:微笑] 转成 QQ 真实表情的 CQ 码
     const outgoing = renderFacesToCq(text)
     let confirmed=true
     for (const piece of splitLongMessage(outgoing)) {
+      if (!awake(evt)) return
       const receipt = evt.message_type === 'private' ? await onebot.sendPrivate(evt.user_id, piece) : await onebot.sendGroup(evt.group_id, piece)
       quotedMessages.rememberSent(evt, receipt, piece)
-      if(receipt?.message_id==null)confirmed=false
+      if(receipt?.message_id==null&&receipt?.data?.message_id==null)confirmed=false
     }
     return confirmed
   }
@@ -690,6 +650,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
     },
     /** 拍一拍 / 戳一戳回应：NapCat/LLBot 以 notice(notify/poke) 事件推送；私聊同样处理 */
     async handleNotice(evt) {
+      if (!awake(evt)) return
       const isPoke = (evt?.notice_type === 'notify' && ['poke', 'shake'].includes(evt?.sub_type)) || evt?.notice_type === 'poke'
       if (!isPoke) return
       // 群里任何人拍任何人都推给机器人，只有拍夜璃才需要处理；其余只记 debug，避免刷屏
@@ -735,7 +696,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         const personaText=ownPersona||config.persona
         const policyVersion=JSON.stringify(commandCenter?.get('poke'))
         const reply=renderFacesToCq(useRule ? await commandCenter.respond(command,{...context,name,persona:(personaText||'')+conversationRules(config)}) : (pokeReplier?.(name)||''))
-        if(!reply||personaToken!==(config.personaRevision||0)||memoryToken!==memory.version?.(key))return
+        if(!awake(evt)||!reply||personaToken!==(config.personaRevision||0)||memoryToken!==memory.version?.(key))return
         if(commandCenter&&(!commandCenter.allows('poke',context)||(selected&&!commandCenter.current(selected,context))))return
         if(commandCenter&&policyVersion!==JSON.stringify(commandCenter.get('poke')))return
         if(command?.responseMode==='ai'&&sessionPersona(config,chatSettings?.get?.(key)?.persona||'').text!==ownPersona)return
@@ -755,7 +716,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
       const personaRevision = config.personaRevision || 0
       const conversationKey = evt.message_type === 'private' ? `p${evt.user_id}` : `g${evt.group_id}`
       let memoryRevision = memory.version?.(conversationKey)
-      const samePersona = () => personaRevision === (config.personaRevision || 0) && memoryRevision === memory.version?.(conversationKey)
+      const samePersona = () => awake(evt) && personaRevision === (config.personaRevision || 0) && memoryRevision === memory.version?.(conversationKey)
       const privateAllowed = (uid) => {
         const id = Number(uid)
         if (config.privateWhitelist instanceof Set && config.privateWhitelist.has(id)) return true
@@ -797,13 +758,28 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
           (onebot.selfId && String(evt.user_id) === String(onebot.selfId))) return
       const muteFollowup=groupMute.reserveFollowup(evt)
       const selfFollowup=selfActions.reserveFollowup(evt)
-      // 用户指定：自动 +1 在白名单群独立运行，不受静音、安静时段、搭话概率控制。
+      // 自动 +1 独立于普通聊天开关；彻底寂静时段同样休眠。
       const repeatTask = muteFollowup||selfFollowup?Promise.resolve():autoPlusOne.send(repetition)
 
       const isPrivate = evt.message_type === 'private'
       const groupId = evt.group_id
 
       const parsed = parseMessage(evt.message ?? evt.raw_message, onebot.selfId)
+      if (!awake(evt)) {
+        // 睡眠期间只存档，不执行指令、不读取引用/识图、不调用聊天模型，也不排队补做。
+        dailySummary?.capture(evt, parsed)
+        const tracked = isPrivate ? privateAllowed(evt.user_id) :
+          (config.whitelistGroups.has(Number(groupId)) || dailySummary?.summaryGroups().includes(Number(groupId)))
+        if (tracked && config.contextRememberAll && parsed.text) {
+          const name = evt.sender?.card || evt.sender?.nickname || String(evt.user_id)
+          memory.push(conversationKey, 'user', isPrivate ? parsed.text : `【${name}】${parsed.text}`,
+            { time: messageTime(evt) ?? Date.now(), messageId: evt.message_id, userId: evt.user_id, senderName: name })
+        }
+        runtimeStats?.noteSkip?.()
+        logger.debug(`[寂静时段] ${conversationKey} 仅存档，不回复或执行互动`)
+        await repeatTask
+        return
+      }
       // 表情包学习：独立指定群里别人发的图，按配置自动收录（异步，不影响回复）
       if (config.stickerLearnEnabled && (!isPrivate || config.stickerLearnPrivate) && stickerLearner && parsed.images.length > 0) {
         stickerLearner
@@ -959,50 +935,41 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
         }
         return
       }
-      // 联网找表情包：「找/搜/网上/联网」+「图/表情包/贴纸」且本地库挑不出来时，去必应图片搜一张
+      // 明确联网索图独立于本地库容量与配图概率，但仍遵守会话范围和寂静时段。
       const wantsWebSticker = /(?:搜|找|网上|联网|在线)/u.test(sendText) && /(?:表情包|贴纸|图片|图)/u.test(sendText)
       if (wantsWebSticker && directReply && config.stickerWebSearch !== false && (!isPrivate || privateAllowed(evt.user_id))) {
         if (!featureAllowed('request-sticker')) { await sendTo(evt, '找图这个功能现在关着～'); return }
-        if (!stickerSend.allowed(evt)) { await sendTo(evt, '这个会话现在不允许发表情包哦'); return }
-        const query = buildStickerQuery(sendText)
+        const selectedPersona = chatSettings?.get?.(conversationKey)?.persona || ''
+        const library = stickers?.forChat?.(conversationKey) || stickers
+        const current = () => samePersona() && replyStillCurrent(onebot, evt) &&
+          selectedPersona === (chatSettings?.get?.(conversationKey)?.persona || '') &&
+          featureAllowed('request-sticker') && config.stickerWebSearch !== false && stickerSend.allowed(evt, undefined, {requireLibrary:false})
+        if (!stickerSend.allowed(evt, undefined, {requireLibrary:false})) { await sendTo(evt, '这个会话现在不允许发表情包哦'); return }
+        let deliveredText = false
         try {
-          const queries = await expandStickerQueries(query)
-          // 必应直连可用，走代理反而搜不到；Giphy/Tenor 等境外接口才走代理
-          const proxy = config.stickerSearchProvider === 'bing' ? '' : config.stickerSearchProxy
-          const options = {
-            provider: config.stickerSearchProvider,
-            urlTemplate: config.stickerSearchUrl,
-            key: config.stickerSearchKey,
-            proxy,
-            maxBytes: STICKER_MAX_BYTES,
-            limit: config.stickerSearchFilter === false ? 1 : 4,
-          }
-          let candidates = await collectWebImages(queries, options)
-          logger.info(`[表情包] 联网搜图「${queries.join(' / ')}」候选 ${candidates.length} 张`)
-          // Giphy/Tenor 搜不到冷门角色时，用必应再兜一次（不带代理）
-          if (!candidates.length && config.stickerSearchProvider !== 'bing') {
-            candidates = await collectWebImages(queries, { ...options, provider: 'bing', proxy: '' })
-            logger.info(`[表情包] 改用必应兜底，候选 ${candidates.length} 张`)
-          }
-          if (!candidates.length) throw new Error('没搜到候选图')
-          const image = await pickBestWebImage(candidates, sendText)
-          // 筛不出合适的就如实说没找到，不拿无关的图凑数
-          if (!image) throw new Error('没找到合适的表情包')
+          const image = await webStickerSearch({text:sendText,config,llm:stickerSearchLLM||llm,
+            vision:stickerTagLLM||visionLLM,current,isBlocked:hash=>library?.isBlocked?.(hash)===true,logger})
+          if (!current()) return
           const segment = typeof onebot.imageSegment === 'function'
             ? await onebot.imageSegment(image.dataUrl, { sticker: true })
             : { type: 'image', data: { file: image.dataUrl, sub_type: 1 } }
-          if (isPrivate) await onebot.sendPrivate(evt.user_id, [segment])
-          else await onebot.sendGroup(groupId, [segment])
+          if (!current() || library?.isBlocked?.(image.hash)) return
+          // 先确认配套文字已发出，再发图；不能跳过文字，也不能把未知回执报成成功。
+          deliveredText = Boolean(await sendTo(evt, '挑了一张，给你看看～'))
+          if (!deliveredText || !current()) return
+          const receipt = isPrivate ? await onebot.sendPrivate(evt.user_id, [segment]) : await onebot.sendGroup(groupId, [segment])
+          if (receipt?.message_id == null && receipt?.data?.message_id == null) {
+            logger.warn('[表情包搜图] 图片发送回执无消息编号，结果待确认，不自动重发')
+            return
+          }
           stickerSend.begin(evt)
-          logger.info(`[表情包] 联网找图「${queries.join(' / ')}」已发送：${image.sourceUrl}`)
-          rememberExchange('[表情包]')
-          await sendTo(evt, '从网上给你找了一张，看看合不合口味～')
+          logger.info('[表情包搜图] 图片发送已确认')
+          rememberExchange('挑了一张，给你看看～（已发送联网表情包）')
           try { metrics?.replied?.() } catch {}
         } catch (err) {
-          logger.warn(`[表情包] 联网找图失败：${err.message}`)
-          rememberExchange('（没找到合适的表情包）')
-          await sendTo(evt, '没找到合适的表情包，换个说法再让我试试？')
-          try { metrics?.replied?.() } catch {}
+          logger.warn(`[表情包搜图] 流程未完成：${err.message}`)
+          if (!current() || deliveredText) return
+          await sendTo(evt, '这次没能找到并确认合适的表情包，稍后再试试吧。')
         }
         return
       }
@@ -1082,7 +1049,7 @@ export function createBot({ config, logger, onebot, llm, visionLLM, imageCache: 
               }
               if (seconds > 0) {
                 for (const mid of sentIds) {
-                  const t = setTimeout(() => { onebot.deleteMessage(mid).catch(() => {}) }, seconds * 1000)
+                  const t = setTimeout(() => { if (awake(evt)) onebot.deleteMessage(mid).catch(() => {}) }, seconds * 1000)
                   if (typeof t.unref === 'function') t.unref()
                 }
               }

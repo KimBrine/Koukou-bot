@@ -33,6 +33,7 @@ import { createCustomCommandSchedule } from './customCommandSchedule.js'
 import { createTargetWatch } from './targetWatch.js'
 import { createChatSettings } from './chatSettings.js'
 import { createDailyPing } from './dailyPing.js'
+import { quietBlocked } from './quietPolicy.js'
 import { createQuietGreetings } from './quietGreetings.js'
 import { createPersonaGreetingLibrary } from './personaGreetings.js'
 import { createAdminServer } from './admin/server.js'
@@ -326,12 +327,21 @@ const stickerFilterLLM = config.deepseekApiKey ? new DeepSeekClient({
   maxConcurrency: 1, logger, label: '表情包初筛(DeepSeek Flash)',
 }) : null
 // 联网搜表情包：可选一个单独模型来改写搜索词（留空则用主对话模型）
-// 思考强度与输出预算跟随全局配置，避免这里单独设小预算又把推理预算吃光。
-const stickerSearchLLM = config.stickerSearchModel ? new DeepSeekClient({
-  apiKey: config.deepseekApiKey, baseUrl: config.deepseekBaseUrl, model: config.stickerSearchModel,
-  temperature: 0.3, maxTokens: () => config.maxTokens, reasoningEffort: config.deepseekReasoningEffort,
-  timeoutMs: Math.max(config.timeoutMs, 60000), maxRetries: 1, maxConcurrency: 1, logger, label: '表情包搜索词',
-}) : null
+// DeepSeek Flash保持max；输出预算沿用全局配置。按最新模型配置重建独立客户端。
+let stickerSearchActive = null, stickerSearchSpec = ''
+const stickerSearchLLM = { chat(...args) {
+  if (!config.stickerSearchModel) return llm.chat(...args)
+  const spec = JSON.stringify([config.stickerSearchModel, config.deepseekBaseUrl, config.deepseekApiKey])
+  if (spec !== stickerSearchSpec) {
+    stickerSearchActive = new DeepSeekClient({
+      apiKey: config.deepseekApiKey, baseUrl: config.deepseekBaseUrl, model: config.stickerSearchModel,
+      temperature: 0.3, maxTokens: () => config.maxTokens, reasoningEffort: 'max',
+      timeoutMs: Math.max(config.timeoutMs, 60000), maxRetries: 1, maxConcurrency: 1, logger, label: '表情包搜索词',
+    })
+    stickerSearchSpec = spec
+  }
+  return stickerSearchActive.chat(...args)
+} }
 // 打标优先用 DashScope；没有 Key 时回退到 DeepSeek 读图（实测 1 秒、描述准确），
 // 这样表情包学习不需要额外申请 DashScope。
 let tagActive = null
@@ -429,6 +439,7 @@ const summaryPromptFn = (opts) => {
 const summaryChat = async (prompt, messages, options) => summaryLLM.chat(prompt, messages, options)
 
 const dailySummary = createDailySummary({ config, logger, onebot, llm: { chat: summaryChat },
+  canPublish: groupId => !quietBlocked(config, chatSettings, `g${groupId}`),
   visionLLM: summaryVisionLLM, imageCache: sharedImageCache,
   loadImage: (image, signal) => imageToDataUrl(image, onebot, config, logger, {signal}), buildSummaryPromptFn: summaryPromptFn })
 
@@ -447,6 +458,7 @@ const targetWatch = createTargetWatch({ config, logger, onebot, llm, memory, bui
 // 定时指令：按配置时点到指定群 @ 目标账号，发送固定内容。
 const dailyPing = createDailyPing({
   config,
+  chatSettings,
   logger,
   onebot,
   rateLimiter,
@@ -481,7 +493,7 @@ const runtimeStats = {
 
 const bot = createBot({
     metrics: metricsService,
-    pythonPlugins, config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt: systemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, commandCenter, longMemory, stickers, stickerLearner, stickerSearchLLM })
+    pythonPlugins, config, logger, onebot, llm, visionLLM, imageCache: sharedImageCache, memory, buildSystemPrompt: systemPrompt, dailySummary, dailyPing, webSearch, pokeReplier, targetWatch, replyLog, rateLimiter, chatSettings, runtimeStats, customCommands, commandCenter, longMemory, stickers, stickerLearner, stickerSearchLLM, stickerTagLLM })
 
 // 固定语库调度不使用模型；语库与人格正文绑定，发送状态与迁移语库分开保存。
 const personaGreetings=createPersonaGreetingLibrary({file:path.join(config.dataDir,'persona-greetings.json'),logger})
@@ -605,7 +617,7 @@ setInterval(() => {
 // 独立持久化发送状态，重启后先核对已发送/待核验记录。
 const customSchedule = createCustomCommandSchedule({
   file: path.join(config.dataDir, 'custom-command-delivery.json'), commands: customCommands,
-  onebot, memory, rateLimiter, logger,
+  onebot, memory, rateLimiter, logger, canSend: key => !quietBlocked(config, chatSettings, key),
 })
 customSchedule.start()
 

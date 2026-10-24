@@ -205,12 +205,18 @@ await test('机器人完整流程：普通聊天关闭仍跟读，消息仍捕�
   const t = mockBot(); for (let i = 0; i < 4; i++) await t.bot.handleMessage(event())
   assert.equal(t.sent.length, 1); assert.equal(t.modelCalls, 0); assert.equal(t.normal.length, 0); assert.equal(t.captured.length, 4)
 })
-await test('机器人完整流程：静音、安静时段和主动搭话禁用不阻挡 +1', async () => {
-  const t = mockBot({ mutedGroups: new Set([200000002]), quietHours: '00:00-23:59', proactiveRate: 0 })
+await test('机器人完整流程：静音和主动搭话禁用不阻挡 +1', async () => {
+  const t = mockBot({ mutedGroups: new Set([200000002]), quietHours: '', proactiveRate: 0 })
   await t.bot.handleMessage(event()); await t.bot.handleMessage(event()); assert.equal(t.sent.length, 1); assert.equal(t.modelCalls, 0)
 })
+await test('彻底寂静时段禁止 +1，但消息仍完整存档', async () => {
+  const t = mockBot({ quietHours: '00:00-24:00' })
+  await t.bot.handleMessage(event()); await t.bot.handleMessage(event())
+  assert.equal(t.sent.length, 0); assert.equal(t.normal.length, 0); assert.equal(t.modelCalls, 0); assert.equal(t.captured.length, 2)
+  assert.equal(t.memory.get('g200000002').length, 2)
+})
 await test('机器人完整流程：文字夹两个爱心只原生跟一次，不下载、不调用模型', async () => {
-  const t = mockBot({ mutedGroups: new Set([200000002]), quietHours: '00:00-24:00' })
+  const t = mockBot({ mutedGroups: new Set([200000002]), quietHours: '' })
   const raw = [...text('今天很开心 '), { type: 'face', data: { id: '66' } }, { type: 'face', data: { id: '66' } }]
   const original = globalThis.fetch; globalThis.fetch = () => { throw Error('不应下载或请求模型') }
   try {
@@ -223,7 +229,7 @@ await test('机器人完整流程：文字夹两个爱心只原生跟一次，�
 await test('机器人完整流程：纯QQ自带表情和纯emoji不受静音限制，不下载不调用AI',async()=>{
   const original=globalThis.fetch;globalThis.fetch=()=>{throw Error('不应下载或请求模型')}
   try{for(const raw of [[{type:'face',data:{id:'66'}}],text('💀'),[{type:'face',data:{id:'66'}},...text('💀')]]){
-    const t=mockBot({mutedGroups:new Set([200000002]),quietHours:'00:00-24:00'})
+    const t=mockBot({mutedGroups:new Set([200000002]),quietHours:''})
     await t.bot.handleMessage(event(raw));const second=event(raw);await t.bot.handleMessage(second);await t.bot.handleMessage(event(raw))
     assert.deepEqual(t.sent,[{g:second.group_id,id:second.message_id}]);assert.equal(t.modelCalls,0);assert.equal(t.normal.length,0)
   }}finally{globalThis.fetch=original}

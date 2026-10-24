@@ -25,6 +25,22 @@ function fixture(over={}){
 }
 async function test(name,fn){await fn();passed++;console.log('PASS '+name)}
 try{
+ await test('寂静时段拦截群@、私聊、管理/帮助/解题指令并保留上下文',async()=>{
+  const t=fixture({quietHours:'00:00-24:00'})
+  for(const text of ['/help','/Q 解释这个问题','禁言我10s','帮我撤回','拍一拍我']){
+   const e=t.event(text);e.message.unshift({type:'at',data:{qq:B}});await t.bot.handleMessage(e)
+  }
+  const p=t.event('你好');p.message_type='private';delete p.group_id;await t.bot.handleMessage(p)
+  assert.equal(t.sent.length,0);assert.equal(t.calls.length,0)
+  assert.equal(t.memory.get(`g${G}`).length,5);assert.equal(t.memory.get(`p${U}`).length,1)
+ })
+ await test('直接@生成途中进入寂静时段，迟到正文不发送',async()=>{
+  const t=fixture();let done;t.setChat(()=>new Promise(r=>done=r))
+  const e=t.event('你在吗');e.message.unshift({type:'at',data:{qq:B}})
+  const pending=t.bot.handleMessage(e);await new Promise(setImmediate)
+  assert.equal(t.calls.length,1);t.config.quietHours='00:00-24:00'
+  done('这段不能在入睡后发出');await pending;assert.equal(t.sent.length,0);assert.equal(t.counts.length,0)
+ })
  await test('整段三条只扣一次额度，额度剩一次仍完整发送；后续一轮才被限流',async()=>{
   const t=fixture({proactiveCooldownMs:0});const check=t.limiter.check;t.limiter.check=(k,n,o)=>check(k,n,{...o,perHourLimit:1})
   await t.bot.handleMessage(t.event());assert.equal(t.sent.length,3);assert.equal(t.counts.length,1)

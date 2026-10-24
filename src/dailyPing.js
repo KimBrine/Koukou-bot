@@ -13,6 +13,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
+import { quietBlocked } from './quietPolicy.js'
 
 const pad2 = (n) => String(n).padStart(2, '0')
 const dateKey = (d = new Date()) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
@@ -31,7 +32,7 @@ export function dailyPingTarget(hh, mm, now = new Date()) {
   return new Date(now.getFullYear(), now.getMonth(), now.getDate(), hh, mm, hh === 0 && mm === 0 ? 10 : 0, 0)
 }
 
-export function createDailyPing({ config, logger, onebot, rateLimiter, memory, stateFile }) {
+export function createDailyPing({ config, logger, onebot, rateLimiter, memory, stateFile, chatSettings }) {
   const timers = new Set()
   let scheduling = false
   const time = parseTime(config.dailyPingTime)
@@ -210,6 +211,7 @@ export function createDailyPing({ config, logger, onebot, rateLimiter, memory, s
   /** 补发第二条指令（同样带 @） */
   async function sendFollowUp(text) {
     const groupId = Number(config.dailyPingGroup)
+    if (quietBlocked(config, chatSettings, `g${groupId}`)) return false
     const target = String(config.dailyPingTarget)
     try {
       const res = await onebot.sendGroup(groupId, [
@@ -280,6 +282,7 @@ export function createDailyPing({ config, logger, onebot, rateLimiter, memory, s
 
   /** 立刻发送一次；失败按 60s → 5min → 15min 重试三次（会话瞬时异常时还能救回来） */
   async function sendNow(reason = '定时触发', { attempt = 1, oncePerDay = false } = {}) {
+    if (quietBlocked(config, chatSettings, `g${config.dailyPingGroup}`)) { clearChain('寂静时段'); return false }
     if (!config.dailyPingGroup || !config.dailyPingTarget) {
       logger?.warn?.('[定时指令] 未配置群号或目标账号，跳过')
       return false

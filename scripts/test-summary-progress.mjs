@@ -37,6 +37,17 @@ try{
  releaseSend({message_id:99});await task
  assert.equal(daily.progress.get(G).resultKind,'statistics');assert.equal(daily.progress.get(G).status,'success');assert.match(daily.progress.get(G).message,/统计版/)
  assert.equal(daily.isRunning(G),false)
+ // 夜间完成的报告在发送队列外等待，醒来继续，不重复生成。
+ let awake=false,wake,sleepSends=0
+ const sleeping=createDailySummary({config:{...config,dataDir:path.join(root,'sleep')},logger,
+   onebot:{...onebot,async getGroupMsgHistory(){return {messages:rows}},async sendGroupForward(){sleepSends++;return {message_id:123}}},
+   llm:{},canPublish:()=>awake,publicationPause:()=>new Promise(resolve=>wake=resolve)})
+ const overnight=sleeping.runSummary(G,{statsOnly:true})
+ for(let i=0;i<100&&!wake;i++)await new Promise(r=>setTimeout(r,10))
+ assert.equal(typeof wake,'function');assert.equal(sleepSends,0)
+ assert.match(sleeping.progress.get(G).message,/寂静时段结束后/)
+ awake=true;wake();await overnight
+ assert.equal(sleepSends,1);assert.equal(sleeping.progress.get(G).status,'success')
  const api=createAdminServer({config,logger,onebot,memory:{},dailySummary:daily})
  assert.equal((await api.actions['summary-ack']({groupId:G,jobId:current})).acknowledged,true)
  assert.equal(daily.progress.get(G).status,'idle')

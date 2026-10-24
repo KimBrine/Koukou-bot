@@ -11,8 +11,8 @@ export function createStickerSendPolicy({config,stickers,rand=Math.random,now=Da
   const chatKey=e=>e.message_type==='private'?`p${e.user_id}`:`g${e.group_id}`
   const library=e=>stickers?.forChat?.(chatKey(e)) || stickers
   const cooldownKey=e=>`${stickers?.scope?.(chatKey(e))?.key||''}:${chatKey(e)}`
-  function allowed(e, store=library(e)){
-    if(!config.stickersEnabled||!store?.count())return false
+  function allowed(e, store=library(e), { requireLibrary = true } = {}){
+    if(!config.stickersEnabled||(requireLibrary&&!store?.count()))return false
     const scope=config.stickerSendScope||'all',privateChat=e.message_type==='private'
     return scope==='private'?privateChat:scope==='whitelist'?!privateChat&&config.whitelistGroups?.has(Number(e.group_id)):
       scope==='selected'?!privateChat&&config.stickerSendGroups?.has(Number(e.group_id)):scope==='all'

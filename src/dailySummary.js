@@ -174,7 +174,7 @@ export function mergeRecords(history, captured, startSec, endSec = Infinity) {
   return [...byId.values()].sort((a, b) => a.time - b.time)
 }
 
-export function createDailySummary({ config, logger, onebot, llm, visionLLM, imageCache, loadImage, buildSummaryPromptFn = buildSummaryPrompt }) {
+export function createDailySummary({ config, logger, onebot, llm, visionLLM, imageCache, loadImage, canPublish = () => true, publicationPause = () => sleep(30000), buildSummaryPromptFn = buildSummaryPrompt }) {
   const running = new Set()
   const progress = createSummaryProgress({file:existsSync(config.dataDir)?path.join(config.dataDir,'summary-progress.json'):null,logger})
   const queueSend = createSummarySendQueue()
@@ -448,6 +448,8 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
     let cards = 0
     let individual = 0
     const trackedSend = async send => {
+      // 正文保留在当前任务中；生成跨过入睡边界时，醒来后继续发，不能丢报告或重复生成。
+      while (!canPublish(groupId)) await publicationPause()
       const receiptKey = summarySchedule.beforeSend(groupId)
       try {
         const result = await send()
@@ -566,7 +568,7 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
             ? `目前 QQ 接口最早只能读到 ${fmtDate(history.earliestSec)} ${fmtTime(history.earliestSec)}，还没覆盖本次要求的 ${fmtDate(startSec)} 00:00。`
             : history.reason === 'api_failed' ? 'QQ 历史读取接口出现异常，暂时无法确认记录完整。'
               : '多轮读取后仍无法确认这段时间的历史完整。'
-          try { await onebot.sendGroup(groupId, `这次群总结未能生成：${detail}\n为避免把部分记录当作完整总结，本次没有发布报告；后续消息会继续存档。`) }
+          try { if (canPublish(groupId)) await onebot.sendGroup(groupId, `这次群总结未能生成：${detail}\n为避免把部分记录当作完整总结，本次没有发布报告；后续消息会继续存档。`) }
           catch (error) { logger.warn(`群 ${groupId} 总结历史不完整提示发送失败：${error.message}`) }
         }
         return
@@ -615,6 +617,7 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
       const pingTimer = dryRun || statsOnly
         ? null
         : setTimeout(() => {
+            if (!canPublish(groupId)) return
             onebot
               .sendGroup(groupId, '还在写呢～记录有点多，再等我一会儿下下，写完立刻发出来！')
               .catch(() => {})
@@ -654,10 +657,14 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
       }
       stage = 'send'
       report('queued','正文已生成，等待发送到本群')
+      const sleptBeforeSend = !canPublish(groupId)
+      if (sleptBeforeSend) report('queued','正文已生成，寂静时段结束后发送')
+      // 在进入全局发送队列前等待，不能阻塞其他未休眠群的报告。
+      while (!canPublish(groupId)) await publicationPause()
       const how = await queueSend(async () => {
         if (scheduled) {
           // 生成或发送排队期间可能掉线、跨日或已有报告；实际发送前核对。
-          if (dateKey() !== scheduleDay || !(await summarySchedule.online())) {
+          if ((!sleptBeforeSend && dateKey() !== scheduleDay) || !(await summarySchedule.online())) {
             logger.info(`[定时总结] 群 ${groupId} ${scheduleTime} 发送前 QQ 未确认在线或已跨日，当晚放弃本次`)
             return
           }
@@ -677,7 +684,7 @@ export function createDailySummary({ config, logger, onebot, llm, visionLLM, ima
       if (!dryRun && (!scheduled || (!ambiguousSummarySend(err) && await summarySchedule.online()))) {
         // 让群里知道总结失败，别让群友干等
         try {
-          await onebot.sendGroup(groupId, summaryFailureMessage(err, stage))
+          if (canPublish(groupId)) await onebot.sendGroup(groupId, summaryFailureMessage(err, stage))
         } catch {
           /* 通知失败就算了 */
         }
