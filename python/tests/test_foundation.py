@@ -24,7 +24,7 @@ class StateTests(unittest.TestCase):
             self.assertEqual(config.number("ZERO", 5), 0)
             config.save({"A": "新"})
             self.assertEqual(sum(line.startswith("A=") for line in file.read_text(encoding="utf-8").splitlines()), 1)
-            self.assertEqual(config.data_dir, Path(root) / "data-python")
+            self.assertEqual(config.data_dir, (Path(root) / "data-python").resolve())
             with self.assertRaises(ValueError):
                 config.save({"A": "x\nADMIN_USERS=1"})
 

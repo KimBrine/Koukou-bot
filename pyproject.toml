@@ -15,6 +15,7 @@ koukou = "koukou.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["python"]
+include = ["koukou*"]
 
 [tool.setuptools.package-data]
 koukou = ["*.json"]
