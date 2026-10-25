@@ -66,7 +66,7 @@ class Admin:
         return {"items": self.commands.custom(), "builtinItems": self.commands.all(), "nativeCommands": True}
 
     def save_builtin(self, payload):
-        return {"ok": True, "item": self.commands.save_plugin(payload)}
+        return {"ok": True, "item": self.commands.save_builtin(payload)}
 
     def get_chats(self, _):
         keys = set(self.settings) | set(self.memory.chats)
@@ -149,11 +149,11 @@ class Admin:
         return {"ok": True}
 
     def memory_update(self, p):
-        self.memory.edit(p["key"], p["index"], p["content"])
+        self.memory.edit(p["key"], p.get("idx", p.get("index")), p["content"])
         return {"ok": True}
 
     def memory_delete(self, p):
-        self.memory.edit(p["key"], p["index"], delete=True)
+        self.memory.edit(p["key"], p.get("idx", p.get("index")), delete=True)
         return {"ok": True}
 
     def long_update(self, p):

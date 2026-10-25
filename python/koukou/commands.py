@@ -5,6 +5,16 @@ from .state import read_json, write_json
 
 RESERVED = {"q", "help", "帮助", "指令", "命令", "py", "群总结", "群聊总结", "今日总结", "每日总结",
             "清除记忆", "清空记忆", "重置记忆", "id_check", "id_check_kick", "发文件", "发链接", "点歌"}
+BUILTINS = [
+    ("help", "指令帮助", "/help", "none"), ("question", "认真解题", "/Q 问题", "required"),
+    ("owner-mute", "群管理禁言/解禁", "@机器人 禁言/解禁 指定成员 时长", "required"),
+    ("self-mute", "自助禁言", "@机器人 禁言我 时长", "required"),
+    ("whole-mute", "全员禁言", "@机器人 开启/关闭全员禁言", "required"),
+    ("self-recall", "帮忙撤回", "引用消息并@机器人 帮忙撤回", "required"),
+    ("request-poke", "请求拍一拍", "@机器人 拍一拍 指定成员", "required"),
+    ("poke", "拍机器人回应", "拍机器人头像", "none"),
+]
+MANAGEMENT = {"owner-mute", "self-mute", "whole-mute", "self-recall"}
 
 
 def normalize(name):
@@ -79,10 +89,44 @@ class CommandRegistry:
         return result
 
     def all(self):
-        return [{"id": "help", "name": "指令帮助", "trigger": "/help", "enabled": True, "adminOnly": False,
-                 "scope": "all", "groups": [], "ai": "none", "description": "当前会话可使用的指令"},
-                {"id": "question", "name": "认真解题", "trigger": "/Q 问题", "enabled": True, "adminOnly": False,
-                 "scope": "all", "groups": [], "ai": "required", "description": "仅本轮启用解题模式"}, *self.plugin_entries()]
+        settings = self.state().get("builtins", {})
+        items = []
+        for id, name, trigger, ai in BUILTINS:
+            item = {"id": id, "name": name, "trigger": trigger, "ai": ai, "enabled": id in {"help", "question", "poke"},
+                    "scope": "group" if id in MANAGEMENT else "groups" if id == "request-poke" else "all",
+                    "groups": [], "adminOnly": False, "description": name, "management": id in MANAGEMENT,
+                    "whitelistOnly": id == "request-poke", "responseMode": "fixed", **settings.get(id, {})}
+            # Permission category is an implementation property, never imported from configuration.
+            item.update(id=id, management=id in MANAGEMENT, whitelistOnly=id == "request-poke")
+            items.append(item)
+        return [*items, *self.plugin_entries()]
+
+    def get(self, id):
+        return next((item for item in self.all() if item["id"] == id), None)
+
+    def save_builtin(self, payload):
+        if str(payload.get("id", "")).startswith("plugin:"):
+            return self.save_plugin(payload)
+        item = self.get(payload.get("id"))
+        if not item:
+            raise ValueError("未知内置指令")
+        scope = payload.get("scope", item["scope"])
+        if scope not in {"all", "group", "groups", "private"}:
+            raise ValueError("适用范围无效")
+        if item["id"] in MANAGEMENT and scope != "group":
+            raise ValueError("管理与撤回指令必须指定群聊")
+        groups = payload.get("groups", item["groups"])
+        if not isinstance(groups, list) or any(not str(g).isdecimal() or int(g) <= 0 for g in groups):
+            raise ValueError("群号无效")
+        enabled = payload.get("enabled", item["enabled"]) is True
+        if enabled and scope == "group" and not groups:
+            raise ValueError("请指定适用群")
+        state = self.state()
+        state.setdefault("builtins", {})[item["id"]] = {"enabled": enabled, "scope": "groups" if item["whitelistOnly"] else scope,
+            "groups": [] if item["whitelistOnly"] else sorted(set(map(int, groups))), "adminOnly": False if item["whitelistOnly"] else payload.get("adminOnly", item["adminOnly"]) is True,
+            "responseMode": "ai" if item["id"] == "poke" and payload.get("responseMode") == "ai" else "fixed"}
+        write_json(self.file, state)
+        return self.get(item["id"])
 
     def match_plugin(self, text):
         request = split_request(text)
@@ -101,11 +145,15 @@ class CommandRegistry:
         return (matches[0], args) if matches else None
 
     def allowed(self, item, event):
-        if not item["enabled"]:
+        if not item or not item["enabled"]:
             return False
         private = not event.get("group_id")
         scope = item.get("scope", "all")
         if scope not in {"all", "private", "group", "groups"}:
+            return False
+        if item.get("management") and scope != "group":
+            return False
+        if item.get("whitelistOnly") and (private or int(event["group_id"]) not in self.config.ids("WHITELIST_GROUPS")):
             return False
         if private and scope in {"group", "groups"} or not private and scope == "private":
             return False

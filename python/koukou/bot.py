@@ -9,6 +9,8 @@ from .models import clean_reply
 from .plugins import decode_result
 from .policy import decide_reply
 from .commands import CommandRegistry
+from .actions import Actions
+from .media import MediaDelivery
 
 
 class Bot:
@@ -16,6 +18,8 @@ class Bot:
         self.config, self.onebot, self.memory = config, onebot, memory
         self.model, self.long_memory, self.plugins = model, long_memory, plugins
         self.commands = CommandRegistry(config, plugins) if plugins else None
+        self.actions = Actions(config, onebot, self.commands, model) if self.commands else None
+        self.media = MediaDelivery(config, onebot, plugins, quiet=self.quiet)
         self.settings, self.rand = settings or {}, rand
         self.last_proactive, self.inflight, self.repeats, self.sent = {}, set(), {}, {}
         self.seen = deque(maxlen=4096)
@@ -33,7 +37,8 @@ class Bot:
         return int(user) in self.config.ids("PRIVATE_WHITELIST") | self.config.ids("ADMIN_USERS") or "p" + str(user) in self.settings
 
     async def send(self, event, text, revision):
-        if not self.current(event, revision):
+        key = chat_key(event)
+        if not self.current(event, revision) or self.settings.get(key, {}).get("enabled") is False or event.get("group_id") and int(event["group_id"]) in self.config.ids("MUTED_GROUPS"):
             return False
         receipt = await self.onebot.send(chat_key(event), text)
         return isinstance(receipt, dict) and receipt.get("message_id") is not None
@@ -54,6 +59,7 @@ class Bot:
         if message_id and seen in self.seen:
             return
         self.seen.append(seen)
+        followup = self.actions.reserve(event) if self.actions and not self.quiet(key) else None
         private = key.startswith("p")
         tracked = self.private_allowed(event["user_id"]) if private else int(event["group_id"]) in self.config.ids("WHITELIST_GROUPS") | self.config.ids("SUMMARY_GROUPS")
         if tracked and parsed.text:
@@ -70,7 +76,7 @@ class Bot:
         if private and not self.private_allowed(event["user_id"]):
             return
         settings = self.settings.get(key, {})
-        if not private and self.config.enabled("AUTO_PLUS_ONE_ENABLED", False) and int(event["group_id"]) in self.config.ids("WHITELIST_GROUPS"):
+        if not followup and not private and self.config.enabled("AUTO_PLUS_ONE_ENABLED", False) and int(event["group_id"]) in self.config.ids("WHITELIST_GROUPS"):
             fingerprint = repeat_fingerprint(event.get("message", event.get("raw_message")))
             previous = self.repeats.get(key, {})
             count = previous.get("count", 0) + 1 if fingerprint and fingerprint == previous.get("hash") else 1
@@ -85,13 +91,19 @@ class Bot:
             return
         if settings.get("enabled") is False:
             return
-        reply_to_bot = False
+        reply_to_bot, quote = False, None
         if parsed.reply_id:
             try:
                 quote = await self.onebot.api("get_msg", {"message_id": parsed.reply_id})
                 reply_to_bot = str(quote.get("user_id", quote.get("sender", {}).get("user_id", ""))) == self.onebot.self_id
             except Exception:
                 pass
+        if self.actions:
+            self.actions.observe(event, parsed, quote)
+            if await self.actions.handle(event, parsed, followup=followup, quote=quote,
+                    current=lambda: self.current(event, revision) and self.settings.get(key, {}).get("enabled") is not False and int(event.get("group_id", 0)) not in self.config.ids("MUTED_GROUPS"),
+                    reply=lambda text: self.send(event, text, revision)):
+                return
         decision = decide_reply(private=private, at_bot=parsed.at_bot, reply_to_bot=reply_to_bot,
             group=event.get("group_id", 0), user=int(event["user_id"]), settings=settings, private_configured=key in self.settings,
             config={"whitelistGroups": self.config.ids("WHITELIST_GROUPS"), "mutedGroups": self.config.ids("MUTED_GROUPS"),
@@ -111,15 +123,21 @@ class Bot:
             item, args = plugin
             if not self.commands.allowed(item, event):
                 return
+            session, self_id = self.onebot.timeline.session, self.onebot.self_id
             result = decode_result(await self.plugins.run(item["pluginId"], args))
-            current_item = next((c for c in self.commands.plugin_entries() if c["id"] == item["id"]), None)
-            if not current_item or not self.commands.allowed(current_item, event):
-                return
-            if result.get("images") or result.get("files") or result.get("legacyCard") or result.get("legacyFile"):
-                # Rich media/file lifecycle is not equivalent yet: refuse rather than silently lose it.
-                await self.send(event, "插件已返回结构化结果，但该发送协议尚未完成Python迁移，未发送附件。", revision)
-            elif result.get("text"):
-                await self.send(event, result["text"], revision)
+
+            def script_current():
+                rule = self.commands.get(item["id"])
+                return self.onebot.timeline.available and self.onebot.timeline.session == session and self.onebot.self_id == self_id and revision == (self.persona_revision, self.memory.version(key)) and not self.quiet(key) and self.settings.get(key, {}).get("enabled") is not False and int(event.get("group_id", 0)) not in self.config.ids("MUTED_GROUPS") and self.commands.allowed(rule, event)
+
+            try:
+                receipts = await self.media.deliver(event, result, current=script_current)
+                for receipt in receipts:
+                    if receipt["messageId"] is not None and receipt["text"]:
+                        self.memory.push(key, "assistant", receipt["text"], messageId=receipt["messageId"])
+            except (ValueError, OSError):
+                if script_current():
+                    await self.onebot.send(key, "插件结果格式或文件校验失败，未继续发送。")
             return
         if not decision["reply"] or not self.model:
             return

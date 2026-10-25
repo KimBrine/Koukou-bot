@@ -151,10 +151,10 @@ class OneBot:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def send(self, key, message):
+    async def send(self, key, message, timeout=None):
         action = "send_group_msg" if key.startswith("g") else "send_private_msg"
         field = "group_id" if key.startswith("g") else "user_id"
-        return await self.api(action, {field: int(key[1:]), "message": message})
+        return await self.api(action, {field: int(key[1:]), "message": message}, timeout=timeout)
 
     async def member(self, group, user):
         return await self.api("get_group_member_info", {"group_id": int(group), "user_id": int(user), "no_cache": True})
