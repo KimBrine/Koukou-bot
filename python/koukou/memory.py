@@ -5,13 +5,33 @@ from pathlib import Path
 import re
 import time
 import uuid
+import math
 from .state import read_json, write_json
+from .archive import MemoryArchive
 
 
 def valid_key(key):
-    if not re.fullmatch(r"[gp][0-9]{1,20}", str(key)):
+    if not re.fullmatch(r"[gp][0-9]{1,24}", str(key)):
         raise ValueError("会话键格式错误")
     return key
+
+
+def validate_recent(chats):
+    if not isinstance(chats, dict):
+        raise ValueError("近期记忆格式错误")
+    for key, entries in chats.items():
+        valid_key(key)
+        if not isinstance(entries, list) or any(not isinstance(e, dict) or e.get("role") not in {"user", "assistant", "system"} or not isinstance(e.get("content"), str) or e.get("time") is not None and (not isinstance(e["time"], (int, float)) or not math.isfinite(e["time"])) for e in entries):
+            raise ValueError("近期记忆条目损坏")
+
+
+def validate_long(chats):
+    if not isinstance(chats, dict):
+        raise ValueError("长期记忆格式错误")
+    for key, record in chats.items():
+        valid_key(key)
+        if not isinstance(record, dict) or not isinstance(record.get("summary", ""), str) or not isinstance(record.get("pending", []), list) or any(not isinstance(e, dict) or not isinstance(e.get("text"), str) for e in record.get("pending", [])):
+            raise ValueError("长期记忆条目损坏")
 
 
 class Memory:
@@ -20,13 +40,12 @@ class Memory:
         self.limit = max(1, limit)
         self.boundary = read_json(Path(str(self.file) + ".reset.json"), {"resetAt": 0, "keyResetAt": {}})
         self.chats = read_json(self.file, {})
-        if not isinstance(self.chats, dict) or any(not isinstance(value, list) for value in self.chats.values()):
-            raise ValueError("近期记忆格式错误，保留原文件，拒绝运行")
+        validate_recent(self.chats)
         self.revisions = {}
         for key, entries in self.chats.items():
             cutoff = max(self.boundary.get("resetAt", 0), self.boundary.get("keyResetAt", {}).get(key, 0))
             self.chats[key] = [entry for entry in entries if isinstance(entry, dict) and isinstance(entry.get("content"), str)
-                               and (not cutoff or entry.get("time", 0) > cutoff)]
+                               and (not cutoff or (entry.get("time") or 0) >= cutoff)]
 
     def get(self, key):
         return copy.deepcopy(self.chats.get(valid_key(key), []))
@@ -39,11 +58,14 @@ class Memory:
         if role not in {"user", "assistant", "system"}:
             raise ValueError("记忆角色无效")
         item = {"role": role, "content": str(content), "time": meta.pop("time", time.time() * 1000), **meta}
+        cutoff = max(self.boundary.get("resetAt", 0), self.boundary.get("keyResetAt", {}).get(key, 0))
+        if cutoff and (item.get("time") or 0) < cutoff:
+            return []
         records = self.chats.setdefault(key, [])
         if item.get("messageId") is not None and any(str(x.get("messageId")) == str(item["messageId"]) and x.get("role") == role for x in records):
             return []
         records.append(item)
-        records.sort(key=lambda entry: int(entry.get("time", 0) / 1000))
+        records.sort(key=lambda entry: (entry.get("time") or 0))
         evicted, self.chats[key] = records[:-self.limit], records[-self.limit:]
         self.save()
         return evicted
@@ -62,7 +84,7 @@ class Memory:
 
     def clear(self, key):
         valid_key(key)
-        stamp = time.time() * 1000
+        stamp = math.floor(time.time()) * 1000
         self.boundary.setdefault("keyResetAt", {})[key] = stamp
         # Boundary first: a crash cannot resurrect already-cleared content.
         write_json(Path(str(self.file) + ".reset.json"), self.boundary)
@@ -72,6 +94,20 @@ class Memory:
 
     def save(self):
         write_json(self.file, self.chats)
+
+    def snapshot(self):
+        return copy.deepcopy({"chats": self.chats, **self.boundary})
+
+    def restore(self, value):
+        chats = value.get("chats")
+        validate_recent(chats)
+        for key in set(self.chats) | set(chats):
+            valid_key(key)
+            self.revisions[key] = self.version(key)+1
+        boundary = {"resetAt": value.get("resetAt", 0), "keyResetAt": value.get("keyResetAt", {})}
+        write_json(Path(str(self.file)+".reset.json"), boundary)
+        write_json(self.file, chats)
+        self.boundary, self.chats = copy.deepcopy(boundary), copy.deepcopy(chats)
 
 
 class LongMemory:
@@ -87,11 +123,13 @@ class LongMemory:
         if self.state.get("resetPending"):
             raise RuntimeError("长期记忆正在重置，请完成恢复后再启动Python版")
         self.chats = read_json(self.file, {})
-        if not isinstance(self.chats, dict):
-            raise ValueError("长期记忆格式错误")
+        validate_long(self.chats)
+        for record in self.chats.values():
+            record.setdefault("summary", ""); record.setdefault("pending", [])
         for key in self.state.get("clearedKeys", []):
             self.chats.pop(key, None)
         self.versions, self.running = {}, {}
+        self.archive = MemoryArchive(Path(str(self.file)+".records"))
 
     def record(self, key):
         valid_key(key)
@@ -120,11 +158,7 @@ class LongMemory:
                 continue
             epoch = self.state.get("keyEpochs", {}).get(key, self.state.get("epoch", "legacy"))
             # Append immutable originals before adding them to the summarization queue.
-            original = self.file.parent / "python-memory-records" / str(epoch) / (valid_key(key) + ".jsonl")
-            original.parent.mkdir(parents=True, exist_ok=True)
-            import json
-            with original.open("a", encoding="utf-8") as stream:
-                stream.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            self.archive.add(epoch, valid_key(key), [entry])
             record["pending"].append({"text": entry.get("content", entry.get("text", "")),
                 "time": entry.get("time", 0), "name": entry.get("senderName", ""), "userId": entry.get("userId", "")})
         self.chats[key] = record
@@ -173,3 +207,38 @@ class LongMemory:
 
     def save(self):
         write_json(self.file, self.chats)
+
+    def snapshot(self):
+        return copy.deepcopy({"chats": self.chats, "epoch": self.state.get("epoch", "legacy"), "keyEpochs": self.state.get("keyEpochs", {})})
+
+    def restore(self, value):
+        validate_long(value.get("chats"))
+        epochs = {"epoch": value.get("epoch", "legacy"), "keyEpochs": value.get("keyEpochs", {})}
+        for epoch in [epochs["epoch"], *epochs["keyEpochs"].values()]:
+            if not isinstance(epoch, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", epoch):
+                raise ValueError("长期记忆分区无效")
+        for key in set(self.chats) | set(value["chats"]):
+            valid_key(key)
+            self.versions[key] = self.versions.get(key, 0)+1
+        for task in list(self.running.values()):
+            task.cancel()
+        write_json(Path(str(self.file)+".state.json"), {**epochs, "resetPending": True})
+        write_json(self.file, value["chats"])
+        write_json(Path(str(self.file)+".state.json"), epochs)
+        self.state, self.chats = copy.deepcopy(epochs), copy.deepcopy(value["chats"])
+
+    def clear(self, key=None):
+        value = self.snapshot()
+        if key:
+            valid_key(key)
+            value["chats"].pop(key, None)
+            value["keyEpochs"][key] = str(uuid.uuid4())
+        else:
+            value.update(chats={}, epoch=str(uuid.uuid4()), keyEpochs={})
+        self.restore(value)
+
+    def text(self, key, query=""):
+        record = self.record(key)
+        epoch = self.state.get("keyEpochs", {}).get(key, self.state.get("epoch", "legacy"))
+        originals = self.archive.retrieve(epoch, key, query)
+        return str(record.get("summary", "")) + ("\n相关原话：\n"+originals if originals else "")

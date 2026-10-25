@@ -51,6 +51,8 @@ class Config:
         for key, value in patch.items():
             if not re.fullmatch(r"[A-Z][A-Z0-9_]*", key) or any(c in str(value) for c in "\r\n\x00"):
                 raise ValueError("配置键或值无效")
+            if key in self.environ and str(self.environ[key]) != str(value):
+                raise ValueError(f"{key}被进程环境覆盖，请先解除该环境覆盖")
         old = self.env_file.read_text(encoding="utf-8-sig") if self.env_file.exists() else ""
         remaining, lines = dict(patch), []
         for line in old.splitlines():

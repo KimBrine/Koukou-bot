@@ -19,7 +19,12 @@ async def serve(config, port):
     from aiohttp import web
     from .admin import Admin
     from .state import InstanceLock
+    from .sessions import recover_session
+    from .backup import Backup
     with InstanceLock(config.data_dir):
+        if recover_session(config):
+            config = Config(config.root, config.env_file, config.environ)
+        Backup(config).apply_pending()
         admin = Admin(config, PluginManager(config.root, config), Memory(config.data_dir), LongMemory(config.data_dir))
         runner = web.AppRunner(admin.app())
         await runner.setup()

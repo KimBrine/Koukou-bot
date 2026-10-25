@@ -13,6 +13,7 @@ BUILTINS = [
     ("self-recall", "帮忙撤回", "引用消息并@机器人 帮忙撤回", "required"),
     ("request-poke", "请求拍一拍", "@机器人 拍一拍 指定成员", "required"),
     ("poke", "拍机器人回应", "拍机器人头像", "none"),
+    ("music", "点歌音乐名片", "点歌 歌名 歌手 / 歌曲ID / 完整歌曲链接", "required"),
 ]
 MANAGEMENT = {"owner-mute", "self-mute", "whole-mute", "self-recall"}
 
@@ -92,7 +93,7 @@ class CommandRegistry:
         settings = self.state().get("builtins", {})
         items = []
         for id, name, trigger, ai in BUILTINS:
-            item = {"id": id, "name": name, "trigger": trigger, "ai": ai, "enabled": id in {"help", "question", "poke"},
+            item = {"id": id, "name": name, "trigger": trigger, "ai": ai, "enabled": id in {"help", "question", "music"} or id == "poke" and self.config.enabled("POKE_REPLY_ENABLED"),
                     "scope": "group" if id in MANAGEMENT else "groups" if id == "request-poke" else "all",
                     "groups": [], "adminOnly": False, "description": name, "management": id in MANAGEMENT,
                     "whitelistOnly": id == "request-poke", "responseMode": "fixed", **settings.get(id, {})}
@@ -182,5 +183,5 @@ class CommandRegistry:
         return next(value for value in self.plugin_entries() if value["id"] == item["id"])
 
     def help(self, event):
-        items = [item for item in self.all() if self.allowed(item, event)]
+        items = [item for item in [*self.all(), *self.custom()] if self.allowed(item, event)]
         return "📋 当前会话的指令\n\n" + "\n\n".join(f"{index}. {item['trigger']}\n   {item['name']}" for index, item in enumerate(items, 1)) + "\n\n群聊请@机器人；调用权限与寂静时段规则仍然生效。"

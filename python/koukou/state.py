@@ -25,13 +25,15 @@ def read_json(path, default=None):
     if not path.exists():
         return copy.deepcopy(default)
     try:
-        return json.loads(path.read_text(encoding="utf-8-sig"))
+        def invalid(value):
+            raise ValueError("JSON不支持非有限数值："+value)
+        return json.loads(path.read_text(encoding="utf-8-sig"), parse_constant=invalid)
     except (ValueError, UnicodeError) as exc:
         raise ValueError(f"状态文件损坏，停止写入，请恢复备份：{path}") from exc
 
 
 def write_json(path, value):
-    write_text(path, json.dumps(value, ensure_ascii=False, indent=2) + "\n")
+    write_text(path, json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + "\n")
 
 
 class InstanceLock:

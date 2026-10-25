@@ -60,6 +60,9 @@ class MediaDelivery:
         key = chat_key(event)
         request = f"{self.onebot.self_id}:{key}:{event.get('message_id')}"
         files, spec = self.files(result)  # Validate the entire result before sending anything.
+        music = result.get("music")
+        if music is not None and (not isinstance(music, dict) or music.get("type") not in {"163", "qq"} or not re.fullmatch(r"\d{1,20}", str(music.get("id", "")))):
+            raise ValueError("音乐名片格式无效")
         images = result.get("images", [])
         if not isinstance(images, list) or len(images) > 100:
             raise ValueError("图片结果无效")
@@ -121,6 +124,9 @@ class MediaDelivery:
         text = str(result.get("text") or spec.get("summary") or "")
         if text and not await dispatch(lambda: self.onebot.send(key, text), message=text):
             return sent
+        if music is not None:
+            if not await dispatch(lambda: self.onebot.send(key, [{"type": "music", "data": {"type": music["type"], "id": str(music["id"])}}])):
+                return sent
         if card:
             nodes = []
             for node in card.get("nodes", []):

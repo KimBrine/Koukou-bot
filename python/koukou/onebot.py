@@ -22,6 +22,8 @@ class OneBot:
         self.timeline = Timeline()
         self.pending, self.tasks = {}, set()
         self.stopping, self.online, self.probe_verified = False, False, False
+        self.account_version = 0
+        self.probe_task = None
         self.log = logging.getLogger("koukou.onebot")
 
     async def api(self, action, params=None, timeout=None):
@@ -64,8 +66,17 @@ class OneBot:
                     future.set_exception(OneBotError(str(data.get("message") or data.get("wording") or "QQ操作失败")))
             return
         if data.get("self_id"):
-            self.self_id = str(data["self_id"])
-        if data.get("post_type") in {"message", "message_sent"}:
+            id = str(data["self_id"])
+            if self.self_id and self.self_id != id:
+                self.invalidate_account()
+                self.schedule_probe()
+            self.self_id = id
+        if data.get("post_type") == "meta_event" and data.get("meta_event_type") == "heartbeat":
+            if data.get("status", {}).get("online") is False:
+                self.invalidate_account()
+            elif not self.probe_verified:
+                self.schedule_probe()
+        if data.get("post_type") in {"message", "message_sent", "notice"}:
             self.timeline.receive(data)
         if self.on_event:
             task = asyncio.create_task(self.on_event(data))
@@ -77,6 +88,21 @@ class OneBot:
         if not task.cancelled() and task.exception():
             self.log.error("事件处理失败", exc_info=task.exception())
 
+    def invalidate_account(self):
+        self.account_version += 1
+        self.online, self.probe_verified = False, False
+        self.timeline.end()
+        for owner, future in list(self.pending.values()):
+            if not future.done():
+                future.set_exception(OneBotError("QQ账号或登录态变化，操作结果未知", outcome_unknown=True))
+
+    def schedule_probe(self):
+        if self.probe_task and not self.probe_task.done():
+            return
+        self.probe_task = asyncio.create_task(self.refresh_status())
+        self.tasks.add(self.probe_task)
+        self.probe_task.add_done_callback(self._event_done)
+
     def disconnected(self, owner):
         if owner is self.ws:
             self.timeline.end()
@@ -86,24 +112,33 @@ class OneBot:
                 future.set_exception(OneBotError("OneBot连接中断，结果未知", outcome_unknown=True))
 
     async def refresh_status(self):
-        if self.ws is None:
+        owner = self.ws
+        version = self.account_version
+        if owner is None:
             return self.status()
         try:
             reported = await self.api("get_status")
             info = await self.api("get_login_info")
             if reported.get("online") is True and info.get("user_id"):
                 await self.api("get_group_list")
-                self.self_id = str(info["user_id"])
-                self.online, self.probe_verified = True, True
+                if self.ws is owner and version == self.account_version:
+                    changed = not self.online or self.self_id != str(info["user_id"])
+                    self.self_id = str(info["user_id"])
+                    self.online, self.probe_verified = True, True
+                    if changed:
+                        self.account_version += 1
+                        self.timeline.begin()
             else:
-                self.online, self.probe_verified = False, False
+                if self.ws is owner and version == self.account_version:
+                    self.invalidate_account()
         except OneBotError:
-            self.online, self.probe_verified = False, False
+            if self.ws is owner and version == self.account_version:
+                self.invalidate_account()
         return self.status()
 
     def status(self):
         return {"connected": self.ws is not None and not self.ws.closed, "online": self.online,
-                "probeVerified": self.probe_verified, "selfId": self.self_id}
+                "probeVerified": self.probe_verified, "selfId": self.self_id, "accountVersion": self.account_version}
 
     async def run(self):
         import aiohttp
@@ -118,9 +153,7 @@ class OneBot:
                     async with self.http.ws_connect(self.url, headers=headers, heartbeat=30, max_msg_size=8*1024*1024) as owner:
                         self.ws = owner
                         self.timeline.begin()
-                        probe = asyncio.create_task(self.refresh_status())
-                        self.tasks.add(probe)
-                        probe.add_done_callback(self._event_done)
+                        self.schedule_probe()
                         async for frame in owner:
                             if frame.type == aiohttp.WSMsgType.TEXT:
                                 try:
@@ -154,6 +187,8 @@ class OneBot:
     async def send(self, key, message, timeout=None):
         action = "send_group_msg" if key.startswith("g") else "send_private_msg"
         field = "group_id" if key.startswith("g") else "user_id"
+        if isinstance(message, str):
+            message = [{"type": "text", "data": {"text": message}}]
         return await self.api(action, {field: int(key[1:]), "message": message}, timeout=timeout)
 
     async def member(self, group, user):
