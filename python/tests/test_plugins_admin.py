@@ -109,7 +109,7 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_pending_actions_fail_explicitly_and_migration_blocks_qq(self):
         response = await self.post("summary", {"groupId": 200000002})
-        self.assertEqual(response.status, 501)
+        self.assertEqual(response.status, 503)
         self.assertFalse((await (await self.client.get("/api/migration")).json())["ready"])
         self.assertEqual(main(["--root", str(self.root), "--env-file", str(self.config.env_file), "run"]), 2)
 

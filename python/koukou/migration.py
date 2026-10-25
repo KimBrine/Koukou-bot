@@ -17,6 +17,12 @@ MODULES = {
     "src/backup.js": "backup.py",
     "src/customCommands.js": "custom.py + bot.py (persistent scheduled delivery pending)",
     "src/music.js": "music.py",
+    "src/summaryStats.js": "summary_basics.py + summary_service.py",
+    "src/summaryFormat.js": "summary_basics.py",
+    "src/summaryContent.js": "summary_basics.py (profile and budgets; reference rendering pending)",
+    "src/summaryQuality.js": "summary_quality.py (adds original quote verification)",
+    "src/summaryProgress.js": "summary_basics.py",
+    "src/dailySummary.js": "summary_history.py + summary_service.py (automatic delivery verification and references pending)",
 }
 
 

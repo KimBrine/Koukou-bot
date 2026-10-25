@@ -20,6 +20,7 @@ from .backup import Backup
 from .custom import CustomCommands, clean
 from .commands import split_request, normalize, RESERVED
 from .quiet_greetings import QuietGreetings
+from .summary_service import SummaryService
 
 
 class Admin:
@@ -38,6 +39,7 @@ class Admin:
         self.backup = Backup(config)
         self.custom = CustomCommands(config.data_dir / "custom-commands.json")
         self.quiet_greetings = QuietGreetings(config, onebot, memory, self.settings, self.greetings) if onebot else None
+        self.summaries = SummaryService(config, onebot, model, memory, self.settings) if onebot else None
         self.schema = json.loads(Path(__file__).with_name("admin_schema.json").read_text(encoding="utf-8-sig"))
         self.gets = {
             "/api/state": self.state, "/api/config": self.get_config, "/api/python-scripts": self.get_plugins,
@@ -49,6 +51,7 @@ class Admin:
             "/api/poke-replies": self.get_poke_replies,
             "/api/backups": lambda _: {"items": self.backup.list(), "root": str(self.backup.root)},
             "/api/groups": self.get_groups, "/api/friends": self.get_friends,
+            "/api/daily": self.get_daily,
         }
         self.actions = {
             "set-config": self.set_config, "set-config-batch": self.set_config_batch,
@@ -75,6 +78,7 @@ class Admin:
             "export-commands": self.export_commands, "preview-commands": self.preview_commands,
             "import-commands": self.import_commands,
             "send-morning-greetings": self.send_morning,
+            "summary": self.summary, "summary-ack": self.summary_ack,
         }
 
     async def state(self, _):
@@ -84,7 +88,7 @@ class Admin:
                 "config": {"whitelistGroups": sorted(self.config.ids("WHITELIST_GROUPS")),
                     "adminUsers": sorted(self.config.ids("ADMIN_USERS")), "quietHours": self.config.get("QUIET_HOURS"),
                     "proactiveRate": self.config.number("PROACTIVE_RATE", .04), "quietGreetings": self.quiet_greetings.status() if self.quiet_greetings else {"enabled": self.config.enabled('QUIET_GREETINGS_ENABLED', False), "blocked": True, "groups": []}},
-                "today": {"total": 0, "perGroup": []}, "summaryProgress": [], "replies": 0,
+                "today": {"total": 0, "perGroup": []}, "summaryProgress": list(self.summaries.progress.items.values()) if self.summaries else [], "replies": 0,
                 "today_replies": 0, "counters": {}, "migration": self.get_migration({})}
 
     async def protocol_read(self, action):
@@ -112,6 +116,31 @@ class Admin:
         if self.quiet_greetings is None:
             raise RuntimeError('当前仅为控制台预览，QQ连接已禁用')
         return await self.quiet_greetings.catch_up_morning()
+
+    def summary(self, p):
+        if self.summaries is None:
+            raise RuntimeError('当前仅为控制台预览，QQ连接已禁用')
+        if p.get('missingOnly'):
+            raise RuntimeError('定时漏发核验尚未迁移，未提交补发任务')
+        group = p.get('groupId')
+        return self.summaries.trigger([group] if group else None, days=max(1, min(30, int(p.get('days') or 1))), statistics=p.get('statsOnly') is True)
+
+    def summary_ack(self, p):
+        if self.summaries is None:
+            raise RuntimeError('群总结服务未连接QQ')
+        return {'ok': True, 'acknowledged': self.summaries.progress.acknowledge(p['groupId'], p['jobId']), 'progress': list(self.summaries.progress.items.values())}
+
+    def get_daily(self, _):
+        root, items = self.config.data_dir / 'daily', []
+        if root.exists():
+            for directory in root.iterdir():
+                if directory.is_symlink() or not directory.is_dir() or not directory.name.isdecimal():
+                    continue
+                for file in sorted(directory.glob('*.jsonl'), reverse=True)[:14]:
+                    if file.is_symlink() or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', file.stem):
+                        continue
+                    items.append({'groupId': directory.name, 'date': file.stem, 'size': file.stat().st_size})
+        return {'items': items}
 
     def get_migration(self, _):
         return report(self.config.root, self.gets, self.actions)

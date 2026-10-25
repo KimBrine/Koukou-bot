@@ -72,3 +72,4 @@ for(const native of [false,true]){
  assert.ok(html.includes(native?'插件源码管理':'Python 脚本'))
 }
 console.log('Native slash command UI and legacy namespace UI both render correctly.')
+await import('./test-python-summary-parity.mjs')

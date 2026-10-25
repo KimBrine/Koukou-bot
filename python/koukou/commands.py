@@ -14,6 +14,8 @@ BUILTINS = [
     ("request-poke", "请求拍一拍", "@机器人 拍一拍 指定成员", "required"),
     ("poke", "拍机器人回应", "拍机器人头像", "none"),
     ("music", "点歌音乐名片", "点歌 歌名 歌手 / 歌曲ID / 完整歌曲链接", "required"),
+    ("summary", "群总结（手动）", "/群总结 [天数]", "required"),
+    ("clear-memory", "清除记忆", "/清除记忆 [全部]", "none"),
 ]
 MANAGEMENT = {"owner-mute", "self-mute", "whole-mute", "self-recall"}
 
@@ -93,12 +95,14 @@ class CommandRegistry:
         settings = self.state().get("builtins", {})
         items = []
         for id, name, trigger, ai in BUILTINS:
-            item = {"id": id, "name": name, "trigger": trigger, "ai": ai, "enabled": id in {"help", "question", "music"} or id == "poke" and self.config.enabled("POKE_REPLY_ENABLED"),
+            item = {"id": id, "name": name, "trigger": trigger, "ai": ai, "enabled": id in {"help", "question", "music", "summary", "clear-memory"} or id == "poke" and self.config.enabled("POKE_REPLY_ENABLED"),
                     "scope": "group" if id in MANAGEMENT else "groups" if id == "request-poke" else "all",
-                    "groups": [], "adminOnly": False, "description": name, "management": id in MANAGEMENT,
+                    "groups": [], "adminOnly": id == "clear-memory" or id == "summary" and bool(self.config.ids('ADMIN_USERS')), "description": name, "management": id in MANAGEMENT,
                     "whitelistOnly": id == "request-poke", "responseMode": "fixed", **settings.get(id, {})}
             # Permission category is an implementation property, never imported from configuration.
             item.update(id=id, management=id in MANAGEMENT, whitelistOnly=id == "request-poke")
+            if id == 'clear-memory':
+                item['adminOnly'] = True; item['protected'] = True
             items.append(item)
         return [*items, *self.plugin_entries()]
 

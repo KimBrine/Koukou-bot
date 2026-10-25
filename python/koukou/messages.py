@@ -6,10 +6,13 @@ import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
+
+TABLES = json.loads(Path(__file__).with_name('message_tables.json').read_text(encoding='utf-8'))
 
 
 def cq_unescape(value):
-    return str(value).replace("&#91;", "[").replace("&#93;", "]").replace("&#44;", ",").replace("&amp;", "&")
+    return str(value).replace("&amp;", "&").replace("&#91;", "[").replace("&#93;", "]").replace("&#44;", ",")
 
 
 def segments(raw):
@@ -38,26 +41,67 @@ class Message:
     reply_id: str = ""
     images: list = field(default_factory=list)
     mentions: list = field(default_factory=list)
+    forwards: list = field(default_factory=list)
 
 
-def parse_message(raw, self_id=""):
+def forward_segments(raw):
+    result = []
+    for item in segments(raw):
+        if not isinstance(item, dict):
+            continue
+        if item.get('type') in {'forward', 'node'}:
+            result.append(item)
+        elif item.get('type') == 'json':
+            try:
+                card = item.get('data', {}).get('data')
+                card = json.loads(card) if isinstance(card, str) else card
+                if not isinstance(card, dict) or card.get('app') != 'com.tencent.multimsg':
+                    continue
+                detail = card.get('meta', {}).get('detail') or card.get('meta', {}).get('detail_1', {})
+                id = detail.get('resid', detail.get('resId', detail.get('m_resid')))
+                if not isinstance(id, str) or not id.strip():
+                    continue
+                values = [detail.get('desc'), detail.get('summary'), *[v.get('text') for v in detail.get('news', [])[:3] if isinstance(v, dict)]]
+                preview = ' '.join(v[:200] for v in values if isinstance(v, str))[:600]
+                result.append({'type': 'forward', 'data': {'id': id.strip(), **({'preview': preview} if preview else {})}})
+            except (ValueError, TypeError, AttributeError):
+                continue
+    return result
+
+
+def parse_message(raw, self_id="", preserve_newlines=False):
     result = Message()
+    result.forwards = forward_segments(raw)
+    parts = []
     for segment in segments(raw):
+        if not isinstance(segment, dict):
+            continue
         data, kind = segment.get("data", {}), segment.get("type")
+        if not isinstance(data, dict):
+            continue
         if kind == "text":
-            result.text += str(data.get("text", ""))
+            parts.append(str(data.get("text", "")))
         elif kind == "at":
             uid = str(data.get("qq", ""))
             result.at_bot |= bool(self_id) and uid == str(self_id)
             if uid != str(self_id):
                 result.mentions.append(uid)
+                if uid and uid != 'all':
+                    parts.append(f'[@{uid}]')
         elif kind == "reply":
             result.reply_id = str(data.get("id", ""))
         elif kind == "image":
             result.images.append(data)
+            parts.append('[图片]')
         elif kind == "face":
-            result.text += f"[表情:{data.get('id', '')}]"
-    result.text = result.text.strip()
+            name = str((data.get('raw') or {}).get('faceText') or '').removeprefix('/').strip() or TABLES['faces'].get(str(data.get('id', '')).lstrip('0') or '0', '')
+            parts.append(f'[表情:{name}]' if name else '[表情]')
+        elif kind in {'record', 'video'}:
+            parts.append('[语音]' if kind == 'record' else '[视频]')
+        elif kind in {'forward', 'node'} or kind == 'json' and forward_segments([segment]):
+            parts.append('[合并聊天记录]')
+    text = (' ' if isinstance(raw, list) else '').join(parts)
+    result.text = re.sub(r'[^\S\n]+' if preserve_newlines else r'\s+', ' ', text.replace('\r\n', '\n').replace('\r', '\n')).strip() if isinstance(raw, list) else text.strip()
     return result
 
 

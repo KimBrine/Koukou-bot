@@ -8,6 +8,42 @@ from koukou.onebot import OneBot
 
 
 class TransportTests(unittest.IsolatedAsyncioTestCase):
+    async def test_summary_stream_has_idle_timeout_without_total_deadline(self):
+        requests = []
+        async def reply(request):
+            import json
+            requests.append(await request.json())
+            response = web.StreamResponse(headers={'Content-Type': 'text/event-stream'})
+            await response.prepare(request)
+            for index in range(5):
+                value = {'choices': [{'delta': {'reasoning_content': '思考中'}, 'finish_reason': None}]}
+                await response.write(('data: '+json.dumps(value)+'\n\n').encode())
+                await asyncio.sleep(.07)
+            await response.write(('data: '+json.dumps({'choices': [{'delta': {'content': '完整答复'}, 'finish_reason': 'stop'}]}, ensure_ascii=False)+'\n\n').encode())
+            return response
+        app = web.Application(); app.router.add_post('/v1/chat/completions', reply)
+        server = TestServer(app); await server.start_server()
+        try:
+            async with ClientSession() as http:
+                model = ModelClient(http, api_key='test-only', base_url=str(server.make_url('/v1')), timeout=.2, max_tokens=1, retries=0)
+                self.assertEqual(await model.chat('', [], unlimited=True, stream=True), '完整答复')
+                self.assertNotIn('max_tokens', requests[0]); self.assertEqual(requests[0]['reasoning_effort'], 'max')
+        finally:
+            await server.close()
+
+    async def test_stream_disconnect_does_not_return_partial_reply(self):
+        async def reply(request):
+            return web.Response(text='data: {"choices":[{"delta":{"content":"半句话"},"finish_reason":null}]}\n\n', content_type='text/event-stream')
+        app = web.Application(); app.router.add_post('/v1/chat/completions', reply)
+        server = TestServer(app); await server.start_server()
+        try:
+            async with ClientSession() as http:
+                model = ModelClient(http, api_key='test-only', base_url=str(server.make_url('/v1')), retries=0)
+                with self.assertRaisesRegex(ModelError, '提前中断'):
+                    await model.chat('', [], unlimited=True, stream=True)
+        finally:
+            await server.close()
+
     async def test_real_http_model_retry_preserves_max(self):
         requests = []
         async def reply(request):

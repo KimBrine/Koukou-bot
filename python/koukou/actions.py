@@ -24,16 +24,19 @@ class Actions:
         self.config, self.onebot, self.registry, self.model, self.now = config, onebot, registry, model, now
         self.pending, self.latest = {}, {}
         self.recent = defaultdict(lambda: deque(maxlen=12))
-        self.session = onebot.timeline.session
+        self.session = self.session_token()
         self.file = config.data_dir / "native-action-delivery.json"
         self.deliveries = read_json(self.file, {})
         if not isinstance(self.deliveries, dict):
             raise ValueError("动作投递记录损坏，拒绝继续执行")
 
     def sync(self):
-        if self.session != self.onebot.timeline.session:
+        if self.session != self.session_token():
             self.pending.clear(); self.latest.clear(); self.recent.clear()
-            self.session = self.onebot.timeline.session
+            self.session = self.session_token()
+
+    def session_token(self):
+        return (self.onebot.timeline.session, getattr(self.config, 'persona_revision', 0))
 
     def reserve(self, event):
         self.sync()

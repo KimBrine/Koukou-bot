@@ -1,6 +1,7 @@
 """OpenAI-compatible async model transport, preserving max reasoning on every retry."""
 import asyncio
 import re
+import json
 
 
 class ModelError(RuntimeError):
@@ -24,9 +25,9 @@ class ModelClient:
         self.timeout, self.max_tokens, self.retries, self.thinking = timeout, max_tokens, retries, thinking
         self.semaphore = asyncio.Semaphore(max(1, concurrency))
 
-    def payload(self, system, messages, *, unlimited=False, tools=None, temperature=0.7):
+    def payload(self, system, messages, *, unlimited=False, tools=None, temperature=0.7, stream=False):
         body = {"model": self.model, "messages": [{"role": "system", "content": system}, *messages],
-                "stream": False, "temperature": temperature}
+                "stream": stream, "temperature": temperature}
         if self.model.lower().startswith("deepseek"):
             body["reasoning_effort"] = "max"
         elif self.model.lower().startswith("qwen") and self.thinking is not None:
@@ -47,7 +48,39 @@ class ModelClient:
                 try:
                     async with self.session.post(self.base_url + "/chat/completions", json=body,
                             headers={"Authorization": f"Bearer {self.api_key}"},
-                            timeout=aiohttp.ClientTimeout(total=self.timeout or None)) as response:
+                            timeout=aiohttp.ClientTimeout(total=None, connect=30, sock_read=self.timeout or None) if body['stream'] else aiohttp.ClientTimeout(total=self.timeout or None)) as response:
+                        if body['stream'] and response.status < 400 and response.content_type == 'text/event-stream':
+                            chunks, finished = [], False
+                            async for raw in response.content:
+                                line = raw.decode('utf-8').strip()
+                                if not line.startswith('data:'):
+                                    continue
+                                value = line[5:].strip()
+                                if value == '[DONE]':
+                                    break
+                                try:
+                                    data = json.loads(value)
+                                except ValueError as exc:
+                                    raise ModelError('模型流返回无效JSON，未发送半篇回答', 502) from exc
+                                if data.get('error'):
+                                    raise ModelError('模型流错误 '+str(data['error'].get('code', '')), 400)
+                                choice = (data.get('choices') or [{}])[0]
+                                delta = choice.get('delta', {})
+                                if delta.get('tool_calls'):
+                                    raise ModelError('本轮总结不允许工具调用')
+                                content = delta.get('content')
+                                if isinstance(content, str):
+                                    chunks.append(content)
+                                reason = choice.get('finish_reason')
+                                if reason == 'length':
+                                    raise ModelError('模型输出被服务商截断，不发送半篇回答')
+                                if reason in {'content_filter', 'safety'}:
+                                    raise ModelError('模型内容检查未通过 content_filter', 400)
+                                if reason:
+                                    finished = True; break
+                            if not finished:
+                                raise ModelError('模型流提前中断，未发送半篇回答', 502)
+                            return {'content': ''.join(chunks)}
                         data = await response.json(content_type=None)
                         if response.status >= 400:
                             code = str((data.get("error") or {}).get("code", ""))

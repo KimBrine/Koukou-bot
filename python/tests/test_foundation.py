@@ -65,7 +65,7 @@ class MessageTests(unittest.TestCase):
         parsed = parse_message('你好[CQ:at,qq=42][CQ:reply,id=5][CQ:face,id=66]', 42)
         self.assertTrue(parsed.at_bot)
         self.assertEqual(parsed.reply_id, "5")
-        self.assertIn("表情:66", parsed.text)
+        self.assertIn("表情:爱心", parsed.text)
         self.assertEqual(repeat_fingerprint('你好💀[CQ:face,id=66]'), repeat_fingerprint([
             {"type": "text", "data": {"text": "你好💀"}}, {"type": "face", "data": {"id": "66"}}]))
         self.assertIsNone(repeat_fingerprint('[CQ:image,file=abc]'))

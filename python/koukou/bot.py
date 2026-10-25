@@ -19,10 +19,11 @@ import json
 
 
 class Bot:
-    def __init__(self, config, onebot, memory, *, model=None, long_memory=None, plugins=None, settings=None, rand=random.random, music_search=search_song):
+    def __init__(self, config, onebot, memory, *, model=None, long_memory=None, plugins=None, settings=None, rand=random.random, music_search=search_song, summary_service=None):
         self.config, self.onebot, self.memory = config, onebot, memory
         self.model, self.long_memory, self.plugins = model, long_memory, plugins
         self.music_search = music_search
+        self.summaries = summary_service
         self.commands = CommandRegistry(config, plugins) if plugins else None
         self.actions = Actions(config, onebot, self.commands, model) if self.commands else None
         self.media = MediaDelivery(config, onebot, plugins, quiet=self.quiet)
@@ -185,6 +186,8 @@ class Bot:
         if message_id and seen in self.seen:
             return
         self.seen.append(seen)
+        if self.summaries:
+            self.summaries.archive.capture(event, parsed)
         if self.sessions:
             self.sessions.prepare(key)
         followup = self.actions.reserve(event) if self.actions and not self.quiet(key) else None
@@ -233,6 +236,28 @@ class Bot:
             except Exception:
                 quote = None
         direct = private or parsed.at_bot or reply_to_bot
+        if direct:
+            summary_request = re.fullmatch(r'[/／](?:群总结|群聊总结|今日总结|每日总结)\s*(\d{1,2})?\s*', parsed.text)
+            clear_request = re.fullmatch(r'[/／](?:清除记忆|清空记忆|重置记忆)(?:\s+(全部))?\s*', parsed.text)
+            if summary_request or clear_request:
+                feature = 'summary' if summary_request else 'clear-memory'
+                allowed = self.commands.allowed(self.commands.get(feature), event) if self.commands else int(event['user_id']) in self.config.ids('ADMIN_USERS')
+                if not allowed:
+                    await self.send(event, '此指令未在当前会话启用，或需要管理员权限。', revision); return
+                if summary_request:
+                    if private or not self.summaries:
+                        await self.send(event, '请在要总结的群里@我，或使用控制台群总结入口。', revision); return
+                    self.summaries.trigger([event['group_id']], days=int(summary_request[1] or 1))
+                    await self.send(event, '已提交群总结任务，可以在控制台查看进度。', revision); return
+                if not self.sessions:
+                    await self.send(event, '记忆协调服务尚未配置，本次没有清理。', revision); return
+                def reset():
+                    if clear_request[1]:
+                        self.memory.restore({'chats': {}, 'resetAt': int(time.time())*1000, 'keyResetAt': {}}); self.long_memory.clear()
+                    else:
+                        self.memory.clear(key); self.long_memory.clear(key)
+                self.sessions.transaction('指令清理记忆', reset)
+                await self.send(event, '已备份并清除记忆。', self.revision(key)); return
         if direct and not re.search(r"(?:^|\s)/Q(?:\s|$)", parsed.text, re.I):
             quoted_text = parse_message(quote.get('message', ''), self.onebot.self_id).text if quote and (private and not quote.get('group_id') or str(quote.get('group_id')) == str(event.get('group_id'))) else ''
             request = parse_music_request(parsed.text, quoted_text)
