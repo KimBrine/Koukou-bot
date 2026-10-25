@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import time
 from .messages import parse_message
+from .forward_records import CHINA
 
 
 def merge_records(history, captured, start, end=float('inf')):
@@ -182,7 +183,7 @@ class DailyArchive:
             return
         record = record_message(event)
         record.update(text=parsed.text, atBot=parsed.at_bot)
-        day = datetime.fromtimestamp(record['time'] or time.time()).strftime('%Y-%m-%d')
+        day = datetime.fromtimestamp(record['time'] or time.time(), CHINA).strftime('%Y-%m-%d')
         file = self.file(event['group_id'], day)
         file.parent.mkdir(parents=True, exist_ok=True)
         with file.open('a', encoding='utf-8', newline='\n') as stream:

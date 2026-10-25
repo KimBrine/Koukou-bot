@@ -5,7 +5,7 @@ import json
 import re
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 TABLES = json.loads(Path(__file__).with_name('message_tables.json').read_text(encoding='utf-8'))
@@ -109,6 +109,20 @@ def chat_key(event):
     return f"g{event['group_id']}" if event.get("group_id") else f"p{event['user_id']}"
 
 
+def reply_segments(text):
+    """Only owned QQ face markers become segments; literal CQ stays plain text."""
+    faces = {name:id for id,name in TABLES['faces'].items()}
+    values,end = [],0
+    for match in re.finditer(r'\[表情[:：]\s*([^\[\]\n]{1,12})\]',str(text)):
+        id = faces.get(match[1].strip().removeprefix('/'))
+        if id is None: continue
+        if match.start()>end:values.append({'type':'text','data':{'text':text[end:match.start()]}})
+        values.append({'type':'face','data':{'id':str(id)}});end=match.end()
+    if not values:return text
+    if end<len(text):values.append({'type':'text','data':{'text':text[end:]}})
+    return values
+
+
 def quiet_hour(spec, now=None):
     match = re.fullmatch(r"\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\s*", spec or "")
     if not match:
@@ -117,7 +131,7 @@ def quiet_hour(spec, now=None):
     if a > 23 or c > 24 or b > 59 or d > 59 or (c == 24 and d):
         return False
     start, end = a * 60 + b, c * 60 + d
-    current = now or datetime.now()
+    current = now or datetime.now(timezone(timedelta(hours=8)))
     value = current.hour * 60 + current.minute
     return start <= value < end if start < end else (value >= start or value < end) if start != end else False
 
@@ -169,3 +183,15 @@ class Timeline:
     def current(self, event):
         t = event.get("_timeline", {})
         return self.available and not t.get("historical", True) and t.get("session") == self.session and self.now() - t.get("time", 0) <= 90
+
+    def accept(self, event):
+        """Apply freshness once; a slow accepted answer is not a stale event."""
+        if not self.current(event):
+            return False
+        event['_accepted_session'] = self.session
+        return True
+
+    def accepted_current(self, event):
+        t = event.get('_timeline', {})
+        return (self.available and event.get('_accepted_session') == self.session
+                and t.get('session') == self.session and not t.get('historical', True))

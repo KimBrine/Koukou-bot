@@ -73,3 +73,6 @@ for(const native of [false,true]){
 }
 console.log('Native slash command UI and legacy namespace UI both render correctly.')
 await import('./test-python-summary-parity.mjs')
+await import('./test-python-reply-parity.mjs')
+await import('./test-python-web-parity.mjs')
+await import('./test-python-id-check-parity.mjs')

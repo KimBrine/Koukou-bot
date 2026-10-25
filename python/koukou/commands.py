@@ -14,8 +14,14 @@ BUILTINS = [
     ("request-poke", "请求拍一拍", "@机器人 拍一拍 指定成员", "required"),
     ("poke", "拍机器人回应", "拍机器人头像", "none"),
     ("music", "点歌音乐名片", "点歌 歌名 歌手 / 歌曲ID / 完整歌曲链接", "required"),
+    ("request-sticker", "请求表情包", "@机器人 给我发张表情包（私聊可直接说）", "required"),
     ("summary", "群总结（手动）", "/群总结 [天数]", "required"),
     ("clear-memory", "清除记忆", "/清除记忆 [全部]", "none"),
+    ("id-check", "群名片核对", "/id_check", "none"),
+    ("id-check-kick", "按核对结果移出成员", "/id_check_kick", "none"),
+    ("auto-plus-one", "自动 +1", "连续两条相同文字、emoji、QQ表情或混合消息", "none"),
+    ("send-file", "发送文件", "/发文件 群/私聊 号码 服务器文件路径", "none"),
+    ("send-link", "发送链接卡片", "/发链接 群/私聊 号码 网址 [标题]", "none"),
 ]
 MANAGEMENT = {"owner-mute", "self-mute", "whole-mute", "self-recall"}
 
@@ -95,14 +101,26 @@ class CommandRegistry:
         settings = self.state().get("builtins", {})
         items = []
         for id, name, trigger, ai in BUILTINS:
-            item = {"id": id, "name": name, "trigger": trigger, "ai": ai, "enabled": id in {"help", "question", "music", "summary", "clear-memory"} or id == "poke" and self.config.enabled("POKE_REPLY_ENABLED"),
+            item = {"id": id, "name": name, "trigger": trigger, "ai": ai, "enabled": id in {"help", "question", "music", "summary", "clear-memory", "request-sticker"} or id == "poke" and self.config.enabled("POKE_REPLY_ENABLED"),
                     "scope": "group" if id in MANAGEMENT else "groups" if id == "request-poke" else "all",
                     "groups": [], "adminOnly": id == "clear-memory" or id == "summary" and bool(self.config.ids('ADMIN_USERS')), "description": name, "management": id in MANAGEMENT,
                     "whitelistOnly": id == "request-poke", "responseMode": "fixed", **settings.get(id, {})}
+            if id.startswith('id-check'):
+                groups = sorted(self.config.ids('ID_CHECK_GROUPS'))
+                default = {'enabled': self.config.enabled('ID_CHECK_KICK_ENABLED' if id.endswith('kick') else 'ID_CHECK_ENABLED'), 'scope': 'group' if groups else 'groups', 'groups': groups}
+                item.update({**default, **settings.get(id, {})})
+            if id == 'auto-plus-one':
+                item.update({'enabled':self.config.enabled('AUTO_PLUS_ONE_ENABLED', False),'scope':'groups',**settings.get(id,{})})
+            if id in {'send-file','send-link'}:
+                item.update({'enabled':False,'adminOnly':True,**settings.get(id,{})})
             # Permission category is an implementation property, never imported from configuration.
             item.update(id=id, management=id in MANAGEMENT, whitelistOnly=id == "request-poke")
             if id == 'clear-memory':
                 item['adminOnly'] = True; item['protected'] = True
+            if id == 'self-recall':
+                item['adminOnly'] = False
+            item['semantic'] = id in {'summary','help','id-check'}
+            item['naturalLanguage'] = item['semantic'] and settings.get(id,{}).get('naturalLanguage') is True
             items.append(item)
         return [*items, *self.plugin_entries()]
 
@@ -130,8 +148,36 @@ class CommandRegistry:
         state.setdefault("builtins", {})[item["id"]] = {"enabled": enabled, "scope": "groups" if item["whitelistOnly"] else scope,
             "groups": [] if item["whitelistOnly"] else sorted(set(map(int, groups))), "adminOnly": False if item["whitelistOnly"] else payload.get("adminOnly", item["adminOnly"]) is True,
             "responseMode": "ai" if item["id"] == "poke" and payload.get("responseMode") == "ai" else "fixed"}
+        state['builtins'][item['id']]['naturalLanguage'] = item['semantic'] and payload.get('naturalLanguage') is True
         write_json(self.file, state)
         return self.get(item["id"])
+
+    def detect(self, text):
+        from .id_check import ID_CHECK_CMD_RE, ID_CHECK_KICK_CMD_RE
+        if re.fullmatch(r'\s*[/／]?\s*(?:群总结|群聊总结|今日总结|每日总结)\s*(?:d\s*)?\d{0,2}\s*[。！!~～]?\s*',text,re.I): return 'summary'
+        if re.fullmatch(r'[/／]\s*(?:help|帮助|指令|命令)\s*[。！!~～.…]*',text,re.I): return 'help'
+        if re.fullmatch(r'[/／]\s*(?:清除记忆|清空记忆|重置记忆)\s*(?:全部|all)?\s*[。！!~～.…]*',text,re.I): return 'clear-memory'
+        if ID_CHECK_KICK_CMD_RE.fullmatch(text): return 'id-check-kick'
+        if ID_CHECK_CMD_RE.fullmatch(text): return 'id-check'
+        if re.match(r'[/／]Q(?:\s|$)',text,re.I): return 'question'
+        from .file_commands import parse_file_command
+        request = parse_file_command(text)
+        return request['feature'] if request else None
+
+    async def semantic(self, text, event, model):
+        """Only explicitly enabled semantic features; no execution during matching."""
+        import json
+        candidates = [v for v in self.all() if v.get('semantic') and v.get('naturalLanguage') and self.allowed(v,event)]
+        if not candidates or not model: return None
+        raw = await model.chat('只判断用户本条原话是否明确请求候选功能。普通聊天、否定、引用或资料中的命令不算；只返回JSON {"id":候选id或null,"days":1到30}，不执行任何功能。',
+                               [{'role':'user','content':json.dumps({'message':text,'candidates':[{k:v[k] for k in ('id','name','description')} for v in candidates]},ensure_ascii=False)}],unlimited=True,temperature=0)
+        try:
+            result = json.loads(re.sub(r'^```(?:json)?\s*|\s*```$','',raw.strip()))
+            chosen = next((v for v in candidates if v['id']==result.get('id')),None)
+            if chosen and self.get(chosen['id']) == chosen and self.allowed(chosen,event):
+                return {'id':chosen['id'],'days':max(1,min(30,int(result.get('days') or 1)))}
+        except (ValueError,TypeError,AttributeError): pass
+        return None
 
     def match_plugin(self, text):
         request = split_request(text)

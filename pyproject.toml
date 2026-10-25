@@ -10,6 +10,9 @@ requires-python = ">=3.11"
 license = "GPL-3.0-only"
 dependencies = ["aiohttp>=3.11,<4"]
 
+[project.optional-dependencies]
+images = ["Pillow>=12,<13"]
+
 [project.scripts]
 koukou = "koukou.__main__:main"
 
@@ -18,4 +21,4 @@ where = ["python"]
 include = ["koukou*"]
 
 [tool.setuptools.package-data]
-koukou = ["*.json"]
+koukou = ["*.json", "*.ps1"]

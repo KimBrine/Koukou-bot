@@ -1,7 +1,9 @@
 """Evidence-aware report inspection; one repair, never fabricate to satisfy a quota."""
 from collections import defaultdict
+import asyncio
 import re
 from .summary_basics import content_profile, parse_summary_format, section_heading, topic_policy
+from .forward_records import transient_error
 
 
 def limit_references(text):
@@ -102,14 +104,20 @@ def inspect_quality(text, records, stats, profile=None):
             'topicBodies': bodies, 'fatalIssues': issues, 'issues': issues+suggestions}
 
 
-async def generate_checked(model, prompt, messages, records, stats, profile=None):
+async def generate_checked(model, prompt, messages, records, stats, profile=None, *, pause=asyncio.sleep):
     profile = content_profile(records) if profile is None else profile
     async def request(messages):
         from .models import ModelClient
-        options = {'unlimited': True}
+        options = {'unlimited': profile.get('unrestricted', True)}
         if isinstance(model, ModelClient):
             options['stream'] = True
-        return await model.chat(prompt, messages, **options)
+        try:
+            return await model.chat(prompt, messages, **options)
+        except Exception as error:
+            if not transient_error(error):
+                raise
+            await pause(.7)
+            return await model.chat(prompt, messages, **options)
     text = limit_references(await request(messages))
     quality = inspect_quality(text, records, stats, profile)
     if quality['ok']:

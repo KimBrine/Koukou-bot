@@ -142,6 +142,16 @@ class BackupTests(unittest.TestCase):
     setUp = SessionTests.setUp
     tearDown = SessionTests.tearDown
     remember = SessionTests.remember
+    def test_memory_restore_preserves_latest_irreversible_delivery_receipts(self):
+        self.remember('原记忆')
+        file=self.config.data_dir/'native-reply-delivery.json'
+        write_json(file,{'old':{'status':'confirmed'}})
+        backup=Backup(self.config);saved=backup.run()
+        write_json(file,{'old':{'status':'confirmed'},'new':{'status':'uncertain'}})
+        self.remember('新记忆')
+        backup.queue_restore(saved['name']);backup.apply_pending()
+        self.assertIn('new',read_json(file))
+        self.assertEqual(Memory(self.config.data_dir).get('g100')[0]['content'],'原记忆')
     def test_completed_backup_restore_and_integrity(self):
         self.remember('原记忆')
         backup = Backup(self.config); saved = backup.run()

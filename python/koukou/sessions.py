@@ -51,7 +51,7 @@ def normalize_patch(patch):
             out[key] = str(patch[key] or "")[:size].strip() if key == "persona" else str(patch[key] or "")[:size]
     if "quietHours" in patch:
         value = str(patch["quietHours"] or "").strip()
-        out["quietHours"] = value if not value or re.fullmatch(r"\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}", value) else None
+        out["quietHours"] = None if patch["quietHours"] is None else value if not value or re.fullmatch(r"\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}", value) else None
     return out
 
 

@@ -2,9 +2,15 @@
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
 from .messages import Timeline
+
+
+def confirmed_message_id(receipt):
+    value = str(receipt.get('message_id', '')) if isinstance(receipt, dict) else ''
+    return value if re.fullmatch(r'-?\d+', value) and int(value) != 0 else None
 
 
 class OneBotError(RuntimeError):
@@ -24,6 +30,7 @@ class OneBot:
         self.stopping, self.online, self.probe_verified = False, False, False
         self.account_version = 0
         self.probe_task = None
+        self.image_style = None
         self.log = logging.getLogger("koukou.onebot")
 
     async def api(self, action, params=None, timeout=None):
@@ -86,7 +93,7 @@ class OneBot:
     def _event_done(self, task):
         self.tasks.discard(task)
         if not task.cancelled() and task.exception():
-            self.log.error("事件处理失败", exc_info=task.exception())
+            self.log.error("事件处理失败：%s", str(task.exception()))
 
     def invalidate_account(self):
         self.account_version += 1
@@ -107,6 +114,7 @@ class OneBot:
         if owner is self.ws:
             self.timeline.end()
             self.ws, self.online, self.probe_verified = None, False, False
+            self.image_style = None
         for echo, (ws, future) in list(self.pending.items()):
             if ws is owner and not future.done():
                 future.set_exception(OneBotError("OneBot连接中断，结果未知", outcome_unknown=True))
@@ -193,3 +201,21 @@ class OneBot:
 
     async def member(self, group, user):
         return await self.api("get_group_member_info", {"group_id": int(group), "user_id": int(user), "no_cache": True})
+
+    async def image_segment(self, file, sticker=False):
+        if isinstance(file, str) and file.startswith('data:image/') and ';base64,' in file:
+            file = 'base64://'+file.split(';base64,', 1)[1]
+        data = {'file': file}
+        if sticker:
+            if self.image_style is None:
+                try:
+                    version = await self.api('get_version_info')
+                    identity = json.dumps(version, ensure_ascii=False)
+                    self.image_style = 'camel' if re.search('LLOneBot|LLBot', identity, re.I) else 'snake' if re.search('NapCat', identity, re.I) else 'both'
+                except OneBotError:
+                    self.image_style = 'both'
+            if self.image_style != 'snake':
+                data['subType'] = 1
+            if self.image_style != 'camel':
+                data['sub_type'] = 1
+        return {'type': 'image', 'data': data}

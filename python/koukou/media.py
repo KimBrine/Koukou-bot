@@ -7,6 +7,11 @@ from urllib.parse import unquote, urlsplit
 from urllib.request import url2pathname
 from .messages import chat_key
 from .state import read_json, write_json
+from .onebot import confirmed_message_id
+
+
+class DeliveryUncertain(RuntimeError):
+    outcome_unknown = True
 
 
 def local_path(value):
@@ -64,9 +69,10 @@ class MediaDelivery:
         if music is not None and (not isinstance(music, dict) or music.get("type") not in {"163", "qq"} or not re.fullmatch(r"\d{1,20}", str(music.get("id", "")))):
             raise ValueError("音乐名片格式无效")
         images = result.get("images", [])
-        if not isinstance(images, list) or len(images) > 100:
+        sticker_images = result.get('stickerImages', [])
+        if not isinstance(images, list) or not isinstance(sticker_images, list) or len(images)+len(sticker_images) > 100:
             raise ValueError("图片结果无效")
-        for image in images:
+        for image in images+sticker_images:
             if not isinstance(image, str) or not image:
                 raise ValueError("图片路径无效")
             if not image.startswith(("https://", "http://", "data:image/")) and not local_path(image).is_file():
@@ -79,7 +85,7 @@ class MediaDelivery:
             raise ValueError("撤回时间格式无效")
         if not 0 <= seconds <= 7200:
             raise ValueError("撤回时间必须在0~7200秒内")
-        if not settings.get("recallEnabled", True):
+        if not settings.get("recallEnabled", True) and not ('recall_seconds' in spec or 'recall_minutes' in spec):
             seconds = 0
         card = result.get("legacyCard")
         if card is not None:
@@ -107,21 +113,31 @@ class MediaDelivery:
             self.records[token] = record; self.save()
             try:
                 receipt = await send()
-                mid = receipt.get("message_id") if isinstance(receipt, dict) else None
+                mid = confirmed_message_id(receipt)
                 if mid is None:
                     record["status"] = "uncertain"; self.save()
                     return False
                 record.update(status="confirmed", messageId=str(mid))
                 if recall and seconds:
                     record.update(recallAt=self.now()+seconds, recallStatus="pending")
-                self.save(); sent.append({"messageId": str(mid), "text": message})
+                try:
+                    self.save()
+                except Exception as error:
+                    raise DeliveryUncertain('QQ已返回回执，但投递记录未能保存；请核对目标会话，不自动重发') from error
+                sent.append({"messageId": str(mid), "text": message})
                 return True
             except asyncio.CancelledError:
-                record["status"] = "uncertain"; self.save(); raise
+                record["status"] = "uncertain"
+                try: self.save()
+                except Exception: pass
+                raise
             except Exception:
-                record["status"] = "uncertain"; self.save(); raise
+                record["status"] = "uncertain"
+                try: self.save()
+                except Exception: pass
+                raise
 
-        text = str(result.get("text") or spec.get("summary") or "")
+        text = str(result.get("text") or spec.get("text") or spec.get("summary") or "")
         if text and not await dispatch(lambda: self.onebot.send(key, text), message=text):
             return sent
         if music is not None:
@@ -143,7 +159,18 @@ class MediaDelivery:
             if not await dispatch(lambda: self.onebot.api(action, {id_field: int(key[1:]), "messages": nodes}, timeout=120)):
                 return sent
         if images:
-            segments = [{"type": "image", "data": {"file": image if image.startswith(("http://", "https://", "data:")) else local_path(image).as_uri()}} for image in images]
+            segments = []
+            for image in images:
+                file = image if image.startswith(("http://", "https://", "data:")) else local_path(image).as_uri()
+                segment = await self.onebot.image_segment(file) if hasattr(self.onebot, 'image_segment') else {'type':'image','data':{'file':file}}
+                segments.append(segment)
+            if not await dispatch(lambda: self.onebot.send(key, segments)):
+                return sent
+        if sticker_images:
+            segments = []
+            for image in sticker_images:
+                segment = await self.onebot.image_segment(image, sticker=True) if hasattr(self.onebot, 'image_segment') else {'type':'image','data':{'file':image,'sub_type':1,'subType':1}}
+                segments.append(segment)
             if not await dispatch(lambda: self.onebot.send(key, segments)):
                 return sent
         for file in files:

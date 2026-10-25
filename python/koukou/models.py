@@ -100,6 +100,6 @@ class ModelClient:
         message = await self.raw(system, messages, **options)
         return clean_reply(message.get("content", ""))
 
-    async def describe(self, system, text, images):
+    async def describe(self, system, text, images, **options):
         return await self.chat(system, [{"role": "user", "content": [{"type": "text", "text": text},
-            *({"type": "image_url", "image_url": {"url": image}} for image in images)]}])
+            *({"type": "image_url", "image_url": {"url": image}} for image in images)]}], **options)

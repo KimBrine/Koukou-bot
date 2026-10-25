@@ -11,6 +11,15 @@ from .state import read_json, write_json
 ITEMS = {"memory.json", "memory.json.reset.json", "long-memory.json", "long-memory.json.state.json", "long-memory.json.records",
          "chat-settings.json", "custom-commands.json", "vision-providers.json", "command-center.json", "supervisor-state.json",
          "personas", "stickers", "persona.txt", "poke-replies.txt", "persona-greetings.json", "python-memory-records"}
+ITEMS |= {'native-media-delivery.json', 'native-summary-receipts.json', 'native-poke-delivery.json',
+          'custom-command-delivery.json', 'daily-ping-delivery.json', 'daily-ping-state.json',
+          'summary-delivery-state.json', 'summary-progress.json', 'native-id-check.json', 'notifications.json',
+          'native-reply-delivery.json', 'native-link-delivery.json'}
+RECEIPTS = {'native-media-delivery.json','native-summary-receipts.json','native-poke-delivery.json',
+            'native-action-delivery.json','native-reply-delivery.json','native-link-delivery.json',
+            'custom-command-delivery.json','daily-ping-delivery.json','daily-ping-state.json',
+            'summary-delivery-state.json','native-id-check.json','notifications.json','quiet-greetings-state.json'}
+ITEMS |= RECEIPTS
 NAME = re.compile(r"\d{8}-\d{6}(?:-[a-f0-9]{8})?")
 
 
@@ -205,6 +214,10 @@ class Backup:
         job["phase"] = "applying"; write_json(pending, job)
         try:
             for item in job["items"]:
+                # An external action cannot be undone by restoring local files.
+                # Preserve the latest receipts so a memory rollback never rearms sends.
+                if item in RECEIPTS and item in job['present']:
+                    continue
                 remove(self.data, item)
                 copy(child(stage / "content", item), child(self.data, item))
             job["phase"] = "complete"

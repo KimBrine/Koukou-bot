@@ -17,23 +17,28 @@ def default_root():
 
 async def serve(config, port):
     from aiohttp import web
-    from .admin import Admin
-    from .state import InstanceLock
-    from .sessions import recover_session
-    from .backup import Backup
-    with InstanceLock(config.data_dir):
-        if recover_session(config):
-            config = Config(config.root, config.env_file, config.environ)
-        Backup(config).apply_pending()
-        admin = Admin(config, PluginManager(config.root, config), Memory(config.data_dir), LongMemory(config.data_dir))
-        runner = web.AppRunner(admin.app())
-        await runner.setup()
+    from .runtime import Runtime
+    while True:
+        runtime = await Runtime.create(config, preview=True)
+        runner = web.AppRunner(runtime.admin.app())
         try:
-            await web.TCPSite(runner, "127.0.0.1", port).start()
-            print(f"Python迁移控制台：http://127.0.0.1:{port}（仅预览，QQ连接已禁用）", flush=True)
-            await asyncio.Event().wait()
+            await runner.setup()
+            try:
+                await web.TCPSite(runner, "127.0.0.1", port).start()
+                print(f"Python迁移控制台：http://127.0.0.1:{port}（仅预览，QQ连接已禁用）", flush=True)
+                await runtime.restart_requested.wait()
+            finally:
+                await runner.cleanup()
         finally:
-            await runner.cleanup()
+            await runtime.close()
+        config=Config(config.root,config.env_file,config.environ)
+
+
+def preview_config(root):
+    root=Path(root).resolve()
+    # The default preview must never edit the production .env or its data paths.
+    return Config(root,root/'data-python'/'preview.env',environ={
+        'BOT_DATA_DIR':str(root/'data-python'),'BOT_LOG_DIR':str(root/'logs-python')})
 
 
 def main(argv=None):
@@ -59,12 +64,10 @@ def main(argv=None):
     run.add_argument("name")
     run.add_argument("args", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
-    config = Config(args.root, args.env_file)
+    config = preview_config(args.root) if args.command=='preview' and args.env_file is None else Config(args.root, args.env_file)
     try:
         if args.command == "migration":
-            from .admin import Admin
-            admin = Admin(config, PluginManager(config.root, config), Memory(config.data_dir), LongMemory(config.data_dir))
-            status = admin.get_migration({})
+            status = report(config.root)
             print(json.dumps(status, ensure_ascii=False, indent=2))
             return 1 if args.require_complete and not status["ready"] else 0
         if args.command == "run":

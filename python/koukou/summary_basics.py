@@ -7,6 +7,7 @@ import re
 import time
 import uuid
 from .messages import TABLES
+from .forward_records import CHINA
 from .state import read_json, write_json
 
 RANGES = TABLES['extendedPictographic']
@@ -33,7 +34,7 @@ def summary_stats(records):
     for record in records:
         counts = analyze_text(record.get('text', ''))
         chars += counts['chars']; emoji += counts['emojiTotal']
-        hours[datetime.fromtimestamp(record.get('time') or 0).hour] += 1
+        hours[datetime.fromtimestamp(record.get('time') or 0, CHINA).hour] += 1
         key = str(record.get('userId', record.get('name', '?')))
         user = users.setdefault(key, {'userId': key, 'name': str(record.get('name', key)), 'count': 0, 'chars': 0, 'emoji': 0, 'replies': 0})
         user['count'] += 1; user['chars'] += counts['chars']; user['emoji'] += counts['emojiTotal']; user['replies'] += bool(record.get('replyId'))

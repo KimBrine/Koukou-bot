@@ -71,13 +71,14 @@ class Actions:
     def operator(self, event, actor):
         return str(actor.get("user_id")) == str(event["user_id"]) and (actor.get("role") == "owner" or actor.get("role") == "admin" and int(event["user_id"]) in self.config.ids("ADMIN_USERS"))
 
-    async def clarify(self, event, feature, text, current, reply):
+    async def clarify(self, event, feature, text, current, reply, *, intent=None, duration=None):
         actor = (str(event["group_id"]), str(event["user_id"]))
         if not current() or not await reply("请回复要操作的那条消息、@目标或明确对象；两分钟内只接你下一条补充。"):
             return True
         if current() and self.latest.get(actor) == str(event.get("message_id")):
             self.pending[actor] = {"feature": feature, "policy": self.registry.get(feature), "text": text,
-                "requestId": str(event.get("message_id")), "until": self.now()+120, "session": self.session}
+                "requestId": str(event.get("message_id")), "until": self.now()+120, "session": self.session,
+                'intent':intent,'duration':duration if isinstance(duration,str) and duration in text else None}
         return True
 
     async def handle(self, event, parsed, *, followup=None, quote=None, current=lambda: True, reply=None):
@@ -114,6 +115,8 @@ class Actions:
         policy = available.get(feature)
         if not policy or followup and feature != followup["feature"]:
             return True
+        if followup and followup.get('intent') and intent!=followup['intent']:
+            return True
 
         def active():
             return current() and self.registry.get(feature) == policy and self.registry.allowed(policy, event)
@@ -121,6 +124,16 @@ class Actions:
         if not active():
             return True
         raw_request = (followup["text"] + "\n" if followup else "") + parsed.text
+        if intent.startswith('whole_'):
+            if not re.search(r'全员|全群|整个群|所有人|始终禁言',raw_request):
+                await reply('全员禁言需要明确说明作用于全群，本次未改开关。');return True
+            scheduling = re.search(r'每天|每日|明天|今晚|到点|定时|时段|以后|之后|稍后|过一会|\d|秒|分钟|小时|钟头|天|日|周|星期|时|分|\b(?:sec|min|hour|day)\b',raw_request,re.I)
+            if scheduling or result.get('duration') is not None:
+                await reply('原生全员禁言暂不支持时段或自动结束，本次不改开关，以免持续禁言。');return True
+        if intent=='unmute' and not re.search(r'解禁|解除.*禁言|取消.*禁言|放.*出来|放出|解除小黑屋',raw_request):
+            await reply('解除禁言需要明确说“解禁”，本次未操作。');return True
+        if intent in {'mute','self_mute'} and re.search(r'别禁言|不要禁言|不想被禁言|不用禁言|不需要禁言',raw_request):
+            return True
         quoted_id = str(quote.get("message_id", parsed.reply_id)) if self.valid_quote(event, quote) else ""
         quote_author = str(quote.get("user_id", quote.get("sender", {}).get("user_id", ""))) if quoted_id else ""
         permitted = set(parsed.mentions)
@@ -166,16 +179,28 @@ class Actions:
             targets = [actor]
         elif intent == "recall":
             if not quoted_id:
-                return True if followup else await self.clarify(event, feature, raw_request, active, reply)
+                return True if followup else await self.clarify(event, feature, raw_request, active, reply,intent=intent)
             targets = [quote_author]
         elif not intent.startswith("whole_") and not targets:
-            return True if followup else await self.clarify(event, feature, raw_request, active, reply)
+            return True if followup else await self.clarify(event, feature, raw_request, active, reply,intent=intent,duration=result.get('duration'))
         duration = None
         if intent in {"mute", "self_mute"}:
             phrase = result.get("duration")
+            if followup and followup.get('duration'):
+                if phrase is not None and phrase!=followup['duration']:
+                    await reply('补充内容改变了原请求时长，这次请求已结束，请重新说明。');return True
+                phrase=followup['duration']
             if phrase is not None and (not isinstance(phrase, str) or re.sub(r"\s", "", phrase) not in re.sub(r"\s", "", raw_request)):
                 await reply("时长没有在你的请求里找到，请明确说明；本次未禁言。")
                 return True
+            remainder = re.sub(r'\[@\d+\]','',raw_request)
+            if phrase is not None:remainder=remainder.replace(phrase,'',1)
+            for record in recent:
+                if record['userId'] in targets and record.get('name'):
+                    remainder = remainder.replace(record['name'],'')
+            remainder = re.sub(r'禁言|小黑屋|一(?:下|个|起)','',remainder)
+            if re.search(r'\d|[零〇一二两三四五六七八九十百千万亿半]|秒|分钟?|小时|钟头|天|日|周|星期|永久|永远|[+*/^√π]',remainder,re.I):
+                await reply('时长没有完整读出，请给出完整式子和单位；本次未禁言。');return True
             try:
                 duration = parse_duration(phrase)
             except (ValueError, OverflowError, ZeroDivisionError):
@@ -183,6 +208,9 @@ class Actions:
                 return True
             if duration.get("overLimit"):
                 await reply("禁言不能超过30天，本次未操作。")
+                return True
+            if duration['seconds']<60:
+                await reply(f"读懂了，你要的是{duration['seconds']}秒；QQ可能把不足一分钟的禁言持续到一分钟，本次先不执行。请改为一分钟或更久。")
                 return True
         # Every role read is fresh, before the irreversible request is reserved.
         bot_info, actor_info = await asyncio.gather(self.member(event, self.onebot.self_id), self.member(event, actor))
@@ -253,6 +281,14 @@ class Actions:
             if duration:
                 text += f"；申请禁言{duration['seconds']}秒，以QQ实际倒计时为准。"
             text += " ".join(notes)
+            if intent == 'poke' and self.model and active():
+                try:
+                    from .context import strip_internal_reply_metadata
+                    persona = self.persona(event) if hasattr(self,'persona') else self.config.persona()
+                    candidate = await self.model.chat(persona+'\n已成功拍了拍指定成员。用当前人格的一句自然话回应，不再调用任何动作，也不声称失败。', [{'role':'user','content':'本次实际拍到：'+'、'.join(done)}],unlimited=True)
+                    text = strip_internal_reply_metadata(candidate) or text
+                except (ValueError,RuntimeError,OSError):
+                    pass
             await reply(text)
         else:
             await reply("本次没有执行动作，对象身份或权限可能已变化。")

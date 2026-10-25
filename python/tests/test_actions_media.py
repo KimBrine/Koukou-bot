@@ -68,24 +68,44 @@ class ActionsTests(unittest.IsolatedAsyncioTestCase):
         return await self.actions.handle(event, parsed, followup=followup, quote=quote, current=current, reply=reply)
 
     async def test_owner_or_bot_admin_with_actual_group_admin_only(self):
-        result = {"intent": "mute", "targets": [{"id": "12", "evidence": "mention"}], "duration": "10s"}
+        result = {"intent": "mute", "targets": [{"id": "12", "evidence": "mention"}], "duration": "60s"}
         for actor in [11, 13, 14, 12]:
             self.calls.clear()
-            await self.handle(self.event('禁言他10s', actor=actor), result)
+            await self.handle(self.event('禁言他60s', actor=actor), result)
             self.assertEqual(bool(self.calls), actor in {11, 13}, actor)
         self.roles[10] = 'member'; self.calls.clear()
-        await self.handle(self.event('禁言他10s'), result)
+        await self.handle(self.event('禁言他60s'), result)
         self.assertFalse(self.calls)
 
     async def test_self_mute_math_and_target_role_guard(self):
-        result = {"intent": "self_mute", "targets": [], "duration": "(2+3)秒"}
-        await self.handle(self.event('禁言我(2+3)秒', actor=12, mention=None), result)
-        self.assertEqual(self.calls[-1], ('set_group_ban', {'group_id': 100, 'user_id': 12, 'duration': 5}))
+        result = {"intent": "self_mute", "targets": [], "duration": "(20+40)秒"}
+        await self.handle(self.event('禁言我(20+40)秒', actor=12, mention=None), result)
+        self.assertEqual(self.calls[-1], ('set_group_ban', {'group_id': 100, 'user_id': 12, 'duration': 60}))
         self.calls.clear()
-        await self.handle(self.event('禁言我(2+3)秒', actor=13, mention=None), result)
+        await self.handle(self.event('禁言我(20+40)秒', actor=13, mention=None), result)
         self.assertFalse(self.calls)
         with self.assertRaises(ValueError): parse_duration('10分钟或20分钟')
         self.assertTrue(parse_duration('31天')['overLimit'])
+
+    async def test_short_mute_incomplete_duration_and_whole_schedule_never_dispatch(self):
+        for text,result in [
+            ('禁言他1秒',{'intent':'mute','targets':[{'id':'12','evidence':'mention'}],'duration':'1秒'}),
+            ('禁言他十分钟',{'intent':'mute','targets':[{'id':'12','evidence':'mention'}],'duration':None}),
+            ('全员禁言十分钟',{'intent':'whole_enable','targets':[],'duration':None}),
+            ('每天晚上全员禁言',{'intent':'whole_enable','targets':[],'duration':None}),
+            ('禁言他一分钟',{'intent':'unmute','targets':[{'id':'12','evidence':'mention'}]}),
+        ]:
+            await self.handle(self.event(text),result)
+            self.assertFalse(self.calls,text)
+
+    async def test_first_clarification_preserves_original_action_and_duration(self):
+        await self.handle(self.event('把他禁言十分钟',mention=None),{'intent':'mute','targets':[],'duration':'十分钟'})
+        await self.handle(self.event('这位',mention=12,at=False),{'intent':'mute','targets':[{'id':'12','evidence':'mention'}],'duration':None})
+        self.assertEqual(self.calls[-1][1]['duration'],600)
+        self.calls.clear()
+        await self.handle(self.event('把他禁言',mention=None),{'intent':'mute','targets':[],'duration':None})
+        await self.handle(self.event('解禁这位',mention=12,at=False),{'intent':'unmute','targets':[{'id':'12','evidence':'mention'}]})
+        self.assertFalse(self.calls)
 
     async def test_recall_requires_correct_quoted_message_and_actual_author_permission(self):
         result = {"intent": "recall", "targets": []}
@@ -121,8 +141,8 @@ class ActionsTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.calls)
 
     async def test_one_delivery_per_request_and_uncertain_actions_never_retry(self):
-        event = self.event('禁言他10s')
-        result = {"intent": "mute", "targets": [{"id": "12", "evidence": "mention"}], "duration": "10s"}
+        event = self.event('禁言他60s')
+        result = {"intent": "mute", "targets": [{"id": "12", "evidence": "mention"}], "duration": "60s"}
         original = self.protocol.api
         async def uncertain(action, params, **kwargs):
             if action == 'set_group_ban':
@@ -135,15 +155,15 @@ class ActionsTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_malformed_model_and_revoked_policy_do_not_execute(self):
         for result in [[], None, 'mute']:
-            await self.handle(self.event('禁言他10s'), result)
+            await self.handle(self.event('禁言他60s'), result)
         self.assertFalse(self.calls)
         outer = self
         class ChangedModel:
             async def chat(self, *args, **kwargs):
                 outer.registry.save_builtin({'id': 'owner-mute', 'enabled': False, 'scope': 'group', 'groups': [100]})
-                return json.dumps({'intent': 'mute', 'targets': [{'id': '12', 'evidence': 'mention'}], 'duration': '10s'})
+                return json.dumps({'intent': 'mute', 'targets': [{'id': '12', 'evidence': 'mention'}], 'duration': '60s'})
         self.actions.model = ChangedModel()
-        await self.handle(self.event('禁言他10s'), {})
+        await self.handle(self.event('禁言他60s'), {})
         self.assertFalse(self.calls)
 
     async def test_session_change_discards_pending_clarification(self):
@@ -159,11 +179,11 @@ class ActionsTests(unittest.IsolatedAsyncioTestCase):
             return {'message_id': 300}
         self.protocol.send = send
         bot = Bot(self.config, self.protocol, Memory(self.config.data_dir), plugins=self.plugins, model=self.actions.model)
-        self.outputs.append({'intent': 'mute', 'targets': [{'id': '12', 'evidence': 'mention'}], 'duration': '10s'})
-        await bot.handle(self.event('禁言他10s'))
+        self.outputs.append({'intent': 'mute', 'targets': [{'id': '12', 'evidence': 'mention'}], 'duration': '60s'})
+        await bot.handle(self.event('禁言他60s'))
         self.assertEqual(self.calls[-1][0], 'set_group_ban')
         self.calls.clear(); bot.quiet = lambda key: True
-        await bot.handle(self.event('禁言他10s'))
+        await bot.handle(self.event('禁言他60s'))
         self.assertFalse(self.calls)
 
     async def test_imported_management_policy_cannot_expand_to_all_groups(self):

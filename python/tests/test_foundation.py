@@ -14,6 +14,18 @@ from koukou.onebot import OneBot, OneBotError
 
 
 class StateTests(unittest.TestCase):
+    def test_verified_stale_lock_recovery_never_evicts_uncertain_backend(self):
+        with tempfile.TemporaryDirectory() as root:
+            file=Path(root)/'bot.lock'
+            write_json(file,{'pid':123,'bootAt':1000})
+            with InstanceLock(root,recover_stale=True,boot_time=lambda:1000,alive=lambda _:False):
+                self.assertEqual(read_json(file)['runtime'],'python')
+            write_json(file,{'pid':123,'bootAt':1000})
+            with self.assertRaises(RuntimeError):
+                InstanceLock(root,recover_stale=True,boot_time=lambda:100000,alive=lambda _:True,image=lambda _:'python.exe').acquire()
+            self.assertEqual(read_json(file)['pid'],123)
+            with InstanceLock(root,recover_stale=True,boot_time=lambda:100000,alive=lambda _:True,image=lambda _:'unrelated.exe'):
+                self.assertEqual(read_json(file)['runtime'],'python')
     def test_env_utf8_empty_numeric_and_instance_boundaries(self):
         with tempfile.TemporaryDirectory() as root:
             file = Path(root) / ".env"

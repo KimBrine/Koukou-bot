@@ -68,6 +68,8 @@ class Config:
         self.values.update(self.environ)
 
     def persona(self, name=""):
+        if not name and self.get('PERSONA').strip():
+            return self.get('PERSONA').strip()
         name = name or self.get("ACTIVE_PERSONA")
         if name:
             if not re.fullmatch(r'[^\\/:*?"<>|\x00-\x1f]{1,60}', name) or name.endswith((".", " ")) or name in {".", ".."}:
@@ -75,8 +77,16 @@ class Config:
             directory = Path(self.get("PERSONA_DIR", str(self.data_dir / "personas")))
             if not directory.is_absolute():
                 directory = self.env_file.parent / directory
-            return (directory / f"{name}.txt").read_text(encoding="utf-8-sig")
-        if self.get("PERSONA"):
-            return self.get("PERSONA")
-        file = self.data_dir / "persona.txt"
-        return file.read_text(encoding="utf-8-sig") if file.exists() else "你是友善的QQ群聊小助手。尊重他人，不编造已执行的动作。"
+            file = directory / f'{name}.txt'
+            if file.is_symlink() or directory.is_symlink():
+                raise ValueError('人格文件不支持链接')
+            text = file.read_text(encoding='utf-8-sig').strip()
+            if not text: raise ValueError('当前人格正文为空')
+            return text
+        explicit = self.get('PERSONA_FILE')
+        file = Path(explicit) if explicit else self.data_dir/'persona.txt'
+        if explicit and not file.is_absolute(): file = self.env_file.parent/file
+        if not explicit and not file.exists(): file = self.root/'persona.txt'
+        if file.is_symlink(): raise ValueError('人格文件不支持链接')
+        text = file.read_text(encoding='utf-8-sig').strip() if file.exists() else ''
+        return text.replace('{{BOT_NAME}}',self.get('BOT_NAME','Koukou')) if text else '你是友善的QQ群聊小助手。尊重他人，不编造已执行的动作。'
