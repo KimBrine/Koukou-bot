@@ -37,7 +37,8 @@ class ArchiveTests(unittest.IsolatedAsyncioTestCase):
         calls = []
         async def runner(command,args,**options):
             calls.append((command,args,options))
-            output = Path(next(arg for arg in args if str(arg).startswith(str(self.root/'out'))))
+            # Windows runners may expose TEMP through an 8.3 alias; compare canonical paths.
+            output = next(Path(arg) for arg in args if Path(str(arg)).is_absolute() and Path(arg).resolve().is_relative_to((self.root/'out').resolve()))
             output.write_bytes(b'archive')
         packer = ArchivePacker(run_impl=runner); packer.seven_zip_path = str(tool); packer.rar_path = str(tool)
         for fmt in ['zip','7z','rar']:
