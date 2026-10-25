@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {readFileSync} from 'node:fs'
+import vm from 'node:vm'
 import { decideReply } from '../src/bot.js'
 import { plusOneFingerprint } from '../src/autoPlusOne.js'
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')
@@ -33,3 +35,12 @@ try{
  assert.deepEqual(actual.fingerprints,fingerprints.map(plusOneFingerprint))
 }finally{Math.random=oldRandom}
 console.log(`Python/JS parity passed: ${cases.length} reply decisions and ${fingerprints.length} repeat fingerprints. No QQ/model calls.`)
+const ui=readFileSync(path.join(root,'src/admin/app.js'),'utf8')
+const cardCode=ui.slice(ui.indexOf('function pythonCard(){'),ui.indexOf('function syncPyOpen(){'))
+const context={pythonScripts:[{id:'hello',command:'问候',name:'问候插件'}],pythonSettings:{recallSeconds:300},pyOpen:{rows:[],editors:[]},pythonDir:'plugins/python',pyDrafts:{},esc:x=>String(x??'')}
+for(const native of [false,true]){
+ const html=vm.runInNewContext(cardCode+';pythonCard()',{...context,pythonNativeCommands:native})
+ assert.ok(html.includes(native?'用法：/问候':'用法：/py 问候'))
+ assert.ok(html.includes(native?'插件源码管理':'Python 脚本'))
+}
+console.log('Native slash command UI and legacy namespace UI both render correctly.')

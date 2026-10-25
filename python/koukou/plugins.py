@@ -53,6 +53,25 @@ class PluginManager:
             return name
         return next((key for key, alias in self.settings()["names"].items() if alias == name), name)
 
+    def validate_command(self, command, owner):
+        from types import SimpleNamespace
+        from .commands import CommandRegistry
+        config = self.config or SimpleNamespace(data_dir=self.root / "data-python")
+        CommandRegistry(config, self).validate_name(command, owner)
+
+    def set_command(self, name, command):
+        if not self.path(name).is_file():
+            raise ValueError("插件不存在")
+        command = str(command).strip() or name
+        self.validate_command(command, name)
+        settings = self.settings()
+        if command == name:
+            settings["names"].pop(name, None)
+        else:
+            settings["names"][name] = command
+        write_json(self.directory / "settings.json", settings)
+        return command
+
     def metadata(self, name):
         file = self.path(name)
         result = {"id": name, "name": name, "description": "", "usage": "", "admin": False,
@@ -72,6 +91,8 @@ class PluginManager:
                 result["commands"].append({"usage": usage.strip(), "desc": description.strip()})
             else:
                 result[key] = value
+        result["usage"] = re.sub(r"[/／]py\s+\S+", lambda _: "/" + result["command"], result["usage"], flags=re.I)
+        result["usage"] = re.sub(r"[/／]" + re.escape(name) + r"(?=\s|$)", lambda _: "/" + result["command"], result["usage"], flags=re.I)
         return result
 
     def list(self):
@@ -86,6 +107,8 @@ class PluginManager:
         if not content.strip() or len(content.encode("utf-8")) > 200 * 1024:
             raise ValueError("脚本内容为空或超过200KB")
         compile(content, filename, "exec")  # Syntax checking, not executing uploaded code.
+        if not file.exists():
+            self.validate_command(file.stem, file.stem)
         if file.exists():
             if not overwrite:
                 raise FileExistsError("脚本已存在，请明确选择覆盖")
@@ -98,7 +121,7 @@ class PluginManager:
         # JSON quoting keeps arbitrary description text out of executable Python syntax.
         content = f'''# name: {name}
 # desc: {description.replace(chr(10), ' ').replace(chr(13), ' ')}
-# usage: /py {name} 内容
+# usage: /{name} 内容
 # admin: false
 from koukou.plugin import plugin
 

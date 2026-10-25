@@ -8,12 +8,14 @@ from .messages import chat_key, parse_message, quiet_hour, repeat_fingerprint
 from .models import clean_reply
 from .plugins import decode_result
 from .policy import decide_reply
+from .commands import CommandRegistry
 
 
 class Bot:
     def __init__(self, config, onebot, memory, *, model=None, long_memory=None, plugins=None, settings=None, rand=random.random):
         self.config, self.onebot, self.memory = config, onebot, memory
         self.model, self.long_memory, self.plugins = model, long_memory, plugins
+        self.commands = CommandRegistry(config, plugins) if plugins else None
         self.settings, self.rand = settings or {}, rand
         self.last_proactive, self.inflight, self.repeats, self.sent = {}, set(), {}, {}
         self.seen = deque(maxlen=4096)
@@ -99,16 +101,20 @@ class Bot:
             last_proactive=self.last_proactive.get(key, 0), rand=self.rand)
         direct = private or parsed.at_bot or reply_to_bot
         if direct and re.fullmatch(r"[/／](?:help|帮助|指令)\s*", parsed.text, re.I):
-            await self.send(event, "Python迁移验证入口\n1. /Q 问题：单轮认真解题\n2. /py 脚本名 参数：执行已安装插件\n其余指令仍待迁移，不可替换正式机器人。", revision)
+            await self.send(event, self.commands.help(event) if self.commands else "1. /Q 问题\n2. /help", revision)
             return
-        plugin = re.fullmatch(r"[/／]py(?:\s+(\S+))?(?:\s+([\s\S]*))?", parsed.text, re.I)
-        if direct and plugin and self.plugins:
-            if int(event["user_id"]) not in self.config.ids("ADMIN_USERS"):
+        if direct and self.commands and re.fullmatch(r"[/／]py(?:\s+(?:list|help|列表|帮助))?\s*", parsed.text, re.I):
+            await self.send(event, self.commands.help(event), revision)
+            return
+        plugin = self.commands.match_plugin(parsed.text) if direct and self.commands else None
+        if plugin:
+            item, args = plugin
+            if not self.commands.allowed(item, event):
                 return
-            if not plugin[1] or plugin[1] in {"list", "列表", "帮助", "help"}:
-                await self.send(event, "\n".join(f"/py {p['command']} — {p['name']}" for p in self.plugins.list()) or "暂无插件", revision)
+            result = decode_result(await self.plugins.run(item["pluginId"], args))
+            current_item = next((c for c in self.commands.plugin_entries() if c["id"] == item["id"]), None)
+            if not current_item or not self.commands.allowed(current_item, event):
                 return
-            result = decode_result(await self.plugins.run(plugin[1], plugin[2] or ""))
             if result.get("images") or result.get("files") or result.get("legacyCard") or result.get("legacyFile"):
                 # Rich media/file lifecycle is not equivalent yet: refuse rather than silently lose it.
                 await self.send(event, "插件已返回结构化结果，但该发送协议尚未完成Python迁移，未发送附件。", revision)

@@ -9,11 +9,14 @@ from urllib.parse import urlsplit
 from . import __version__
 from .migration import report
 from .state import read_json, write_json, write_text
+from .commands import CommandRegistry
 
 
 class Admin:
     def __init__(self, config, plugins, memory, long_memory):
         self.config, self.plugins, self.memory, self.long_memory = config, plugins, memory, long_memory
+        plugins.config = config
+        self.commands = CommandRegistry(config, plugins)
         self.token = secrets.token_urlsafe(32)
         self.started = time.time()
         self.chat_file = config.data_dir / "chat-settings.json"
@@ -23,6 +26,7 @@ class Admin:
             "/api/state": self.state, "/api/config": self.get_config, "/api/python-scripts": self.get_plugins,
             "/api/chats": self.get_chats, "/api/memory": self.get_memory, "/api/longmemory": self.get_long,
             "/api/migration": self.get_migration,
+            "/api/commands": self.get_commands, "/api/custom-commands": self.get_commands,
         }
         self.actions = {
             "set-config": self.set_config, "set-config-batch": self.set_config_batch,
@@ -30,6 +34,7 @@ class Admin:
             "toggle-python-script": self.toggle_script, "delete-python-script": self.delete_script,
             "set-python-command": self.set_command, "save-python-settings": self.save_plugin_settings,
             "python-new-script": self.new_script,
+            "save-builtin-command": self.save_builtin,
             "set-chat": self.set_chat, "reset-chat": self.reset_chat,
             "memory-update": self.memory_update, "memory-delete": self.memory_delete,
             "longmemory-update": self.long_update, "longmemory-pause": self.long_pause,
@@ -55,7 +60,13 @@ class Admin:
                            "configured": bool(self.config.get(field["key"])) if field["type"] == "secret" else None} for field in self.schema]}
 
     def get_plugins(self, _):
-        return {"dir": str(self.plugins.directory), "items": self.plugins.list(), "settings": self.plugins.settings()}
+        return {"dir": str(self.plugins.directory), "items": self.plugins.list(), "settings": self.plugins.settings(), "nativeCommands": True}
+
+    def get_commands(self, _):
+        return {"items": self.commands.custom(), "builtinItems": self.commands.all(), "nativeCommands": True}
+
+    def save_builtin(self, payload):
+        return {"ok": True, "item": self.commands.save_plugin(payload)}
 
     def get_chats(self, _):
         keys = set(self.settings) | set(self.memory.chats)
@@ -108,20 +119,7 @@ class Admin:
         return {"ok": True}
 
     def set_command(self, p):
-        key, name = p["id"], p.get("command", "").strip()
-        self.plugins.path(key)
-        import re
-        if name and (not re.fullmatch(r"[\w-]{1,20}", name) or name.lower() in {"list", "help", "列表", "帮助", "指令", "命令"}):
-            raise ValueError("调用名无效或是保留词")
-        settings = self.plugins.settings()
-        if any(alias == name and other != key for other, alias in settings["names"].items()) or (name != key and re.fullmatch(r"[A-Za-z0-9_-]+", name or "") and self.plugins.path(name).exists()):
-            raise ValueError("调用名已占用")
-        if name and name != key:
-            settings["names"][key] = name
-        else:
-            settings["names"].pop(key, None)
-        write_json(self.plugins.directory / "settings.json", settings)
-        return {"ok": True, "command": name or key}
+        return {"ok": True, "command": self.plugins.set_command(p["id"], p.get("command", ""))}
 
     def save_plugin_settings(self, p):
         settings = self.plugins.settings()

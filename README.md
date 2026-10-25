@@ -13,6 +13,8 @@ python -m venv .venv
 .\.venv\Scripts\python -m koukou preview --port 8790
 ```
 
+Python 分支中的插件与其他指令并列：聊天里使用 `/calc 1+2`、`/jm 帮助` 或 `/自定义调用名 参数`，不需要 `/py` 前缀；旧格式保留兼容。
+
 预览默认使用本分支的 `data-python`/`logs-python`，不连接 QQ。`run` 在完整迁移验收前明确拒绝启动；请勿把生产 `.env` 或数据目录交给开发预览。以上插件 SDK 只在本 Python 开发环境可用，main 中的现有独立 Python 脚本仍按原方式运行。
 
 ---

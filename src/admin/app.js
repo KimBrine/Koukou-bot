@@ -73,6 +73,7 @@ let errorInfo = []
 let pokeReplies = []
 let pythonScripts = []
 let pythonSettings = { recallSeconds: 300, recallEnabled: true }
+let pythonNativeCommands = false
 let pythonDir = ''
 let pyOpen = { card: false, rows: [], editors: [] }
 const pyDrafts = Object.create(null)
@@ -688,6 +689,7 @@ function pokeCorpusCard(){
 async function loadPythonScripts(){
   const r = await api('/api/python-scripts').catch(function(){ return { items: [] } })
   pythonScripts = r.items || []
+  pythonNativeCommands = r.nativeCommands === true
   pythonDir = r.dir || pythonDir
   if (r.settings) pythonSettings = r.settings
 }
@@ -697,11 +699,11 @@ function pythonCard(){
   const recallOn = !pythonSettings || pythonSettings.recallEnabled !== false
   const rows = items.map(function(s){
     const id = esc(s.id)
-    return '<details class="frow" data-pyrow="' + id + '"' + (pyOpen.rows.indexOf(s.id) >= 0 ? ' open' : '') + '><summary><b>' + esc(s.name) + '</b> <span class="mut">/' + id + '</span>' +
+    return '<details class="frow" data-pyrow="' + id + '"' + (pyOpen.rows.indexOf(s.id) >= 0 ? ' open' : '') + '><summary><b>' + esc(s.name) + '</b> <span class="mut">/' + (pythonNativeCommands ? esc(s.command || s.id) : id) + '</span>' +
       (s.enabled === false ? ' <span class="pill">已停用</span>' : '') + '</summary>' +
       '<div class="mut" style="margin:6px 0 4px">' + esc(s.description || '') + '</div>' +
-      '<div class="mut" style="font-size:12px">用法：' + esc(s.usage || ('/py ' + s.id)) + '</div>' +
-      '<div class="flexbar" style="margin-top:8px"><label class="mut">调用名 /py</label>' +
+      '<div class="mut" style="font-size:12px">用法：' + esc(s.usage || ((pythonNativeCommands ? '/' : '/py ') + (s.command || s.id))) + '</div>' +
+      '<div class="flexbar" style="margin-top:8px"><label class="mut">调用名 ' + (pythonNativeCommands ? '/' : '/py') + '</label>' +
         '<input data-pycmd="' + id + '" value="' + esc(s.command || s.id) + '" style="width:120px" maxlength="20">' +
         '<button class="btn sm" data-pycmdsave="' + id + '">保存调用名</button>' +
         '<span class="mut" style="font-size:12px">文件名 ' + id + '.py</span></div>' +
@@ -717,13 +719,13 @@ function pythonCard(){
         '<div class="flexbar" style="margin-top:6px"><button class="btn primary sm" data-pysave="' + id + '">保存</button><button class="btn sm" data-pycancel="' + id + '">取消</button><span class="mut" id="pyMsg-' + id + '"></span></div>' +
       '</div></details>'
   }).join('')
-  return '<details class="card"' + (pyOpen.card ? ' open' : '') + ' data-pycard><summary><b>Python 脚本</b> <span class="pill">' + items.length + ' 个</span> <span class="mut">点开管理、编辑内容</span></summary>' +
-    '<div class="note">放在 plugins/python 下的白名单脚本，用 <code>/py 脚本名 参数</code> 运行，默认仅管理员。脚本以机器人权限执行，只导入可信文件。保存会留一份 .bak。</div>' +
+  return '<details class="card"' + (pyOpen.card ? ' open' : '') + ' data-pycard><summary><b>' + (pythonNativeCommands ? '插件源码管理' : 'Python 脚本') + '</b> <span class="pill">' + items.length + ' 个</span> <span class="mut">点开管理、编辑内容</span></summary>' +
+    '<div class="note">' + (pythonNativeCommands ? '插件已与内置指令并列显示在上方，使用 <code>/指令名 参数</code>；此处管理源码和调用名。默认管理权限保持不变，可在上方逐项设置范围和权限。' : '放在 plugins/python 下的白名单脚本，用 <code>/py 脚本名 参数</code> 运行，默认仅管理员。') + '脚本以机器人权限执行，只导入可信文件。保存会留一份 .bak。</div>' +
     '<div class="flexbar" style="margin:8px 0;gap:8px;flex-wrap:wrap"><span class="mut">脚本目录</span><code style="font-size:12px;word-break:break-all">' + esc(pythonDir || 'plugins/python') + '</code><button class="btn sm" data-pycopy="' + esc(pythonDir || '') + '">复制路径</button><button class="btn sm" data-pyopen="">打开文件夹</button></div>' +
     '<div class="flexbar" style="margin:10px 0"><label class="chk"><input type="checkbox" id="pyRecallOn"' + (recallOn ? ' checked' : '') + '> 发送后自动撤回</label><label class="mut" style="margin-left:10px">保留时长（秒）</label><input id="pyRecall" type="number" min="5" max="7200" step="5" value="' + recall + '" style="width:90px"><button class="btn sm" id="pyRecallSave">保存</button><span class="mut" id="pyRecallHint"></span></div>' +
     (rows || '<div class="mut">还没有脚本</div>') +
     '<details class="frow" style="margin-top:10px"><summary><b>＋ 新建脚本</b> <span class="mut">自己写，或让 AI 起草</span></summary>' +
-      '<div class="mut" style="margin:8px 0 6px">三种填法，效果一样：① 点「插入模板」拿骨架自己改；② 写一句需求让「AI 生成草稿」；③ 直接把完整代码粘进来。保存后会写成 plugins/python/文件名.py，不用重启，立刻能用 <code>/py 文件名</code> 调用。</div>' +
+      '<div class="mut" style="margin:8px 0 6px">三种填法，效果一样：① 点「插入模板」拿骨架自己改；② 写一句需求让「AI 生成草稿」；③ 直接把完整代码粘进来。保存后会写成 plugins/python/文件名.py，不用重启，立刻能用 <code>' + (pythonNativeCommands ? '/' : '/py ') + '调用名</code> 调用。</div>' +
       '<textarea id="pyPrompt" placeholder="例如：把一段文字倒序输出，并统计字符数；参数为空时提示用法" style="width:100%;min-height:70px"></textarea>' +
       '<div class="flexbar" style="margin:8px 0"><input id="pyNewName" placeholder="文件名，如 wc.py" style="width:170px"><input id="pyNewCmd" placeholder="调用名（可选）" style="width:140px" maxlength="20"><button class="btn sm" id="pyDraftBtn">AI 生成草稿</button><button class="btn sm" id="pyTplBtn">插入模板</button><span class="mut" id="pyDraftHint"></span></div>' +
       '<textarea id="pyNewCode" spellcheck="false" placeholder="代码会出现在这里，也可以自己直接写" style="width:100%;min-height:240px;font-family:Consolas,monospace;font-size:12px"></textarea>' +

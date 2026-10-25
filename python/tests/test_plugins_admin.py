@@ -97,6 +97,16 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, 200)
         self.assertEqual(self.plugins.resolve("中文"), "native")
 
+    async def test_plugin_cards_share_catalog_and_permission_settings(self):
+        self.plugins.create('hello')
+        result = await (await self.client.get('/api/custom-commands')).json()
+        ids = {item['id'] for item in result['builtinItems']}
+        self.assertTrue({'help', 'question', 'plugin:hello'} <= ids)
+        result = await self.post('save-builtin-command', {'id': 'plugin:hello', 'adminOnly': False, 'scope': 'private'})
+        item = (await result.json())['item']
+        self.assertFalse(item['adminOnly']); self.assertEqual(item['scope'], 'private')
+        self.assertEqual(item['trigger'], '/hello [参数]')
+
     async def test_pending_actions_fail_explicitly_and_migration_blocks_qq(self):
         response = await self.post("summary", {"groupId": 200000002})
         self.assertEqual(response.status, 501)
