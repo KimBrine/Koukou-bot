@@ -13,7 +13,7 @@ PLUGIN_FILES = ('calc.py', 'textstats.py', 'jm.py', 'jmv.py')
 class BuildPy(build_py):
     def run(self):
         super().run()
-        source = Path(__file__).resolve().parent
+        source = Path(__file__).resolve().parents[1]
         target = Path(self.build_lib) / 'koukou' / 'assets'
         files = [(source / 'src' / 'admin' / name, target / 'admin' / name)
                  for name in FRONTEND_FILES]

@@ -31,6 +31,11 @@ def main():
         output.mkdir()
         environment = {**os.environ, 'PYTHONUTF8':'1', 'PYTHONDONTWRITEBYTECODE':'1',
                        'PIP_NO_INDEX':'1', 'PIP_DISABLE_PIP_VERSION_CHECK':'1'}
+        # PEP 517 does not place cwd on sys.path. A normal `python -c` can mask
+        # a misplaced build hook, so check metadata discovery in isolated mode.
+        run([sys.executable, '-I', '-X', 'utf8', '-c',
+             'from setuptools.build_meta import get_requires_for_build_editable; get_requires_for_build_editable()'],
+            cwd=ROOT, env=environment)
         run([sys.executable, '-X', 'utf8', '-c',
              'from setuptools.build_meta import build_sdist; build_sdist('+repr(str(output))+')'],
             cwd=ROOT, env=environment)

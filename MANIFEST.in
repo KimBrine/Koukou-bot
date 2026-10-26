@@ -1,4 +1,4 @@
-include build_support.py
+include python/build_support.py
 include package.json
 include python/migration-contract.json
 include src/admin/ui.html
