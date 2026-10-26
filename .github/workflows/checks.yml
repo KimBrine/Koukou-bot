@@ -47,10 +47,12 @@ jobs:
           node-version: '24'
           package-manager-cache: false
       - name: Install native Python backend
-        run: python -m pip install -e ".[images]"
+        run: python -m pip install "setuptools>=77" -e ".[images]"
       - name: Native Python offline regression
         run: python -X utf8 -m unittest discover -s python/tests -v
       - name: Compare pure behavior with JavaScript baseline
         run: node scripts/test-python-parity.mjs
+      - name: Validate source and wheel distributions without Node
+        run: python -X utf8 scripts/check-python-distribution.py
       - name: Report pending migration (not production acceptance)
         run: python -m koukou migration

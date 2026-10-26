@@ -12,8 +12,10 @@ import { greetingWindow } from '../src/quietGreetings.js'
 import { commandScopeAllows } from '../src/customCommands.js'
 import { parseMusicRequest } from '../src/music.js'
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..')
+// Production wall-clock rules use China time; do not inherit a CI host's zone.
+process.env.TZ='Asia/Shanghai'
 const cases=[]
-const now=new Date(2026,0,2,2).getTime()
+const now=Date.UTC(2026,0,1,18)
 for(const privateChat of [false,true])for(const atBot of [false,true])for(const enabled of [false,true])for(const quiet of ['', '01:00-07:00'])for(const rate of [0,.35,1])for(const random of [.01,.8])for(const blocked of [false,true]){
  const config={whitelistGroups:[200000002],mutedGroups:blocked?[200000002]:[],privateWhitelist:[200000011],adminUsers:[],quietHours:quiet,quietHoursBlockAll:true,proactiveRate:rate,proactiveCooldownMs:30000}
  cases.push({privateChat,atBot,config,settings:{enabled,quietHours:null,proactiveRate:null},random,now,group:200000002,user:200000011,last:0})

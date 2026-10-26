@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 from .http_client import request
 from .observability import timestamp
+from .resources import source_version_file
 
 
 UPDATE_REPOSITORY = 'KimBrine/Koukou-bot'
@@ -27,12 +28,13 @@ def compare_versions(a, b):
 
 def local_version(root):
     """Read the actual shipped package version; never invent a migration release."""
-    file = Path(root)/'package.json'
+    file = source_version_file(root)
     if not file.is_file() or file.stat().st_size > 65536:
-        raise ValueError('当前程序缺少有效的package.json版本记录')
-    value = json.loads(file.read_text(encoding='utf-8-sig')).get('version')
+        raise ValueError('当前程序缺少有效的公开版本记录')
+    record = json.loads(file.read_text(encoding='utf-8-sig'))
+    value = record.get('version') if isinstance(record, dict) else None
     if version(value) is None:
-        raise ValueError('当前package.json没有正式语义版本号')
+        raise ValueError('当前公开版本记录没有正式语义版本号')
     return str(value).removeprefix('v')
 
 

@@ -12,7 +12,7 @@ BUILTINS = [
     ("whole-mute", "全员禁言", "@机器人 开启/关闭全员禁言", "required"),
     ("self-recall", "帮忙撤回", "引用消息并@机器人 帮忙撤回", "required"),
     ("request-poke", "请求拍一拍", "@机器人 拍一拍 指定成员", "required"),
-    ("poke", "拍机器人回应", "拍机器人头像", "none"),
+    ("poke", "拍机器人回应", "拍机器人头像", "optional"),
     ("music", "点歌音乐名片", "点歌 歌名 歌手 / 歌曲ID / 完整歌曲链接", "required"),
     ("request-sticker", "请求表情包", "@机器人 给我发张表情包（私聊可直接说）", "required"),
     ("summary", "群总结（手动）", "/群总结 [天数]", "required"),
@@ -119,6 +119,8 @@ class CommandRegistry:
                 item['adminOnly'] = True; item['protected'] = True
             if id == 'self-recall':
                 item['adminOnly'] = False
+            if id == 'request-poke':
+                item.update(scope='groups', groups=[], adminOnly=False)
             item['semantic'] = id in {'summary','help','id-check'}
             item['naturalLanguage'] = item['semantic'] and settings.get(id,{}).get('naturalLanguage') is True
             items.append(item)
@@ -147,7 +149,8 @@ class CommandRegistry:
         state = self.state()
         state.setdefault("builtins", {})[item["id"]] = {"enabled": enabled, "scope": "groups" if item["whitelistOnly"] else scope,
             "groups": [] if item["whitelistOnly"] else sorted(set(map(int, groups))), "adminOnly": False if item["whitelistOnly"] else payload.get("adminOnly", item["adminOnly"]) is True,
-            "responseMode": "ai" if item["id"] == "poke" and payload.get("responseMode") == "ai" else "fixed"}
+            "responseMode": "ai" if item["id"] == "poke" and payload.get("responseMode",item.get('responseMode')) == "ai" else "fixed",
+            'aiPrompt':str(payload.get('aiPrompt',item.get('aiPrompt','')) or '').strip()[:4000]}
         state['builtins'][item['id']]['naturalLanguage'] = item['semantic'] and payload.get('naturalLanguage') is True
         write_json(self.file, state)
         return self.get(item["id"])

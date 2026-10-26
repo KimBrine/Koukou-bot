@@ -41,7 +41,9 @@ class ActionsTests(unittest.IsolatedAsyncioTestCase):
                 return {}
         class Model:
             async def chat(self, *args, **kwargs):
-                return json.dumps(outer.outputs.pop(0))
+                value=outer.outputs.pop(0)
+                if isinstance(value,dict):value={'confidence':.99,'executor':'bot',**value}
+                return json.dumps(value)
         self.protocol = Protocol()
         self.actions = Actions(self.config, self.protocol, self.registry, Model())
         self.seq = 0
@@ -98,6 +100,17 @@ class ActionsTests(unittest.IsolatedAsyncioTestCase):
             await self.handle(self.event(text),result)
             self.assertFalse(self.calls,text)
 
+    async def test_self_mute_label_cannot_replace_self_consent(self):
+        result={'intent':'self_mute','targets':[],'duration':'一分钟'}
+        for text,mention in [('帮我禁言他一分钟',None),('禁言我一分钟',14),('我知道他被禁言一分钟了',None)]:
+            await self.handle(self.event(text,actor=12,mention=mention),result)
+            self.assertFalse(self.calls,text)
+        await self.handle(self.event('我想被禁言一分钟',actor=12,mention=None),result)
+        self.assertEqual(self.calls[-1][1]['user_id'],12)
+        self.calls.clear()
+        await self.handle(self.event('禁言本喵一分钟',actor=12,mention=None),result)
+        self.assertEqual(self.calls[-1][1]['duration'],60)
+
     async def test_first_clarification_preserves_original_action_and_duration(self):
         await self.handle(self.event('把他禁言十分钟',mention=None),{'intent':'mute','targets':[],'duration':'十分钟'})
         await self.handle(self.event('这位',mention=12,at=False),{'intent':'mute','targets':[{'id':'12','evidence':'mention'}],'duration':None})
@@ -130,6 +143,19 @@ class ActionsTests(unittest.IsolatedAsyncioTestCase):
         await self.handle(followup, {"intent": "mute", "targets": [{"id": "12", "evidence": "mention"}], "duration": None})
         self.assertEqual(len(self.calls), 1); self.assertFalse(self.actions.pending)
         self.assertIsNone(self.actions.reserve(self.event('再补一句', mention=12, at=False)))
+
+    async def test_quote_receipt_and_executor_are_required_before_any_action(self):
+        for quote in [{'group_id':100,'user_id':12,'message_type':'group'},
+                      {'group_id':100,'user_id':12,'message_id':99}]:
+            await self.handle(self.event('帮我撤回',actor=12,mention=None,quote=99),{'intent':'recall','targets':[]},quote)
+            self.assertFalse(self.calls)
+            self.actions.pending.clear()
+        await self.handle(self.event('让群友戳机器人'),{'intent':'poke','executor':'other','targets':[{'id':'12','evidence':'mention'}]})
+        self.assertFalse(self.calls)
+        for confidence in [None,.89,True,float('nan')]:
+            await self.handle(self.event('禁言他一分钟'),{'intent':'mute','confidence':confidence,'targets':[{'id':'12','evidence':'mention'}],'duration':'一分钟'})
+            self.assertFalse(self.calls)
+            self.actions.pending.clear()
 
     async def test_third_party_poke_hallucinated_targets_and_policy_change(self):
         await self.handle(self.event('让别人戳机器人', mention=12), {"intent": "none"})

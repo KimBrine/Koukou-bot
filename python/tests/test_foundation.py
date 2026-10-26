@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import tempfile
@@ -87,6 +87,11 @@ class MessageTests(unittest.TestCase):
         self.assertTrue(quiet_hour("23:00-07:00", datetime(2026, 1, 1, 1)))
         self.assertFalse(quiet_hour("23:00-07:00", datetime(2026, 1, 1, 7)))
         self.assertFalse(quiet_hour("01:99-07:00"))
+        self.assertTrue(quiet_hour('23:00-07:00',datetime(2026,1,1,17,tzinfo=timezone.utc)))
+        self.assertFalse(quiet_hour('23:00-07:00',datetime(2026,1,1,23,tzinfo=timezone.utc)))
+        from koukou.policy import decide_reply
+        result=decide_reply(private=True,at_bot=False,now=datetime(2026,1,1,17,tzinfo=timezone.utc).timestamp(),config={'quietHours':'23:00-07:00'})
+        self.assertEqual(result,{'reply':False,'reason':'安静时段（全部静音）'})
         timeline = Timeline(now=lambda: 1000)
         timeline.begin()
         old, live = {"time": 999}, {"time": 1000}

@@ -9,38 +9,80 @@ import time
 import copy
 import re
 import uuid
+import math
+from datetime import datetime
 from urllib.parse import urlsplit
-from . import __version__
 from .migration import report
 from .state import read_json, write_json, write_text
 from .commands import CommandRegistry
 from .archive import stamp
 from .sessions import Sessions, digest, persona_text
 from .greetings import GreetingLibrary
-from .backup import Backup
+from .backup import Backup, ConversationDeletion, conversation_group, safe_tree
 from .custom import CustomCommands, clean, render_reply
 from .commands import split_request, normalize, RESERVED
 from .quiet_greetings import QuietGreetings
 from .summary_service import SummaryService
-from .stickers import PersonaStickers, SCENES, image_mime
+from .stickers import PersonaStickers, SCENES, image_mime, safe_ancestors
 from .sticker_learn import suggest_metadata
 from .media import MediaDelivery
 from .messages import quiet_hour
 from .providers import VisionProviders, PROVIDERS, REASONING_LEVELS, detect_models
 from .context import build_chat_appendix
 from .web_search import WebSearch
-from .observability import Metrics, RuntimeStats, ErrorStore, NativeLogger, SelfCheck, configured_secrets, tail_log, today_stats
+from .observability import Metrics, RuntimeStats, ErrorStore, NativeLogger, SelfCheck, configured_secrets, tail_log, today_stats, CHINA
 from .updates import UpdateChecker, local_version
 from .image_hash import ImageHasher
 from .protocol_management import LoginManagement
 from .lifecycle import Lifecycle
+from .resources import frontend_assets
+from .config import parse_env
+
+
+# Read-only form defaults follow the native consumers. This does not seed .env
+# from a JavaScript template (whose defaults can differ during migration).
+FORM_DEFAULTS = {
+    'PROACTIVE_RATE':.04,'PROACTIVE_COOLDOWN_MS':30000,'EMOJI_KEEP_RATE':.35,
+    'HUMAN_DELAY_MIN_MS':600,'HUMAN_DELAY_MAX_MS':2500,'LINE_GAP_MIN_MS':500,'LINE_GAP_MAX_MS':1600,
+    'REPLY_MIN_BUDGET':0,'REPLY_MAX_LINES':3,'REPLY_LINE_MAX_CHARS':40,
+    'RATE_LIMIT_PER_HOUR':25,'RATE_LIMIT_AT_PER_HOUR':45,'RATE_LIMIT_MIN_GAP_MS':4000,'RATE_LIMIT_WAIT_MAX_MS':8000,'HISTORY_LIMIT':99,'LOG_LEVEL':'info',
+    'TARGET_WATCH_INTERVAL_MS':15000,'SUMMARY_TIMES':'23:00','SUMMARY_SEND_MODE':'forward',
+    'SUMMARY_REQUEST_TIMEOUT_SECONDS':900,'SUMMARY_MAX_MESSAGES':600,'SUMMARY_MAX_TOKENS':8000,
+    'SUMMARY_CONCURRENCY':2,'SUMMARY_TASK_TIMEOUT_MINUTES':6,'SUMMARY_PROVIDER':'deepseek','SUMMARY_REFERENCE_MAX_IMAGES':6,
+    'DAILY_PING_TIME':'00:00','DAILY_PING_CHAIN_WINDOW_MS':90000,
+    'MODEL_PROVIDER':'deepseek','DEEPSEEK_BASE_URL':'https://api.deepseek.com','DEEPSEEK_MODEL':'deepseek-flash',
+    'STICKER_LEARN_PER_HOUR':6,'STICKER_AUTO_RATE':35,'STICKER_MAX_PER_REPLY':1,'STICKER_SEND_SCOPE':'all',
+    'STICKER_PICK_MODE':'context','STICKER_COOLDOWN_SECONDS':0,'STICKER_SEARCH_PROVIDER':'bing',
+    'VISION_REASONING':'none','VISION_MAX_TOKENS':300,'VISION_PROVIDER':'dashscope','VISION_MODEL':'deepseek-flash',
+    'STICKER_TAG_PROVIDER':'auto','DASHSCOPE_MODEL':'qwen-vl-plus','WEB_SEARCH_PROVIDER':'auto','WEB_SEARCH_MODEL':'qwen-plus',
+    'TEMPERATURE':1.2,'MAX_TOKENS':4096,'FILE_UPLOAD_MAX_MB':1024,'FILE_SPLIT_MB':90,'ARCHIVE_FORMAT':'zip','ARCHIVE_PASSES':1,
+}
+FORM_BOOLEANS = {
+    'QUIET_GREETINGS_ENABLED':False,'QUIET_HOURS_BLOCK_ALL':True,'REPLY_LENGTH_MATCH':True,'CONTEXT_REMEMBER_ALL':True,
+    'POKE_REPLY_ENABLED':True,'AUTO_PLUS_ONE_ENABLED':False,'TARGET_WATCH_ENABLED':False,
+    'SUMMARY_ENABLED':True,'SUMMARY_FALLBACK_ENABLED':False,'SUMMARY_UNRESTRICTED':True,'DASHSCOPE_ENABLE_THINKING':False,
+    'DAILY_PING_ENABLED':False,'DAILY_PING_CHAIN_ENABLED':True,'REPLY_TIMING_ENABLED':False,'STICKERS_ENABLED':True,
+    'STICKER_LEARN_PRIVATE':False,'STICKER_LEARN_ENABLED':False,'STICKER_WEB_SEARCH':True,
+    'STICKER_SEARCH_REWRITE':True,'STICKER_SEARCH_FILTER':True,
+}
+# Values that the consumer clamps before use. Raw saved text remains in `value`.
+FORM_BOUNDS = {
+    'PROACTIVE_RATE':(0,1,False),'EMOJI_KEEP_RATE':(0,1,False),'REPLY_MIN_BUDGET':(0,300,True),
+    'REPLY_MAX_LINES':(1,5,True),'REPLY_LINE_MAX_CHARS':(10,200,True),'HISTORY_LIMIT':(4,200,True),
+    'RATE_LIMIT_PER_HOUR':(0,None,True),'RATE_LIMIT_AT_PER_HOUR':(0,None,True),'RATE_LIMIT_MIN_GAP_MS':(0,None,False),'RATE_LIMIT_WAIT_MAX_MS':(0,None,False),
+    'SUMMARY_REQUEST_TIMEOUT_SECONDS':(60,3600,False),'SUMMARY_MAX_MESSAGES':(50,1500,True),
+    'SUMMARY_MAX_TOKENS':(500,16000,True),'SUMMARY_CONCURRENCY':(1,3,True),'SUMMARY_TASK_TIMEOUT_MINUTES':(2,30,False),
+    'SUMMARY_REFERENCE_MAX_IMAGES':(0,12,True),'STICKER_AUTO_RATE':(0,100,False),'STICKER_MAX_PER_REPLY':(1,3,True),
+    'VISION_MAX_TOKENS':(64,4000,True),'TEMPERATURE':(0,2,False),'MAX_TOKENS':(256,None,True),
+    'FILE_UPLOAD_MAX_MB':(1,None,False),
+}
 
 
 class Admin:
     def __init__(self, config, plugins, memory, long_memory, *, onebot=None, model=None, sticker_tag_model=None, stickers=None, media_delivery=None):
         self.config, self.plugins, self.memory, self.long_memory = config, plugins, memory, long_memory
         self.onebot, self.model = onebot, model
-        self.group_names, self.friend_names = {}, {}
+        self.group_names, self.friend_names, self.group_members = {}, {}, {}
         plugins.config = config
         self.commands = CommandRegistry(config, plugins)
         self.token = secrets.token_urlsafe(32)
@@ -53,9 +95,10 @@ class Admin:
         self.metrics = Metrics(config.data_dir/'metrics.json')
         self.runtime_stats = RuntimeStats()
         self.errors = ErrorStore(config.data_dir/'errors.json',secrets=lambda:configured_secrets(config))
-        self.logger = NativeLogger(config.log_dir/'bot.log',errors=self.errors,metrics=self.metrics,secrets=lambda:configured_secrets(config))
+        self.logger = NativeLogger(config.log_dir/'bot.log',level=config.get('LOG_LEVEL','info'),errors=self.errors,metrics=self.metrics,secrets=lambda:configured_secrets(config))
         self.selfcheck = SelfCheck(config,onebot,self.backup)
-        self.updates = UpdateChecker(root=config.root) if (config.root/'package.json').exists() else None
+        try:self.updates=UpdateChecker(current_version=local_version(config.root))
+        except (ValueError,OSError):self.updates=None
         self.custom = CustomCommands(config.data_dir / "custom-commands.json")
         self.vision_providers = VisionProviders(config)
         self.quiet_greetings = QuietGreetings(config, onebot, memory, self.settings, self.greetings) if onebot else None
@@ -223,7 +266,7 @@ class Admin:
 
     async def get_updates(self,_):
         if self.updates is None:
-            return {'currentVersion':__version__,'available':False,'error':'当前目录没有已安装版本记录'}
+            return {'currentVersion':None,'available':False,'status':'unavailable','error':'当前目录没有已安装版本记录'}
         return await self.updates.check()
 
     async def check_update(self,_):
@@ -314,25 +357,50 @@ class Admin:
 
     def delete_chat(self,p):
         key = str(p.get('key') or '')
-        if not re.fullmatch(r'[gp]\d{1,15}',key): raise ValueError('会话编号无效')
-        # Back up reports and all user data before removing any conversation state.
-        backup = self.backup.run(reason='删除会话前备份')
+        conversation_group(key)
+        return self.remove_chats([key],'删除会话')
+
+    def remove_chats(self,keys,reason):
+        if not keys: return {'ok':True,'removed':[],'backup':None}
+        for key in keys: conversation_group(key)
+        backup = self.backup.run(reason=reason+'前备份')
+        deletion = ConversationDeletion(self.config)
+        daily_backup = deletion.prepare(keys)
+        removed = {}
         def mutate():
-            self.memory.clear(key); self.long_memory.clear(key); self.settings.pop(key,None)
+            for key in keys:
+                self.memory.clear(key); self.long_memory.clear(key); self.settings.pop(key,None)
             write_json(self.chat_file,self.settings)
-            name = 'WHITELIST_GROUPS' if key[0]=='g' else 'PRIVATE_WHITELIST'
-            ids = self.config.ids(name); removed = int(key[1:]) in ids; ids.discard(int(key[1:]))
-            self.config.save({name:','.join(map(str,sorted(ids)))})
-            return {'ok':True,'key':key,'whitelistRemoved':removed,'dailyBackup':backup['name']}
-        result = self.sessions.transaction('删除会话',mutate)
+            patch = {}
+            for prefix,name in [('g','WHITELIST_GROUPS'),('p','PRIVATE_WHITELIST')]:
+                selected = [key for key in keys if key[0]==prefix]
+                if not selected: continue
+                ids = self.config.ids(name)
+                for key in selected:
+                    removed[key] = int(key[1:]) in ids
+                    ids.discard(int(key[1:]))
+                patch[name] = ','.join(map(str,sorted(ids)))
+            self.config.save(patch)
+            deletion.stage_archives(read_json(self.sessions.journal))
+            return {'ok':True,'removed':keys,'backup':backup['name'],'dailyBackup':daily_backup}
+        try:
+            result = self.sessions.transaction(reason,mutate)
+        except BaseException:
+            deletion.rollback_archives()
+            raise
+        deletion.complete()
         if self.watch: self.watch.reset_pending()
+        if len(keys)==1: result.update(key=keys[0],whitelistRemoved=removed[keys[0]])
         return result
 
     def cleanup_groups(self,_):
         keys = set(self.settings)|set(self.memory.chats)|set(self.long_memory.chats)
+        daily = self.config.data_dir/'daily'
+        if daily.exists():
+            safe_tree(daily)
+            keys.update('g'+entry.name for entry in daily.iterdir() if entry.is_dir() and re.fullmatch(r'[1-9][0-9]{0,14}',entry.name))
         targets = sorted(k for k in keys if re.fullmatch(r'g\d{1,15}',k) and int(k[1:]) not in self.config.ids('WHITELIST_GROUPS'))
-        results = [self.delete_chat({'key':key}) for key in targets]
-        return {'ok':True,'removed':targets,'backup':results[0]['dailyBackup'] if results else None}
+        return self.remove_chats(targets,'清理非白名单群')
 
     def delete_backup(self,p):
         from .backup import NAME, remove
@@ -385,14 +453,52 @@ class Admin:
 
     async def state(self, _):
         stats = self.runtime_stats.snapshot()
-        version = local_version(self.config.root) if self.updates is not None else __version__
+        version = self.updates.current_version if self.updates is not None else 'unknown'
+        c=self.config
+        health=self.onebot.status() if self.onebot else {'connected':False,'online':False,'probeVerified':False,'selfId':''}
+        provider=c.get('VISION_PROVIDER','dashscope')
+        custom=self.vision_providers.get(provider.partition(':')[2]) if provider.startswith('custom:') else (self.vision_providers.get(self.vision_providers.items[0]['id']) if provider=='custom' and self.vision_providers.items else None)
+        vision_model=c.get('VISION_MODEL','deepseek-flash') if provider=='deepseek' else c.get('DASHSCOPE_MODEL','qwen-vl-plus') if provider=='dashscope' else (custom or {}).get('model',c.get('VISION_CUSTOM_MODEL'))
+        vision_ready=bool(c.get('DEEPSEEK_API_KEY')) if provider=='deepseek' else bool(c.get('DASHSCOPE_API_KEY')) if provider=='dashscope' else bool((custom or {}).get('apiKey',c.get('VISION_CUSTOM_API_KEY')) and (custom or {}).get('baseUrl',c.get('VISION_CUSTOM_BASE_URL')) and vision_model)
+        flash=provider=='deepseek' and 'deepseek' in vision_model.lower() and 'flash' in vision_model.lower()
+        raw_vision_tokens=c.number('VISION_MAX_TOKENS',300)
+        vision_tokens=max(64,min(4000,int(raw_vision_tokens)))
+        if flash:vision_tokens=max(2048,vision_tokens)
+        unrestricted=c.enabled('SUMMARY_UNRESTRICTED',True)
+        rates={}
+        for part in c.get('PROACTIVE_RATE_PER_GROUP').split(','):
+            group,_,rate=part.partition(':')
+            try:
+                rate=float(rate)
+                if re.fullmatch(r'[1-9][0-9]{0,14}',group.strip()) and math.isfinite(rate):rates[int(group)]=max(0,min(1,rate))
+            except ValueError:pass
+        try:onebot_port=urlsplit(c.get('ONEBOT_WS_URL','ws://127.0.0.1:3001')).port or 3001
+        except ValueError:onebot_port=None
+        watch=self.watch
+        config={'whitelist':sorted(c.ids('WHITELIST_GROUPS')),'whitelistGroups':sorted(c.ids('WHITELIST_GROUPS')),
+                'privateWhitelist':sorted(c.ids('PRIVATE_WHITELIST')),'adminUsers':sorted(c.ids('ADMIN_USERS')),
+                'activePersona':c.get('ACTIVE_PERSONA'),'quietHours':c.get('QUIET_HOURS'),
+                'proactiveRate':c.number('PROACTIVE_RATE',.04),'proactiveRatePerGroup':[{'groupId':group,'rate':rate} for group,rate in rates.items()],
+                'emojiKeepRate':c.number('EMOJI_KEEP_RATE',.35),'replyMaxLines':c.number('REPLY_MAX_LINES',3),'lineMaxChars':c.number('REPLY_LINE_MAX_CHARS',40),
+                'questionModeTrigger':'/Q','replyTimingEnabled':c.enabled('REPLY_TIMING_ENABLED',False),'replyMinBudget':c.number('REPLY_MIN_BUDGET',0),
+                'quietGreetings':self.quiet_greetings.status() if self.quiet_greetings else {'enabled':c.enabled('QUIET_GREETINGS_ENABLED',False),'blocked':True,'groups':[]},
+                'visionProvider':provider,'visionReasoning':'max' if flash else c.get('VISION_REASONING','none'),'visionMaxTokens':vision_tokens,
+                'rawVisionReasoning':c.get('VISION_REASONING'),'rawVisionMaxTokens':raw_vision_tokens,
+                'visionCustomModel':c.get('VISION_CUSTOM_MODEL'),'visionCustomReady':vision_ready if provider.startswith('custom') else bool(c.get('VISION_CUSTOM_API_KEY') and c.get('VISION_CUSTOM_BASE_URL') and c.get('VISION_CUSTOM_MODEL')),
+                'visionModelDeepseek':c.get('VISION_MODEL','deepseek-flash'),'visionModelDashscope':c.get('DASHSCOPE_MODEL','qwen-vl-plus'),
+                'visionProviders':self.vision_providers.list(),'stickerTagProvider':c.get('STICKER_TAG_PROVIDER','auto'),'visionModelName':vision_model,
+                'summaryTimes':c.get('SUMMARY_TIMES','23:00'),'summaryFallbackEnabled':c.enabled('SUMMARY_FALLBACK_ENABLED',False),'summaryGroups':sorted(c.ids('SUMMARY_GROUPS')),
+                'summaryUnrestricted':unrestricted,'summaryRequestTimeoutSeconds':max(60,min(3600,c.number('SUMMARY_REQUEST_TIMEOUT_SECONDS',900))),
+                'summaryActiveLimits':{'maxMessages':None if unrestricted else float(self.effective_config_value('SUMMARY_MAX_MESSAGES')),'maxOutputTokens':None if unrestricted else float(self.effective_config_value('SUMMARY_MAX_TOKENS')),'taskTimeoutMinutes':None if unrestricted else float(self.effective_config_value('SUMMARY_TASK_TIMEOUT_MINUTES'))},
+                'targetWatch':{'group':watch.group_id,'user':watch.user_id,'pending':len(watch.pending)} if watch and watch.enabled else None}
         return {"now": time.time()*1000, "version": version + "-python-migration", "pid": os.getpid(),
                 "uptimeSec": int(time.time()-self.started),
-                "bot": {**(self.onebot.status() if self.onebot else {"connected": False, "online": False, "probeVerified": False, "selfId": ""}), "model": self.config.get("DEEPSEEK_MODEL", "deepseek-flash")},
-                "config": {"whitelistGroups": sorted(self.config.ids("WHITELIST_GROUPS")),
-                    "adminUsers": sorted(self.config.ids("ADMIN_USERS")), "quietHours": self.config.get("QUIET_HOURS"),
-                    "proactiveRate": self.config.number("PROACTIVE_RATE", .04), "quietGreetings": self.quiet_greetings.status() if self.quiet_greetings else {"enabled": self.config.enabled('QUIET_GREETINGS_ENABLED', False), "blocked": True, "groups": []}},
-                "today": today_stats(self.config.data_dir/'daily',self.memory), "summaryProgress": list(self.summaries.progress.items.values()) if self.summaries else [], "replies": self.runtime_stats.total_replied,
+                "bot": {**health,'connected':health.get('online') is True,'onebotConnected':health.get('connected') is True,
+                        "model":c.get('DEEPSEEK_MODEL','deepseek-flash'),'deepseekReasoningEffort':'max' if 'deepseek' in c.get('DEEPSEEK_MODEL','deepseek-flash').lower() else c.get('DEEPSEEK_REASONING_EFFORT') or None,'visionModel':vision_model if vision_ready else None,
+                        'webSearch':c.enabled('WEB_SEARCH_ENABLED') and c.get('WEB_SEARCH_PROVIDER','auto')!='off',
+                        'onebotUrl':c.get('ONEBOT_WS_URL','ws://127.0.0.1:3001'),'napcatPort':None,'napcatPortNumber':onebot_port},
+                "config":config,
+                "today": today_stats(self.config.data_dir/'daily',self.memory), "summaryProgress": list(self.summaries.progress.items.values()) if self.summaries else [], "replies": stats['replies'],
                 "today_replies": stats['today_replies'], "counters": stats['counters'], "migration": self.get_migration({})}
 
     async def protocol_read(self, action):
@@ -407,12 +513,13 @@ class Admin:
         return result
 
     async def get_groups(self, _):
-        items = [{'id': str(v['group_id']), 'name': v.get('group_name', ''), **v} for v in await self.protocol_read('get_group_list') if isinstance(v, dict) and v.get('group_id')]
+        items = [{**v, 'id': str(v['group_id']), 'name': v.get('group_name', ''), 'members':v.get('member_count')} for v in await self.protocol_read('get_group_list') if isinstance(v, dict) and v.get('group_id')]
         self.group_names = {v['id']: v['name'] for v in items}
+        self.group_members = {v['id']: v['members'] for v in items}
         return {'items': items}
 
     async def get_friends(self, _):
-        items = [{'id': str(v['user_id']), 'name': v.get('remark') or v.get('nickname', ''), **v} for v in await self.protocol_read('get_friend_list') if isinstance(v, dict) and v.get('user_id')]
+        items = [{**v, 'id': str(v['user_id']), 'name': v.get('remark') or v.get('nickname', '')} for v in await self.protocol_read('get_friend_list') if isinstance(v, dict) and v.get('user_id')]
         self.friend_names = {v['id']: v['name'] for v in items}
         return {'items': items}
 
@@ -441,6 +548,8 @@ class Admin:
     def summary_ack(self, p):
         if self.summaries is None:
             raise RuntimeError('群总结服务未连接QQ')
+        if not re.fullmatch(r'[1-9][0-9]{0,14}',str(p.get('groupId',''))) or not isinstance(p.get('jobId'),str) or not p['jobId']:
+            raise ValueError('请指定群号和任务编号')
         return {'ok': True, 'acknowledged': self.summaries.progress.acknowledge(p['groupId'], p['jobId']), 'progress': list(self.summaries.progress.items.values())}
 
     def get_daily(self, _):
@@ -581,15 +690,54 @@ class Admin:
         return report(self.config.root, {*self.gets,'/api/sticker-file','/api/sticker-blacklist-file'}, self.actions)
 
     def get_config(self, _):
-        return {"items": [{**field, "value": "" if field["type"] == "secret" else self.config.get(field["key"]),
-                           "effective": "" if field["type"] == "secret" else self.config.get(field["key"]),
+        saved=parse_env(self.config.env_file.read_text(encoding='utf-8-sig')) if self.config.env_file.exists() else {}
+        return {"items": [{**field, "value": "" if field["type"] == "secret" else saved.get(field["key"],''),
+                           "effective": "" if field["type"] == "secret" else self.effective_config_value(field['key']),
                            "configured": bool(self.config.get(field["key"])) if field["type"] == "secret" else None} for field in self.schema]}
 
+    def effective_config_value(self,key):
+        if key in {'POKE_REPLY_ENABLED','AUTO_PLUS_ONE_ENABLED'}:
+            return '1' if self.commands.get('poke' if key=='POKE_REPLY_ENABLED' else 'auto-plus-one')['enabled'] else '0'
+        if key=='DEEPSEEK_REASONING_EFFORT' and 'deepseek' in self.config.get('DEEPSEEK_MODEL','deepseek-flash').lower():
+            return 'max'
+        if key in FORM_BOOLEANS:
+            enabled=self.config.enabled(key,FORM_BOOLEANS[key])
+            if enabled and key=='STICKER_LEARN_ENABLED':
+                scope=self.stickers.scope()
+                store=self.stickers.libraries.get(scope['key'])
+                if store is not None:enabled=len(store.items)<60 and not store.paused
+                else:
+                    directory=self.stickers.dir if scope['key']==self.stickers.registry['legacyKey'] else self.stickers.dir/'personas'/scope['key']
+                    safe_ancestors(directory)
+                    for name in ['learning-state.json','stickers.json','blacklist.json']:
+                        if (directory/name).is_symlink():raise ValueError('图库状态不支持链接')
+                    state=read_json(directory/'learning-state.json',{})
+                    items=read_json(directory/'stickers.json',[])
+                    blocked=read_json(directory/'blacklist.json',[])
+                    if not isinstance(state,dict) or not isinstance(items,list) or not isinstance(blocked,list):raise ValueError('表情包学习状态损坏')
+                    blocked_hashes={item.get('hash') for item in blocked if isinstance(item,dict)}
+                    enabled=not state.get('pausedByCapacity',False) and sum(isinstance(item,dict) and item.get('hash') not in blocked_hashes for item in items)<60
+            return '1' if enabled else '0'
+        default=FORM_DEFAULTS.get(key,'')
+        if isinstance(default,(float,int)):
+            value=self.config.number(key,default)
+            if key in FORM_BOUNDS:
+                low,high,integer=FORM_BOUNDS[key]
+                value=max(low,value) if high is None else max(low,min(high,value))
+                if integer:value=math.floor(value)
+            return f'{value:g}'
+        return str(self.config.get(key,default))
+
     def get_plugins(self, _):
-        return {"dir": str(self.plugins.directory), "items": self.plugins.list(), "settings": self.plugins.settings(), "nativeCommands": True}
+        return {"dir": str(self.plugins.directory), "items": self.plugins.list(), "settings": self.plugin_settings(), "nativeCommands": True}
+
+    def plugin_settings(self):
+        data=self.plugins.settings()
+        return {key:copy.deepcopy(data[key]) for key in ('recallSeconds','recallEnabled','names')}
 
     def get_commands(self, _):
-        return {"items": self.custom.all(), "builtinItems": self.commands.all(), "nativeCommands": True}
+        return {"items": self.custom.all(), "builtinItems": self.commands.all(), "nativeCommands": True,
+                "poke":getattr(self,'poke_diagnostics',{})}
 
     def validate_custom(self, item):
         for trigger in [item["trigger"], *item["aliases"]]:
@@ -661,19 +809,41 @@ class Admin:
     def get_chats(self, _):
         keys = set(self.settings) | set(self.memory.chats) | {'g'+str(id) for id in self.config.ids('WHITELIST_GROUPS')} | {'p'+str(id) for id in self.config.ids('PRIVATE_WHITELIST') | self.config.ids('ADMIN_USERS')}
         items = []
+        today = datetime.now(CHINA)
+        cutoff = today.replace(hour=0,minute=0,second=0,microsecond=0).timestamp()*1000
         for key in sorted(keys):
+            try: conversation_group(key)
+            except ValueError: continue
             raw = self.settings.get(key, {})
             group, id = key.startswith('g'), key[1:]
-            effective = {'enabled': True, 'atReplyEnabled': True, 'proactiveEnabled': True, **raw}
+            effective = {'enabled': True, 'atReplyEnabled': True, 'proactiveEnabled': True,'persona':'','customPrompt':'','note':'', **raw}
             for field, env, default in [('proactiveRate', 'PROACTIVE_RATE', .04), ('emojiKeepRate', 'EMOJI_KEEP_RATE', .35), ('replyMaxLines', 'REPLY_MAX_LINES', 3), ('lineMaxChars', 'REPLY_LINE_MAX_CHARS', 40)]:
                 if effective.get(field) is None:
                     effective[field] = self.config.number(env, default)
             if effective.get('quietHours') is None:
                 effective['quietHours'] = self.config.get('QUIET_HOURS')
-            count = len(self.memory.get(key))
+            records = self.memory.get(key)
+            count = len(records)
+            if group and int(id) not in self.config.ids('WHITELIST_GROUPS') and not count and key not in self.settings:
+                continue
+            msg_today = 0
+            if group:
+                daily = self.config.data_dir/'daily'
+                directory = daily/str(int(id))
+                file = directory/(today.strftime('%Y-%m-%d')+'.jsonl')
+                if any(p.is_symlink() or p.exists() and getattr(p.lstat(),'st_file_attributes',0)&0x400 for p in [daily,directory,file]):
+                    raise ValueError('群归档不支持链接路径')
+                if file.exists():
+                    with file.open(encoding='utf-8-sig') as stream:
+                        msg_today = sum(bool(line.strip()) for line in stream)
+            if not msg_today:
+                msg_today = sum(entry.get('role')=='user' and (entry.get('time') or 0)>=cutoff for entry in records)
             items.append({'key': key, 'id': id, 'type': 'group' if group else 'private', 'name': raw.get('note') or (self.group_names if group else self.friend_names).get(id) or ('群 ' if group else 'QQ ')+id,
                           'inWhitelist': group and int(id) in self.config.ids('WHITELIST_GROUPS'), 'raw': raw, 'effective': effective, 'memory': count, 'memoryCount': count,
+                          'msgToday':msg_today,'members':self.group_members.get(id) if group else None,
+                          'lastActive':self.runtime_stats.last_message.get(key),'received':self.runtime_stats.received.get(key,0),'replies':self.runtime_stats.replies.get(key,0),
                           'privateAccess': None if group else {'listed': int(id) in self.config.ids('PRIVATE_WHITELIST'), 'admin': int(id) in self.config.ids('ADMIN_USERS'), 'configured': key in self.settings}, 'persona': raw.get('persona', '')})
+        items.sort(key=lambda item:(item['type']!='group',-item['msgToday'],-item['memory']))
         return {'items': items}
 
     def get_memory(self, q):
@@ -748,7 +918,10 @@ class Admin:
         return {"ok": True, "changed": len(old ^ next), "whitelist": sorted(next)}
 
     def get_personas(self, _):
-        return {"items": self.sessions.list(), "active": self.config.get("ACTIVE_PERSONA"), "dir": str(self.sessions.directory)}
+        active=self.config.get('ACTIVE_PERSONA')
+        items=[{**item,'mtime':self.sessions.path(item['name']).stat().st_mtime*1000,'active':item['name']==active} for item in self.sessions.list()]
+        items.sort(key=lambda item:(not item['active'],item['name']))
+        return {"items":items,"active":active,"dir":str(self.sessions.directory)}
 
     def get_persona(self, p):
         path = self.sessions.path(p["name"])
@@ -769,9 +942,28 @@ class Admin:
             validate(library)
             if library.get("personaHash") != digest(content):
                 raise ValueError("语库与人格不匹配")
-        result = self.sessions.save(p["name"], content, create=True)
-        if library is not None:
-            self.greetings.set(content, library)
+        target=self.sessions.path(p['name'])
+        if target.exists() or any(item['name'].casefold()==p['name'].casefold() for item in self.sessions.list()):
+            raise ValueError('同名人格已存在，请修改名称；原人格不会被覆盖')
+        before=self.greetings.file.read_text(encoding='utf-8') if self.greetings.file.exists() else None
+        state=copy.deepcopy(self.greetings.state)
+        revision=getattr(self.config,'persona_revision',0)
+        created=False
+        try:
+            result = self.sessions.save(p["name"], content, create=True)
+            created=True
+            if library is not None: self.greetings.set(content, library)
+        except BaseException:
+            # This workflow has no await between the two files. Undo a failed
+            # library write so retrying the import never collides with a phantom
+            # persona; content-hashed libraries from other personas stay intact.
+            if created:
+                target.unlink(missing_ok=True)
+                if before is None:self.greetings.file.unlink(missing_ok=True)
+                else:write_text(self.greetings.file,before)
+                self.greetings.state=state
+                self.config.persona_revision=revision
+            raise
         return {**result, "name": p["name"]}
 
     def delete_persona(self, p):
@@ -795,7 +987,8 @@ class Admin:
         name = p.get("name") or self.config.get("ACTIVE_PERSONA") or "默认人格"
         content = persona_text(p.get("content", self.config.persona()))
         bundle = {"format": "koukou-persona", "version": 1, "name": name, "content": content, "greetings": self.greetings.get(content)}
-        return {"filename": "Koukou-人格.json", "content": json.dumps(bundle, ensure_ascii=False, indent=2)}
+        safe=re.sub(r'[\\/:*?"<>|\x00-\x1f]','_',str(name))[:60]
+        return {"filename": f"Koukou-{safe}-人格.json", "content": json.dumps(bundle, ensure_ascii=False, indent=2)}
 
     def get_greetings(self, p):
         return {"library": self.greetings.get(p.get("content", self.config.persona()))}
@@ -837,7 +1030,17 @@ class Admin:
                 import math
                 if not math.isfinite(float(value)):
                     raise ValueError("数值配置无效")
-        self.config.save(clean)
+        def mutate():
+            self.config.save(clean)
+            for key,id in [('POKE_REPLY_ENABLED','poke'),('AUTO_PLUS_ONE_ENABLED','auto-plus-one')]:
+                if key in clean:self.commands.save_builtin({**self.commands.get(id),'enabled':self.config.enabled(key,False)})
+        if {'POKE_REPLY_ENABLED','AUTO_PLUS_ONE_ENABLED'}&set(clean):
+            revision=getattr(self.config,'persona_revision',0)
+            self.sessions.transaction('更新回复开关',mutate)
+            # The file journal is shared, but these switches do not change the
+            # persona. Keep in-progress upload drafts and unrelated replies valid.
+            self.config.persona_revision=revision
+        else:mutate()
         if learn_on:
             self.stickers.for_chat().resume_learning()
         live = sum(bool(allowed[key].get("live")) for key in clean)
@@ -856,23 +1059,28 @@ class Admin:
         return {"enabled": self.plugins.set_enabled(p["id"], p.get("enabled") is True)}
 
     def delete_script(self, p):
-        self.plugins.path(p["id"]).unlink()
+        file=self.plugins.path(p['id'])
+        file.unlink()
+        file.with_suffix('.py.bak').unlink(missing_ok=True)
         return {"ok": True}
 
     def set_command(self, p):
         return {"ok": True, "command": self.plugins.set_command(p["id"], p.get("command", ""))}
 
     def save_plugin_settings(self, p):
-        settings = self.plugins.settings()
-        if "recallSeconds" in p:
-            seconds = int(p["recallSeconds"])
-            if not 5 <= seconds <= 7200:
+        settings=read_json(self.plugins.directory/'settings.json',{})
+        if not isinstance(settings,dict) or not isinstance(settings.get('names',{}),dict):
+            raise ValueError('插件设置格式错误，请恢复备份')
+        if "recallSeconds" in p or "recallMinutes" in p:
+            try:seconds=float(p['recallSeconds']) if 'recallSeconds' in p else float(p['recallMinutes'])*60
+            except (ValueError,TypeError,OverflowError) as exc:raise ValueError('撤回时间需在5~7200秒') from exc
+            if not math.isfinite(seconds) or not 5 <= seconds <= 7200:
                 raise ValueError("撤回时间需在5~7200秒")
-            settings["recallSeconds"] = seconds
+            settings["recallSeconds"] = math.floor(seconds+.5)
         if "recallEnabled" in p:
             settings["recallEnabled"] = p["recallEnabled"] is True
         write_json(self.plugins.directory / "settings.json", settings)
-        return {"ok": True, "settings": settings}
+        return {"ok": True, "settings": self.plugin_settings()}
 
     def set_chat(self, p):
         return self.sessions.set(p["key"], p.get("patch", {}))
@@ -921,7 +1129,7 @@ class Admin:
     def app(self):
         from aiohttp import web
         import inspect
-        assets = self.config.root / "src" / "admin"
+        assets = frontend_assets(self.config.root)
 
         async def dispatch(request):
             host = request.headers.get("Host", "")

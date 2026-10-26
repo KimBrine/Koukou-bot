@@ -249,6 +249,25 @@ def typing_delay_seconds(min_ms=600, max_ms=2500, *, rand=random.random):
     return math.floor(min_ms+rand()*max(0, max_ms-min_ms))/1000
 
 
+def split_message(text, maximum=1800):
+    """Respect QQ packet size without dropping, ellipsizing or changing any text."""
+    if not isinstance(maximum,int) or maximum<2:raise ValueError('消息分段大小至少为2')
+    rest,parts = _text(text),[]
+    while _length(rest)>maximum:
+        units,cut=0,0
+        for i,char in enumerate(rest):
+            size=_length(char)
+            if units+size>maximum:break
+            units+=size;cut=i+1
+        preferred=max(rest.rfind('\n',0,cut+1),rest.rfind('。',0,cut+1),rest.rfind('！',0,cut+1))
+        if preferred>=cut//2:cut=preferred+1
+        marker=rest.rfind('[表情',0,cut)
+        if marker>0 and ']' not in rest[marker:cut]:cut=marker
+        parts.append(rest[:cut]);rest=rest[cut:]
+    if rest:parts.append(rest)
+    return parts
+
+
 def timing_suffix(text, elapsed_ms, *, question_mode=False, enabled=True):
     if question_mode and enabled and elapsed_ms > 0 and _text(text):
         # Source JS toFixed(1) uses ties toward positive at the decimal step.

@@ -82,6 +82,27 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         finally:
             await server.close()
 
+    async def test_success_http_status_cannot_hide_content_filter_or_bad_message(self):
+        payloads=[{'choices':[{'finish_reason':'content_filter','message':{'content':'不能转发的部分'}}]},
+                  {'error':{'code':'data_inspection_failed','message':'private provider echo'}},
+                  {'choices':[{'finish_reason':'stop','message':{'content':['bad shape']}}]}]
+        calls=[]
+        async def reply(request):
+            calls.append(1)
+            return web.json_response(payloads[0])
+        app=web.Application();app.router.add_post('/v1/chat/completions',reply)
+        async with TestServer(app) as server,ClientSession(trust_env=False) as http:
+            model=ModelClient(http,api_key='test-only',base_url=str(server.make_url('/v1')),retries=2)
+            for _ in range(2):
+                with self.assertRaises(ModelError) as raised:await model.chat('',[])
+                self.assertEqual(raised.exception.status,400)
+                self.assertNotIn('private provider echo',str(raised.exception))
+                payloads.pop(0)
+            self.assertEqual(len(calls),2)
+            model.retries=0
+            with self.assertRaisesRegex(ModelError,'格式无效'):await model.chat('',[])
+            self.assertEqual(len(calls),3)
+
     async def test_real_loopback_websocket_onebot_echo_and_shutdown(self):
         actions, connected = [], asyncio.Event()
         async def endpoint(request):

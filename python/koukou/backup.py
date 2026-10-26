@@ -6,7 +6,7 @@ import re
 import shutil
 import time
 import uuid
-from .state import read_json, write_json
+from .state import read_json, write_json, write_text
 
 ITEMS = {"memory.json", "memory.json.reset.json", "long-memory.json", "long-memory.json.state.json", "long-memory.json.records",
          "chat-settings.json", "custom-commands.json", "vision-providers.json", "command-center.json", "supervisor-state.json",
@@ -108,6 +108,148 @@ def validate_content(root, items):
                     clean(command)
             elif item == 'command-center.json' and (not isinstance(value, dict) or value.get('version') != 1 or not isinstance(value.get('builtins'), dict)):
                 raise ValueError('指令中心格式无效')
+
+
+def conversation_group(key):
+    """Use the same positive, lossless numeric identities as the original console."""
+    if not isinstance(key, str) or not re.fullmatch(r'[gp][0-9]{1,15}', key) or not 0 < int(key[1:]) <= 2**53-1:
+        raise ValueError('会话编号无效')
+    return str(int(key[1:])) if key[0] == 'g' else None
+
+
+class ConversationDeletion:
+    """Pin report originals before a recoverable conversation-file transaction.
+
+    Ordinary backups intentionally do not copy the entire daily archive. Deleting
+    a conversation instead keeps just its originals in a separate private backup.
+    The original folder is renamed, never recursively deleted; an interrupted
+    operation restores both the session before-image and those exact originals.
+    """
+    def __init__(self, config):
+        self.config = config
+        self.pending = config.data_dir/'conversation-delete-pending.json'
+        self.parent = config.data_dir/'config-backups'
+        self.daily = config.data_dir/'daily'
+        self.job, self.stage = None, None
+
+    def prepare(self, keys):
+        if self.pending.exists():
+            raise RuntimeError('存在未完成的会话删除，请重启恢复后再试')
+        groups = sorted({group for key in keys if (group := conversation_group(key)) is not None})
+        if self.daily.exists(): safe_tree(self.daily)
+        if self.parent.exists(): safe_tree(self.parent)
+        present = []
+        for group in groups:
+            source = child(self.daily, group)
+            if source.exists():
+                if not source.is_dir(): raise ValueError('群归档路径不是目录')
+                safe_tree(source); present.append(group)
+        if not present:
+            return None
+        name = 'deleted-chats-'+uuid.uuid4().hex
+        self.stage = child(self.parent, name)
+        originals = self.stage/'daily'
+        originals.mkdir(parents=True)
+        try:
+            for group in present:
+                copy(child(self.daily, group), child(originals, group))
+            self.job = {'version':1,'stage':name,'groups':present,'phase':'prepared',
+                        'hashes':hashes(originals,present),'before':None}
+            if hashes(self.daily,present)!=self.job['hashes']:
+                raise ValueError('复制期间群归档已变化，未删除任何记录')
+            write_json(self.stage/'deletion.json',self.job)
+            write_json(self.pending,self.job)
+        except BaseException:
+            remove(self.parent,name)
+            raise
+        return str(originals)
+
+    def stage_archives(self, transaction):
+        if self.job is None: return
+        if not isinstance(transaction,dict) or transaction.get('version')!=1 or transaction.get('phase')!='prepared' or not isinstance(transaction.get('before'),dict):
+            raise ValueError('缺少会话删除事务的恢复信息')
+        self.job.update(phase='removing',before=transaction['before'])
+        write_json(self.pending,self.job)
+        if hashes(self.stage/'daily',self.job['groups'])!=self.job['hashes']:
+            raise ValueError('归档备份完整性校验失败，未删除原始记录')
+        if hashes(self.daily,self.job['groups'])!=self.job['hashes']:
+            raise ValueError('备份后群归档已变化，未删除原始记录')
+        moved=self.stage/'removed'
+        moved.mkdir()
+        for group in self.job['groups']:
+            source=child(self.daily,group)
+            # Validate the full checked absolute target again immediately before move.
+            safe_tree(source)
+            if source.resolve().parent!=self.daily.resolve(): raise ValueError('群归档路径越界')
+            source.rename(child(moved,group))
+
+    def complete(self):
+        if self.job is None: return
+        self.job['phase']='complete'
+        write_json(self.pending,self.job)
+        write_json(self.stage/'deletion.json',self.job)
+        self.pending.unlink()
+
+    def rollback_archives(self):
+        if self.job is None: return
+        _recover_conversation_deletion(self.config,self.pending,self.job,restore_sessions=False)
+
+
+def _recover_conversation_deletion(config, pending, job, *, restore_sessions):
+    from .sessions import transaction_path
+    if not isinstance(job,dict) or job.get('version')!=1 or not re.fullmatch(r'deleted-chats-[a-f0-9]{32}',str(job.get('stage',''))) or job.get('phase') not in {'prepared','removing','complete'}:
+        raise ValueError('会话删除恢复信息损坏')
+    groups=job.get('groups')
+    if not isinstance(groups,list) or not groups or len(groups)!=len(set(groups)) or any(not isinstance(g,str) or not re.fullmatch(r'[1-9][0-9]{0,14}',g) for g in groups):
+        raise ValueError('会话删除归档范围无效')
+    stage=child(config.data_dir/'config-backups',job['stage'])
+    safe_tree(stage)
+    if hashes(stage/'daily',groups)!=job.get('hashes'):
+        raise ValueError('会话删除备份校验失败，请保留备份并人工核对')
+    if job['phase']=='complete':
+        pending.unlink(); return True
+    before=job.get('before')
+    if before is not None:
+        if not isinstance(before,dict): raise ValueError('会话删除恢复信息损坏')
+        # Validate every destination before touching any session file.
+        for label,content in before.items():
+            transaction_path(config,label)
+            if content is not None and not isinstance(content,str): raise ValueError('会话删除恢复内容无效')
+    daily=config.data_dir/'daily'
+    if daily.exists(): safe_tree(daily)
+    for group in groups:
+        source=child(daily,group); removed=child(stage/'removed',group)
+        if removed.exists():
+            safe_tree(removed)
+            if source.exists(): raise ValueError('删除恢复目标已出现新归档，拒绝覆盖')
+        elif source.exists():
+            expected={name:hash for name,hash in job['hashes'].items() if name.startswith(group+'/')}
+            if hashes(daily,[group])!=expected:
+                raise ValueError('删除恢复目标归档已变化，拒绝覆盖')
+    # No recursive delete is used here; each removed original is moved home intact.
+    for group in groups:
+        source=child(daily,group); removed=child(stage/'removed',group)
+        if removed.exists():
+            daily.mkdir(parents=True,exist_ok=True)
+            removed.rename(source)
+        elif not source.exists():
+            copy(child(stage/'daily',group),source)
+    if restore_sessions and before is not None:
+        for label,content in before.items():
+            target=transaction_path(config,label)
+            if content is None: target.unlink(missing_ok=True)
+            else: write_text(target,content)
+    job['phase']='rolled-back'
+    write_json(stage/'deletion.json',job)
+    pending.unlink()
+    return True
+
+
+def recover_conversation_deletion(config):
+    """Call with bot.lock owned, before recover_session and mutable services."""
+    pending=config.data_dir/'conversation-delete-pending.json'
+    job=read_json(pending)
+    return False if job is None else _recover_conversation_deletion(config,pending,job,restore_sessions=True)
 
 
 class Backup:

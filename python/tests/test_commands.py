@@ -1,6 +1,7 @@
 import asyncio
 from pathlib import Path
 import tempfile
+import time
 import unittest
 from koukou.commands import CommandRegistry
 from koukou.plugins import PluginManager
@@ -90,6 +91,22 @@ class UnifiedCommandsTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(item["adminOnly"])
         with self.assertRaises(ValueError):
             self.plugins.create('help')
+
+    async def test_poke_ai_instructions_survive_partial_settings_edit_and_reach_model(self):
+        self.registry.save_builtin({'id':'poke','enabled':True,'responseMode':'ai','aiPrompt':'以一句诗回应'})
+        self.registry.save_builtin({'id':'poke','enabled':True})
+        self.assertEqual(self.registry.get('poke')['aiPrompt'],'以一句诗回应')
+        self.assertEqual(self.registry.get('poke')['ai'],'optional')
+        prompts=[]
+        class Model:
+            async def chat(self,system,*args,**kwargs):prompts.append(system);return '听见轻轻的问候了。'
+        self.bot.model=Model()
+        event={'post_type':'notice','notice_type':'notify','sub_type':'poke','group_id':200000002,
+               'target_id':200000010,'user_id':200000011,'sender':{'nickname':'测试成员'},'time':time.time()}
+        self.timeline.receive(event)
+        await self.bot.handle(event)
+        self.assertIn('以一句诗回应',prompts[0])
+        self.assertEqual(self.output[-1],'听见轻轻的问候了。')
 
 
 if __name__ == '__main__':

@@ -132,6 +132,8 @@ def quiet_hour(spec, now=None):
         return False
     start, end = a * 60 + b, c * 60 + d
     current = now or datetime.now(timezone(timedelta(hours=8)))
+    if current.tzinfo is not None:
+        current = current.astimezone(timezone(timedelta(hours=8)))
     value = current.hour * 60 + current.minute
     return start <= value < end if start < end else (value >= start or value < end) if start != end else False
 

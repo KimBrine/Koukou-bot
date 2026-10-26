@@ -2,11 +2,11 @@
 
 **本分支尚未完成整套后端的等价迁移，不能替换 main 的正式机器人。** 网页前端继续保留 HTML/CSS/JavaScript，Python 实现独立放在 `python/koukou`；旧 JavaScript 后端作为迁移对照保留，不是由 Python 再启动 Node 来包装运行。
 
-当前已建立 Python 配置、OneBot 通信、模型客户端、基础聊天流水线、记忆存储、插件 SDK/管理器和控制台基础接口。群总结、表情包、群管理、歌曲、定时任务、人格完整迁移、QQ登录管理与附件发送等仍须迁移和验证。详见 [Python 迁移清单](docs/PYTHON-MIGRATION.md)。
+后端模块和控制台入口已有 Python 对应实现，正在做完整消息流程、旧数据、启动恢复和安装包验收。群总结、人格表情包、群管理、点歌、定时任务与附件已接入原生服务；离线验证不代表真实 QQ 和模型联调完成。详见 [Python 迁移清单](docs/PYTHON-MIGRATION.md)。
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\python -m pip install -e .
+.\.venv\Scripts\python -m pip install -e ".[images]"
 .\.venv\Scripts\python -m koukou migration
 .\.venv\Scripts\python -m koukou plugin new hello --description "我的第一个插件"
 .\.venv\Scripts\python -m koukou plugin run hello 你好
@@ -16,6 +16,8 @@ python -m venv .venv
 Python 分支中的插件与其他指令并列：聊天里使用 `/calc 1+2`、`/jm 帮助` 或 `/自定义调用名 参数`，不需要 `/py` 前缀；旧格式保留兼容。
 
 预览默认使用本分支的 `data-python`/`logs-python`，不连接 QQ。`run` 在完整迁移验收前明确拒绝启动；请勿把生产 `.env` 或数据目录交给开发预览。以上插件 SDK 只在本 Python 开发环境可用，main 中的现有独立 Python 脚本仍按原方式运行。
+
+已有只读数据审计和向全新目录创建快照、派生恢复演练的工具，均不会覆盖源实例；详见 [数据审计](docs/PYTHON-DATA-AUDIT.md)和[恢复演练](docs/PYTHON-SNAPSHOT-REHEARSAL.md)。wheel 包含网页静态资源，安装后不需要 Node 后端。以下保留 JavaScript 主线的既有功能与部署说明作为迁移参照。
 
 ---
 

@@ -1529,7 +1529,7 @@ async function bind(){
   if (memoryImport) memoryImport.onchange = async function(){
     const file = memoryImport.files && memoryImport.files[0]
     if (!file) return
-    if (!await ask('导入记忆？', '会先用当前数据做一份备份，然后覆盖文件里同名会话的记忆。', '导入')) { memoryImport.value = ''; return }
+    if (!await ask('导入记忆？', '会先备份当前记忆，再用文件提供的近期或长期记忆整份替换对应记忆；其中未包含的会话也会移除。', '导入')) { memoryImport.value = ''; return }
     try {
       const data = JSON.parse(await file.text())
       const r = await api('/api/action/memory-import', { data })
@@ -1556,7 +1556,7 @@ async function bind(){
       box.querySelectorAll('[data-simdel]').forEach(function(b){
         b.onclick = async function(){
           if (!await ask('删除这张表情包？', '删除后不可恢复，可以重新上传。', '删除')) return
-          try { await api('/api/action/sticker-delete', { id: b.dataset.simdel }); b.closest('figure').remove(); toast('已删除') }
+          try { await stickerApi('/api/action/sticker-delete', { id: b.dataset.simdel }); b.closest('figure').remove(); toast('已删除') }
           catch(e){ toast('删除失败：' + e.message, true) }
         }
       })

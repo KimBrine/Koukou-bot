@@ -2,6 +2,7 @@
 from pathlib import Path
 import json
 import ast
+from .resources import migration_contract
 
 
 def implemented_contract():
@@ -85,12 +86,12 @@ MODULES.update({
 def report(root, implemented_get=(), implemented_actions=()):
     if not implemented_get and not implemented_actions:
         implemented_get,implemented_actions=implemented_contract()
-    source = json.loads((Path(root) / "python" / "migration-contract.json").read_text(encoding="utf-8-sig"))
+    source = json.loads(migration_contract(root).read_text(encoding="utf-8-sig"))
     backend = [item for item in source["modules"] if not (item["source"].startswith("src/admin/") and item["source"] != "src/admin/server.js")]
     pending = [item["source"] for item in backend if item["source"] not in MODULES]
     return {"ready": False, "stage": "integration-validation", "baseline": source["baseline"],
             "mappedModules": MODULES, "pendingModules": pending,
             "pendingGetRoutes": sorted(set(source["get"]) - set(implemented_get)),
             "pendingActions": sorted(set(source["actions"]) - set(implemented_actions)),
-            'acceptanceGates':['端到端消息与控制台契约回归','旧数据只读兼容性审计及回滚演练','原生启动、停止与重启入口验证','Windows/Linux Python 3.11/3.14远程检查','真实协议端与模型联调需另行授权'],
+            'acceptanceGates':['完整功能与控制台契约验收（已有本机HTTP/WS回归）','停写后的完整数据快照与回滚验收（已有只读审计/副本演练工具）','生产启动、停止与回滚入口验收（已有预览生命周期验证）','Windows/Linux Python 3.11/3.14远程检查','真实消息/图片/文件/拍一拍及LLBot实机验收尚未完成'],
             "note": "映射只说明有对应Python实现，不代表完整行为已验收。必须完成全部后端模块、接口契约和现有行为回归后，才能宣布可替换生产实例；当前禁止连接QQ。"}

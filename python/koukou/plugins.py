@@ -1,5 +1,6 @@
 """Native plugin manager; legacy standalone scripts and the new SDK share one runner."""
 import asyncio
+import math
 import json
 import os
 from pathlib import Path
@@ -32,8 +33,12 @@ class PluginManager:
         data = read_json(self.directory / "settings.json", {})
         if not isinstance(data, dict) or not isinstance(data.get("names", {}), dict):
             raise ValueError("插件设置格式错误，请恢复备份")
-        return {"recallSeconds": data.get("recallSeconds", data.get("recallMinutes", 5) * 60),
-                "recallEnabled": data.get("recallEnabled", True), "names": data.get("names", {})}
+        try:
+            raw=data.get('recallSeconds')
+            seconds=float(raw) if raw is not None else float(data.get('recallMinutes',5))*60
+        except (ValueError,TypeError,OverflowError):seconds=300
+        seconds=math.floor(max(5,min(7200,seconds))+.5) if math.isfinite(seconds) else 300
+        return {**data,'recallSeconds':seconds,'recallEnabled':data.get('recallEnabled') is not False,'names':dict(data.get('names',{}))}
 
     def enabled(self, name):
         disabled = read_json(self.directory / "disabled.json", [])

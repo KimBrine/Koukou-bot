@@ -7,6 +7,30 @@ import subprocess
 import sys
 
 
+async def finish_cleanup(awaitable):
+    """Finish owned cleanup even if its caller receives repeated cancellation.
+
+    Cancellation is propagated after cleanup, while a cancelled/failed cleanup
+    task itself is never treated as successful shutdown.
+    """
+    task = asyncio.ensure_future(awaitable)
+    cancelled = None
+    while True:
+        try:
+            result = await asyncio.shield(task)
+            break
+        except asyncio.CancelledError as error:
+            if task.cancelled():
+                raise
+            cancelled = error
+            if task.done():
+                result = task.result()
+                break
+    if cancelled is not None:
+        raise cancelled
+    return result
+
+
 async def run_program(argv,timeout=30):
     options={'creationflags':subprocess.CREATE_NO_WINDOW} if os.name=='nt' else {}
     process=await asyncio.create_subprocess_exec(*argv,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE,**options)

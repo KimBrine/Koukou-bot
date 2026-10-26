@@ -62,9 +62,15 @@ class ModelClient:
                                     data = json.loads(value)
                                 except ValueError as exc:
                                     raise ModelError('模型流返回无效JSON，未发送半篇回答', 502) from exc
+                                if not isinstance(data,dict):
+                                    raise ModelError('模型流返回格式无效，未发送半篇回答',502)
                                 if data.get('error'):
-                                    raise ModelError('模型流错误 '+str(data['error'].get('code', '')), 400)
-                                choice = (data.get('choices') or [{}])[0]
+                                    raise ModelError('模型流错误 content_filter' if re.search('inspection|content|safety',str(data['error']),re.I) else '模型流错误',400)
+                                choices=data.get('choices',[])
+                                if not isinstance(choices,list):raise ModelError('模型流选择格式无效',502)
+                                choice=choices[0] if choices else {}
+                                if not isinstance(choice,dict) or not isinstance(choice.get('delta',{}),dict):
+                                    raise ModelError('模型流选择格式无效，未发送半篇回答',502)
                                 delta = choice.get('delta', {})
                                 if delta.get('tool_calls'):
                                     raise ModelError('本轮总结不允许工具调用')
@@ -81,15 +87,27 @@ class ModelClient:
                             if not finished:
                                 raise ModelError('模型流提前中断，未发送半篇回答', 502)
                             return {'content': ''.join(chunks)}
-                        data = await response.json(content_type=None)
-                        if response.status >= 400:
-                            code = str((data.get("error") or {}).get("code", ""))
+                        try:data = await response.json(content_type=None)
+                        except ValueError as error:
+                            raise ModelError('模型返回无效JSON',response.status if response.status>=400 else 502) from error
+                        if not isinstance(data,dict):raise ModelError('模型响应格式无效',502)
+                        if response.status >= 400 or data.get('error'):
+                            error=data.get('error') or {}
+                            code=re.sub(r'[^A-Za-z0-9_.-]','',str(error.get('code','') if isinstance(error,dict) else ''))[:100]
                             # Do not expose API credentials or a provider's echoed request body.
-                            raise ModelError(f"模型请求失败 HTTP {response.status} {code}", response.status)
-                        choice = (data.get("choices") or [{}])[0]
+                            raise ModelError(f"模型请求失败 HTTP {response.status} {code}", response.status if response.status>=400 else 400)
+                        choices=data.get('choices')
+                        if not isinstance(choices,list) or not choices or not isinstance(choices[0],dict):
+                            raise ModelError('模型响应缺少完整回答',502)
+                        choice=choices[0]
                         if choice.get("finish_reason") == "length":
                             raise ModelError("模型输出被服务商截断，不发送半篇回答")
-                        return choice.get("message", {})
+                        if choice.get('finish_reason') in {'content_filter','safety'}:
+                            raise ModelError('模型内容检查未通过 content_filter',400)
+                        message=choice.get('message')
+                        if not isinstance(message,dict) or message.get('content') is not None and not isinstance(message['content'],str):
+                            raise ModelError('模型回答格式无效',502)
+                        return message
                 except (aiohttp.ClientError, TimeoutError, ModelError) as exc:
                     retryable = not isinstance(exc, ModelError) or exc.status == 429 or exc.status >= 500
                     if not retryable or attempt == self.retries:

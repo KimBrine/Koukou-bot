@@ -21,4 +21,7 @@ where = ["python"]
 include = ["koukou*"]
 
 [tool.setuptools.package-data]
-koukou = ["*.json", "*.ps1"]
+koukou = ["*.json", "*.ps1", "assets/*.json", "assets/admin/*", "assets/plugins/*.py"]
+
+[tool.setuptools.cmdclass]
+build_py = "build_support.BuildPy"

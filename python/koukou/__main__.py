@@ -6,32 +6,17 @@ from pathlib import Path
 import sys
 from .config import Config
 from .plugins import PluginManager
-from .memory import Memory, LongMemory
 from .migration import report
 
 
 def default_root():
-    path = Path(__file__).resolve().parents[2]
-    return path if (path / "src" / "admin" / "ui.html").exists() else Path.cwd()
+    from .resources import default_instance_root
+    return default_instance_root()
 
 
 async def serve(config, port):
-    from aiohttp import web
-    from .runtime import Runtime
-    while True:
-        runtime = await Runtime.create(config, preview=True)
-        runner = web.AppRunner(runtime.admin.app())
-        try:
-            await runner.setup()
-            try:
-                await web.TCPSite(runner, "127.0.0.1", port).start()
-                print(f"Python迁移控制台：http://127.0.0.1:{port}（仅预览，QQ连接已禁用）", flush=True)
-                await runtime.restart_requested.wait()
-            finally:
-                await runner.cleanup()
-        finally:
-            await runtime.close()
-        config=Config(config.root,config.env_file,config.environ)
+    from .console_server import serve_preview
+    await serve_preview(config,port)
 
 
 def preview_config(root):
@@ -46,11 +31,25 @@ def main(argv=None):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description="Koukou原生Python后端迁移分支")
-    parser.add_argument("--root", type=Path, default=default_root())
+    parser.add_argument("--root", type=Path)
     parser.add_argument("--env-file", type=Path)
     commands = parser.add_subparsers(dest="command", required=True)
     migration = commands.add_parser("migration", help="查看迁移清单，不连接QQ")
     migration.add_argument("--require-complete", action="store_true")
+    audit = commands.add_parser('audit-data',help='只读检查指定实例的旧数据，不迁移或连接QQ')
+    audit.add_argument('--data-dir',required=True,type=Path)
+    audit.add_argument('--persona-dir',type=Path)
+    audit.add_argument('--source-env',type=Path,help='只读检查的实例配置，不写入或加载服务')
+    snapshot=commands.add_parser('snapshot-data',help='复制数据到全新私有快照目录，不修改源实例')
+    snapshot.add_argument('--data-dir',type=Path,required=True)
+    snapshot.add_argument('--destination',type=Path,required=True)
+    snapshot.add_argument('--source-env',type=Path)
+    snapshot.add_argument('--exclude',action='append',default=[],help='精确相对路径，记入快照范围；可重复')
+    verify=commands.add_parser('verify-snapshot',help='只读核对快照文件集合与SHA-256')
+    verify.add_argument('--snapshot',type=Path,required=True)
+    rehearsal=commands.add_parser('rehearse-restore',help='将已校验快照复制到全新演练目录，不覆盖现有实例')
+    rehearsal.add_argument('--snapshot',type=Path,required=True)
+    rehearsal.add_argument('--destination',type=Path,required=True)
     preview = commands.add_parser("preview", help="启动本地Python控制台预览，不连接QQ")
     preview.add_argument("--port", type=int, default=8790)
     connect = commands.add_parser("run", help="迁移验收完成后才能启用的运行入口")
@@ -60,12 +59,27 @@ def main(argv=None):
     new.add_argument("name")
     new.add_argument("--description", default="自定义Python指令")
     sub.add_parser("list")
+    sub.add_parser('install-bundled',help='安装随附插件，保留所有已有同名文件')
     run = sub.add_parser("run")
     run.add_argument("name")
     run.add_argument("args", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
-    config = preview_config(args.root) if args.command=='preview' and args.env_file is None else Config(args.root, args.env_file)
     try:
+        if args.command=='audit-data':
+            from .migration_audit import audit_data
+            status=audit_data(args.data_dir,persona_dir=args.persona_dir,env_file=args.source_env or args.env_file)
+            print(json.dumps(status,ensure_ascii=False,indent=2))
+            return 0 if status['compatible'] else 1
+        if args.command in {'snapshot-data','verify-snapshot','rehearse-restore'}:
+            from .migration_snapshot import create_snapshot,verify_snapshot,derive_rehearsal
+            if args.command=='snapshot-data':
+                status=create_snapshot(args.data_dir,args.destination,exclude=args.exclude,env_file=args.source_env)
+            elif args.command=='verify-snapshot':status=verify_snapshot(args.snapshot)
+            else:status=derive_rehearsal(args.snapshot,args.destination)
+            print(json.dumps(status,ensure_ascii=False,indent=2))
+            return 0 if status['ok'] else 1
+        args.root=args.root or default_root()
+        config = preview_config(args.root) if args.command=='preview' and args.env_file is None else Config(args.root, args.env_file)
         if args.command == "migration":
             status = report(config.root)
             print(json.dumps(status, ensure_ascii=False, indent=2))
@@ -78,6 +92,9 @@ def main(argv=None):
                 raise ValueError("预览端口必须在1024~65535之间")
             asyncio.run(serve(config, args.port))
             return 0
+        if args.operation=='install-bundled':
+            from .resources import install_bundled_plugins
+            print(json.dumps(install_bundled_plugins(config.root),ensure_ascii=False,indent=2));return 0
         manager = PluginManager(config.root, config)
         if args.operation == "new":
             item = manager.create(args.name, args.description)

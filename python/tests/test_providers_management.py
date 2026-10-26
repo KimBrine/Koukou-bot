@@ -119,6 +119,33 @@ class ProviderTransportTests(unittest.IsolatedAsyncioTestCase):
             result=await service.switch('200000001')
             self.assertFalse(result['ok']);self.assertTrue(result['needQr'])
 
+    async def test_offline_quick_login_does_not_require_logout_and_accepts_flagless_llbot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            token=Path(tmp)/'token.txt';token.write_text('unit',encoding='utf-8')
+            config=Config(tmp,environ={'LOGIN_PROVIDER':'llbot','LLBOT_WEBUI_TOKEN_FILE':str(token)})
+            calls=[];logged_in=False
+            async def request(url,**kwargs):
+                nonlocal logged_in
+                name=url.rsplit('/',1)[-1];calls.append(name)
+                if name=='quick-login':logged_in=True
+                return 200,{'success':True,'data':{'uin':'200000001','nick':'本地夹具'} if logged_in and name=='login-info' else None}
+            class OneBot:
+                def invalidate_account(self):calls.append('invalidate')
+            service=LoginManagement(config,OneBot(),adapter=LoginAdapter(config,request=request),pause=lambda _:asyncio.sleep(0))
+            result=await service.switch('200000001')
+            self.assertTrue(result['ok']);self.assertNotIn('logout',calls)
+            self.assertLess(calls.index('invalidate'),calls.index('quick-login'))
+
+    async def test_qr_image_url_preserves_query_but_rejects_embedded_credentials(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config=Config(tmp,environ={'LOGIN_PROVIDER':'napcat','NAPCAT_WEBUI_URL':'http://127.0.0.1:6099','NAPCAT_WEBUI_TOKEN':'unit'})
+            raw='https://example.invalid/qr.png?ticket=sample&size=200'
+            async def request(*args,**kwargs):return 200,{'code':0,'data':{'url':raw}}
+            adapter=LoginAdapter(config,request=request)
+            self.assertEqual((await adapter.qrcode())['image'],raw)
+            raw='https://name:password@example.invalid/qr.png'
+            with self.assertRaises(ValueError):await adapter.qrcode()
+
     async def test_lifecycle_uses_literal_argv_and_no_process_matching_on_import(self):
         with tempfile.TemporaryDirectory() as tmp:
             config=Config(tmp,environ={'NAPCAT_DIR':tmp,'NAPCAT_TASK_NAME':'Test protocol'})

@@ -1,6 +1,6 @@
 """Direct Python translation of the ordinary reply decision boundary."""
 import random
-from datetime import datetime
+from datetime import datetime, timezone
 from .messages import quiet_hour
 
 
@@ -15,7 +15,7 @@ def decide_reply(*, private, at_bot, reply_to_bot=False, group=0, config=None, s
     if not private and int(group) in config.get("mutedGroups", []):
         return no("该群已静音（MUTED_GROUPS）")
     spec = settings.get("quietHours") if settings.get("quietHours") is not None else config.get("quietHours", "")
-    quiet = quiet_hour(spec, datetime.fromtimestamp(now))
+    quiet = quiet_hour(spec, datetime.fromtimestamp(now, timezone.utc))
     if config.get("quietHoursBlockAll") is not False and quiet:
         return no("安静时段（全部静音）")
     if private:

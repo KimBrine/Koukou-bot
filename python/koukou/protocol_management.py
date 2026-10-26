@@ -5,7 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from .providers import base_url
 from .onebot import OneBotError
 
@@ -101,7 +101,8 @@ class LoginAdapter:
         selected=selected or self.selected()
         value=await self.call('/api/login-info' if selected['provider']=='llbot' else '/api/QQLogin/CheckLoginStatus',selected=selected)
         if not isinstance(value,dict) or value.get('isLogin') is False or not value.get('uin'):return None
-        return {'uin':str(value['uin']),'nick':str(value.get('nick') or value.get('nickname') or ''),'online':value.get('online',value.get('isLogin',False)) is True}
+        # LLBot login-info may omit both flags; a returned account is logged in.
+        return {'uin':str(value['uin']),'nick':str(value.get('nick') or value.get('nickname') or ''),'online':value.get('online',value.get('isLogin',True)) is True}
 
     async def accounts(self,selected=None):
         selected=selected or self.selected()
@@ -115,7 +116,10 @@ class LoginAdapter:
         raw=str((data or {}).get('pngBase64QrcodeData') or (data or {}).get('qrcode') or (data or {}).get('url') or '')
         if not raw or len(raw)>2*1024*1024:raise ValueError('协议端没有返回有效登录二维码')
         if raw.startswith(('http://','https://')):
-            base_url(raw)  # An ordinary image URL; no credentials are admitted.
+            url=urlsplit(raw)
+            if not url.hostname or url.username or url.password or re.search(r'[\x00-\x20]',raw):
+                raise ValueError('二维码地址无效')
+            _=url.port  # Validate malformed ports while preserving ordinary query strings.
         elif raw.startswith('data:image/png;base64,'):
             base64.b64decode(raw.split(',',1)[1],validate=True)
         else:
@@ -159,8 +163,12 @@ class LoginManagement:
         async with self.lock:
             if not self.adapter.status()['available']:raise ValueError('登录管理未配置')
             selected=self.adapter.selected()
+            account=object()  # An unreadable status is not proof that logout is unnecessary.
+            if hasattr(self.adapter,'info'):
+                try:account=await self.adapter.info(selected)
+                except (ValueError,OneBotError,OSError):pass
             self.onebot.invalidate_account()
-            await self.adapter.logout(selected)
+            if account is not None:await self.adapter.logout(selected)
             await self.adapter.quick_login(uin,selected)
             for _ in range(6):
                 await self.pause(1.5)

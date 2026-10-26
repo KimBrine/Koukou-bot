@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 from .config import Config
 from .state import InstanceLock, read_json
 from .sessions import recover_session
-from .backup import Backup
+from .backup import Backup, recover_conversation_deletion
 from .memory import Memory, LongMemory
 from .plugins import PluginManager
 from .models import ModelClient, ModelError
@@ -35,6 +35,7 @@ from .observability import Notifier, health_alert_for_error
 from .scheduled import ScheduledCommands
 from .daily_ping import DailyPing
 from .id_check import IdCheck
+from .lifecycle import finish_cleanup
 
 
 def bounded(config, key, default, low, high):
@@ -193,6 +194,7 @@ class Runtime:
         self.schedule_signature = None
         self.watch_signature = None
         self.restart_requested = asyncio.Event()
+        self.close_task = None
 
     @classmethod
     async def create(cls, config, *, session=None, onebot=None, preview=False, client_factory=ModelClient):
@@ -201,6 +203,7 @@ class Runtime:
         self.lock = InstanceLock(config.data_dir,recover_stale=True).acquire()
         self.session = session
         try:
+            recover_conversation_deletion(config)
             if recover_session(config):
                 config = Config(config.root, config.env_file, config.environ)
                 if config.data_dir != self.lock.path.parent:
@@ -400,9 +403,14 @@ class Runtime:
         return self
 
     async def close(self):
-        if self.closed:
-            return
-        self.closed = True
+        # Multiple owners (HTTP cleanup, failed startup, and host cancellation)
+        # must all wait for the same shutdown before acquiring a new instance.
+        if self.close_task is None:
+            self.closed = True
+            self.close_task = asyncio.create_task(self._close())
+        await finish_cleanup(self.close_task)
+
+    async def _close(self):
         # Stop producers before their transport; cancellation is awaited before
         # releasing the instance lock, including failed startup.
         for task in list(self.tasks):

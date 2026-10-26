@@ -2,6 +2,7 @@
 import asyncio
 import base64
 import hashlib
+import math
 import re
 import time
 from pathlib import Path
@@ -9,6 +10,34 @@ from urllib.parse import urlsplit, parse_qs
 from .archive import stamp
 from .state import read_json, write_json
 from .stickers import image_mime, write_bytes
+
+
+def validate_index(value):
+    """Validate legacy JS cache shapes before any pruning or mutable service starts."""
+    valid_hash=lambda v:isinstance(v,str) and re.fullmatch(r'[a-f0-9]{64}',v) is not None
+    finite=lambda v:isinstance(v,(int,float)) and not isinstance(v,bool) and math.isfinite(v) and v>=0
+    if (not isinstance(value,dict) or value.get('version',1)!=1
+            or not isinstance(value.get('images'),list) or not isinstance(value.get('descriptions'),list)):
+        raise ValueError('图片缓存索引损坏')
+    images,descriptions={},{}
+    for raw in value['images']:
+        if (not isinstance(raw,dict) or not valid_hash(raw.get('hash'))
+                or raw.get('mime') not in {'image/png','image/jpeg','image/gif','image/webp'}
+                or not finite(raw.get('size')) or raw['size']<=0 or int(raw['size'])!=raw['size']
+                or not finite(raw.get('usedAt')) or raw['hash'] in images):
+            raise ValueError('缓存图片条目无效')
+        aliases=raw.get('aliases',[])
+        images[raw['hash']]={**raw,'aliases':[v for v in aliases if valid_hash(v)][-64:] if isinstance(aliases,list) else []}
+    for row in value['descriptions']:
+        if not isinstance(row,list) or len(row)!=2:
+            raise ValueError('缓存描述条目无效')
+        key,raw=row
+        if (not valid_hash(key) or key in descriptions or not isinstance(raw,dict)
+                or not isinstance(raw.get('hashes'),list) or not all(valid_hash(v) for v in raw['hashes'])
+                or not isinstance(raw.get('text'),str) or not raw['text'].strip() or not finite(raw.get('usedAt'))):
+            raise ValueError('缓存描述条目无效')
+        descriptions[key]=dict(raw)
+    return images,descriptions
 
 
 def reference_keys(image):
@@ -55,20 +84,11 @@ class ImageCache:
         self.max_bytes, self.max_entries, self.max_image_bytes = max_bytes, max_entries, max_image_bytes
         self.file = directory / 'index.json'
         value = read_json(self.file, {'version': 1, 'images': [], 'descriptions': []})
-        if not isinstance(value, dict) or not isinstance(value.get('images'), list) or not isinstance(value.get('descriptions'), list):
-            raise ValueError('图片缓存索引损坏')
-        self.images, self.aliases, self.descriptions = {}, {}, {}
-        for item in value['images']:
-            if not isinstance(item, dict) or not re.fullmatch(r'[a-f0-9]{64}', str(item.get('hash', ''))) or not isinstance(item.get('usedAt'), (int, float)):
-                raise ValueError('缓存图片条目无效')
-            item['aliases'] = [v for v in item.get('aliases', []) if re.fullmatch(r'[a-f0-9]{64}', str(v))][-64:]
-            self.images[item['hash']] = item
+        self.images,self.descriptions=validate_index(value)
+        self.aliases={}
+        for item in self.images.values():
             for key in item['aliases']:
                 self.aliases[key] = item['hash']
-        for key, item in value['descriptions']:
-            if not re.fullmatch(r'[a-f0-9]{64}', key) or not isinstance(item, dict) or not isinstance(item.get('hashes'), list) or not isinstance(item.get('text'), str):
-                raise ValueError('缓存描述条目无效')
-            self.descriptions[key] = item
         self.loading, self.describing = {}, {}
         self.jobs = set()
         self.image_hits, self.description_hits = 0, 0

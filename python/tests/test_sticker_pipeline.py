@@ -14,6 +14,7 @@ from koukou.rate_limit import RateLimiter
 from koukou.sticker_learn import StickerLearner
 from koukou.sticker_policy import StickerPolicy, user_asks_for_sticker
 from koukou.stickers import StickerStore, PersonaStickers, candidate_weights
+from koukou.bot import Bot
 import test_native_bot as fixtures
 
 
@@ -73,6 +74,59 @@ class PipelineTests(unittest.IsolatedAsyncioTestCase):
     asyncSetUp = fixtures.BotTests.asyncSetUp
     asyncTearDown = fixtures.BotTests.asyncTearDown
     event = fixtures.BotTests.event
+
+    async def test_q_large_answer_is_lossless_and_counts_one_paragraph(self):
+        self.bot.pause=lambda _:asyncio.sleep(0)
+        answer='1. 完整步骤\n'+('保留原文𠀀💀\n'*450)+'```python\n    print("保留缩进")\n```'
+        class Model:
+            async def chat(self,*args,**kwargs):return answer
+        self.bot.model=Model();self.bot.rate_limiter=RateLimiter(1,0)
+        await self.bot.handle(self.event('/Q 完整解释',private=True))
+        self.assertGreater(len(self.output),1)
+        self.assertEqual(''.join(self.output),answer)
+        self.assertEqual(len(self.bot.rate_limiter.history['p200000011']),1)
+
+    async def test_direct_question_retains_separate_hourly_allowance(self):
+        self.bot.pause=lambda _:asyncio.sleep(0)
+        self.bot.rate_limiter=RateLimiter(1,0)
+        self.bot.rate_limiter.record('p200000011')
+        await self.bot.handle(self.event('直接提问',private=True))
+        self.assertTrue(self.output)
+
+    async def test_unknown_text_receipt_is_not_replayed_after_process_restart(self):
+        self.bot.pause=lambda _:asyncio.sleep(0)
+        async def lost(key,text):
+            self.output.append(text);return {}
+        self.bot.onebot.send=lost
+        await self.bot.handle(self.event(private=True))
+        restarted=Bot(self.config,self.bot.onebot,self.memory,model=self.bot.model)
+        await restarted.handle(self.event(private=True))
+        self.assertEqual(len(self.output),1)
+
+    async def test_gap_wait_respects_configured_max_without_counting_unsent_reply(self):
+        pauses=[]
+        async def pause(seconds):pauses.append(seconds)
+        self.bot.pause=pause
+        self.config.values.update(HUMAN_DELAY_MIN_MS='0',HUMAN_DELAY_MAX_MS='0',RATE_LIMIT_WAIT_MAX_MS='0')
+        self.bot.rate_limiter=RateLimiter(10,60000)
+        self.bot.rate_limiter.record('p200000011')
+        await self.bot.handle(self.event(private=True))
+        self.assertFalse(self.output)
+        self.assertEqual(len(self.bot.rate_limiter.history['p200000011']),1)
+        self.assertFalse(any(pauses))
+
+    async def test_protocol_only_reply_repairs_once_and_never_leaks_internal_markup(self):
+        self.bot.pause=lambda _:asyncio.sleep(0)
+        calls=[]
+        class Model:
+            async def chat(self,*args,**kwargs):
+                calls.append(kwargs)
+                return '<｜｜DSML｜｜ invoke web_search' if len(calls)==1 else '已重新生成完整回答。'
+        self.bot.model=Model()
+        await self.bot.handle(self.event(private=True))
+        self.assertEqual(len(calls),2)
+        self.assertTrue(all(v['unlimited'] for v in calls))
+        self.assertEqual(self.output,['已重新生成完整回答。'])
 
     async def test_paragraph_lottery_once_and_usage_after_image_receipt(self):
         self.config.values.update(STICKER_AUTO_RATE='35', STICKERS_ENABLED='1')
