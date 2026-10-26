@@ -94,4 +94,4 @@ def report(root, implemented_get=(), implemented_actions=()):
             "pendingGetRoutes": sorted(set(source["get"]) - set(implemented_get)),
             "pendingActions": sorted(set(source["actions"]) - set(implemented_actions)),
             'acceptanceGates':['完整功能与控制台契约验收（已有本机HTTP/WS回归）','停写后的完整数据快照与回滚验收（已有只读审计/副本演练工具）','生产启动、停止与回滚入口验收（已有预览生命周期验证）','Windows/Linux Python 3.11/3.14远程检查','真实消息/图片/文件/拍一拍及LLBot实机验收尚未完成'],
-            "note": "映射只说明有对应Python实现，不代表完整行为已验收。必须完成全部后端模块、接口契约和现有行为回归后，才能宣布可替换生产实例；当前禁止连接QQ。"}
+            "note": "映射只说明有对应Python实现，不代表完整行为已验收。必须完成全部后端模块、接口契约和现有行为验收后，才能宣布可替换生产实例；公开CLI仍拒绝正式运行。"}

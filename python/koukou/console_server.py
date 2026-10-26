@@ -1,7 +1,8 @@
-"""Isolated console host with one owner for restart and shutdown cleanup.
+"""Console hosts with one owner for restart and shutdown cleanup.
 
-This entry remains a preview: it never starts OneBot, model calls, or background
-senders.  The production CLI migration gate is intentionally independent.
+Preview never starts OneBot or background senders. The native host is reusable
+for isolated protocol fixtures and the future cutover; it is deliberately not
+connected to the public CLI until the independent migration gate is satisfied.
 """
 import asyncio
 from contextlib import contextmanager
@@ -34,11 +35,24 @@ def shutdown_signals(stop):
 
 async def serve_preview(config, port=8790, *, stop=None, ready=None,
                         handle_signals=True, runtime_factory=Runtime.create):
-    """Serve and restart the preview, releasing HTTP resources before its lock.
+    """Host a console without a QQ connection, models, or background senders."""
+    await _serve_console(config, port, preview=True, stop=stop, ready=ready,
+                         handle_signals=handle_signals, runtime_factory=runtime_factory)
 
-    ``stop`` and ``ready`` are injectable so isolated acceptance fixtures can
-    exercise the same host in a child process without a QQ connection.  Port 0
-    is permitted only at this internal API and pins the chosen port on restart.
+
+async def serve_native(config, port=8787, *, stop=None, ready=None,
+                       handle_signals=True, runtime_factory=Runtime.create):
+    """Host the complete native runtime; not exposed by the gated public CLI."""
+    await _serve_console(config, port, preview=False, stop=stop, ready=ready,
+                         handle_signals=handle_signals, runtime_factory=runtime_factory)
+
+
+async def _serve_console(config, port, *, preview, stop, ready,
+                         handle_signals, runtime_factory):
+    """Serve either mode, releasing HTTP resources before its instance lock.
+
+    ``stop`` and ``ready`` let isolated acceptance fixtures use this same host.
+    Port 0 is permitted only internally and pins the selected port on restart.
     """
     from aiohttp import web
     if isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65535:
@@ -49,7 +63,7 @@ async def serve_preview(config, port=8790, *, stop=None, ready=None,
     async def host():
         nonlocal config, port, generation
         while not stop.is_set():
-            runtime = await runtime_factory(config, preview=True)
+            runtime = await runtime_factory(config, preview=preview)
             runner = None
             waiters = []
             try:
@@ -58,9 +72,12 @@ async def serve_preview(config, port=8790, *, stop=None, ready=None,
                 site = web.TCPSite(runner, '127.0.0.1', port)
                 await site.start()
                 port = site._server.sockets[0].getsockname()[1]
+                if not preview:
+                    await runtime.start(connect=True, maintenance=True)
                 generation += 1
                 if ready is None:
-                    print(f'Python迁移控制台：http://127.0.0.1:{port}（仅预览，QQ连接已禁用）', flush=True)
+                    mode = '仅预览，QQ连接已禁用' if preview else '原生后端实例，尚未切换main'
+                    print(f'Python迁移控制台：http://127.0.0.1:{port}（{mode}）', flush=True)
                 else:
                     result = ready(runtime, port, generation)
                     if inspect.isawaitable(result):
