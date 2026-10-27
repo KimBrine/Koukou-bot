@@ -3,7 +3,7 @@ import asyncio
 from pathlib import Path
 import re
 import time
-from urllib.parse import unquote, urlsplit
+from urllib.parse import urlsplit
 from urllib.request import url2pathname
 from .messages import chat_key
 from .state import read_json, write_json
@@ -20,7 +20,9 @@ def local_path(value):
         parsed = urlsplit(text)
         if parsed.netloc not in {"", "localhost"}:
             raise ValueError("文件URI不能指向远程主机")
-        text = url2pathname(unquote(parsed.path))
+        # url2pathname already unquotes once on every supported platform.
+        # Decoding here too turns a literal filename such as %20 into a space.
+        text = url2pathname(parsed.path)
     return Path(text).expanduser().resolve()
 
 

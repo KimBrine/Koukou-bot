@@ -93,5 +93,5 @@ def report(root, implemented_get=(), implemented_actions=()):
             "mappedModules": MODULES, "pendingModules": pending,
             "pendingGetRoutes": sorted(set(source["get"]) - set(implemented_get)),
             "pendingActions": sorted(set(source["actions"]) - set(implemented_actions)),
-            'acceptanceGates':['完整功能与控制台契约验收（已有本机HTTP/WS回归）','停写后的完整数据快照与回滚验收（已有只读审计/副本演练工具）','生产启动、停止与回滚入口验收（已有预览生命周期验证）','Windows/Linux Python 3.11/3.14远程检查','真实消息/图片/文件/拍一拍及LLBot实机验收尚未完成'],
-            "note": "映射只说明有对应Python实现，不代表完整行为已验收。必须完成全部后端模块、接口契约和现有行为验收后，才能宣布可替换生产实例；公开CLI仍拒绝正式运行。"}
+            'acceptanceGates':['完整功能与控制台契约验收（已有本机HTTP/WS回归）','停写后的完整数据快照与回滚验收（已有只读审计/副本加载验证）','生产入口切换与回滚验收（已有显式启动和同目录实例锁保护）','Windows/Linux Python 3.11/3.14远程检查','跨协议与权限实机覆盖（已授权NapCat发送/文件/拍一拍/自有消息撤回通过，LLBot及群管理尚未覆盖）'],
+            "note": "映射只说明有对应Python实现，不代表全部生产条件已验收。默认run拒绝自动接管，显式原生入口也不代表切换批准；停写快照和回滚等剩余条件完成前，不能宣布可替换生产实例。"}

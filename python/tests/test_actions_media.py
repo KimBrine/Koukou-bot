@@ -10,7 +10,7 @@ from koukou.bot import Bot
 from koukou.commands import CommandRegistry
 from koukou.config import Config
 from koukou.duration import parse_duration
-from koukou.media import MediaDelivery
+from koukou.media import MediaDelivery, local_path
 from koukou.memory import Memory
 from koukou.messages import Timeline, parse_message
 from koukou.onebot import OneBotError
@@ -215,6 +215,29 @@ class ActionsTests(unittest.IsolatedAsyncioTestCase):
     async def test_imported_management_policy_cannot_expand_to_all_groups(self):
         rule = {**self.registry.get('owner-mute'), 'scope': 'all'}
         self.assertFalse(self.registry.allowed(rule, self.event('禁言他')))
+
+
+class MediaPathTests(unittest.TestCase):
+    def test_file_uri_roundtrip_preserves_literal_percent_and_unicode_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for name in ['literal%20.txt','literal%23.txt','literal%25.txt','中文 文件%20%23%25.txt']:
+                with self.subTest(name=name):
+                    expected=Path(directory)/name
+                    expected.write_text('generic file fixture',encoding='utf-8')
+                    self.assertEqual(local_path(expected.as_uri()),expected.resolve())
+                    self.assertEqual(local_path(str(expected)),expected.resolve())
+
+    def test_file_selection_does_not_upload_a_decoded_collision(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config=Config(directory,environ={})
+            wanted=Path(directory)/'literal%20.txt'
+            collision=Path(directory)/'literal .txt'
+            wanted.write_text('selected fixture',encoding='utf-8')
+            collision.write_text('different file',encoding='utf-8')
+            media=MediaDelivery(config,object())
+            files,_=media.files({'files':[wanted.as_uri()]})
+            self.assertEqual(files[0]['path'],wanted.resolve())
+            self.assertEqual(files[0]['path'].read_text(encoding='utf-8'),'selected fixture')
 
 
 class MediaTests(unittest.IsolatedAsyncioTestCase):

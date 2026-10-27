@@ -15,7 +15,7 @@ python -m venv .venv
 
 Python 分支中的插件与其他指令并列：聊天里使用 `/calc 1+2`、`/jm 帮助` 或 `/自定义调用名 参数`，不需要 `/py` 前缀；旧格式保留兼容。
 
-预览默认使用本分支的 `data-python`/`logs-python`，不连接 QQ。`run` 在完整迁移验收前明确拒绝启动；请勿把生产 `.env` 或数据目录交给开发预览。以上插件 SDK 只在本 Python 开发环境可用，main 中的现有独立 Python 脚本仍按原方式运行。
+预览默认使用本分支的 `data-python`/`logs-python`，不连接 QQ。裸 `run` 默认拒绝启动；受控原生入口必须显式启用并指定绝对数据/日志目录，见[运行验收说明](docs/PYTHON-NATIVE-RUN.md)。请勿把生产 `.env` 或数据目录交给开发预览。以上插件 SDK 只在本 Python 环境可用，main 中的现有独立 Python 脚本仍按原方式运行。
 
 已有只读数据审计和向全新目录创建快照、派生恢复演练的工具，均不会覆盖源实例；详见 [数据审计](docs/PYTHON-DATA-AUDIT.md)和[恢复演练](docs/PYTHON-SNAPSHOT-REHEARSAL.md)。wheel 包含网页静态资源，安装后不需要 Node 后端。以下保留 JavaScript 主线的既有功能与部署说明作为迁移参照。
 

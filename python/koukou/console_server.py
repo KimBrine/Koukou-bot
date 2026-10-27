@@ -1,8 +1,7 @@
 """Console hosts with one owner for restart and shutdown cleanup.
 
-Preview never starts OneBot or background senders. The native host is reusable
-for isolated protocol fixtures and the future cutover; it is deliberately not
-connected to the public CLI until the independent migration gate is satisfied.
+Preview never starts OneBot or background senders. Native startup requires an
+explicit CLI opt-in and instance paths; legacy production launchers stay separate.
 """
 import asyncio
 from contextlib import contextmanager
@@ -40,9 +39,9 @@ async def serve_preview(config, port=8790, *, stop=None, ready=None,
                          handle_signals=handle_signals, runtime_factory=runtime_factory)
 
 
-async def serve_native(config, port=8787, *, stop=None, ready=None,
+async def serve_native(config, port=None, *, stop=None, ready=None,
                        handle_signals=True, runtime_factory=Runtime.create):
-    """Host the complete native runtime; not exposed by the gated public CLI."""
+    """Host native tasks, honoring ADMIN_ENABLED and the configured ADMIN_PORT."""
     await _serve_console(config, port, preview=False, stop=stop, ready=ready,
                          handle_signals=handle_signals, runtime_factory=runtime_factory)
 
@@ -55,7 +54,7 @@ async def _serve_console(config, port, *, preview, stop, ready,
     Port 0 is permitted only internally and pins the selected port on restart.
     """
     from aiohttp import web
-    if isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65535:
+    if port is not None and (isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65535):
         raise ValueError('控制台端口无效')
     stop = stop if stop is not None else asyncio.Event()
     generation = 0
@@ -63,23 +62,30 @@ async def _serve_console(config, port, *, preview, stop, ready,
     async def host():
         nonlocal config, port, generation
         while not stop.is_set():
+            from .native_cli import console_port
+            enabled = preview or config.enabled('ADMIN_ENABLED')
+            active_port = console_port(config) if port is None else port
             runtime = await runtime_factory(config, preview=preview)
             runner = None
             waiters = []
             try:
-                runner = web.AppRunner(runtime.admin.app(), shutdown_timeout=5)
-                await runner.setup()
-                site = web.TCPSite(runner, '127.0.0.1', port)
-                await site.start()
-                port = site._server.sockets[0].getsockname()[1]
+                if enabled:
+                    runner = web.AppRunner(runtime.admin.app(), shutdown_timeout=5)
+                    await runner.setup()
+                    site = web.TCPSite(runner, '127.0.0.1', active_port)
+                    await site.start()
+                    active_port = site._server.sockets[0].getsockname()[1]
+                    if port == 0:
+                        port = active_port
                 if not preview:
                     await runtime.start(connect=True, maintenance=True)
                 generation += 1
                 if ready is None:
                     mode = '仅预览，QQ连接已禁用' if preview else '原生后端实例，尚未切换main'
-                    print(f'Python迁移控制台：http://127.0.0.1:{port}（{mode}）', flush=True)
+                    address = f'http://127.0.0.1:{active_port}' if enabled else '已按ADMIN_ENABLED关闭HTTP监听'
+                    print(f'Python迁移控制台：{address}（{mode}）', flush=True)
                 else:
-                    result = ready(runtime, port, generation)
+                    result = ready(runtime, active_port, generation)
                     if inspect.isawaitable(result):
                         await result
                 waiters = [asyncio.create_task(stop.wait()),
