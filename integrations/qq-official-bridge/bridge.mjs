@@ -10,6 +10,8 @@ export const CAPABILITIES = Object.freeze({ text:true, image:true, ownRecall:tru
   completeHistory:false, members:false, moderation:false, poke:false, proactive:false })
 const IMAGE_MAX = 4 * 1024 * 1024
 const STATE_MAX = 10000
+const QR_LIFETIME_MS = 120000
+const QR_PREPARE_MS = 30000
 const MARKER = '.koukou-qq-official.json'
 const FORBIDDEN_STATE = ['memory.json','long-memory.json','bot.lock','bot-start.guard','personas','stickers']
 
@@ -94,7 +96,7 @@ function normalizeMessage(message) {
 
 /** Starts only a local transport. QQ and QR activity always require enableQQ. */
 export async function createOfficialBridge({ token, credentialsFile, stateDir, port=8792, enableQQ=false,
-  sdkFactory, connectorStart, renderQR, now=()=>Date.now() }={}) {
+  sdkFactory, connectorStart, renderQR, now=()=>Date.now(), qrTimers={setTimeout,clearTimeout} }={}) {
   if (typeof token!=='string' || token.length<32 || token.length>4096 || /[\s\0]/.test(token)) reject('TOKEN_REQUIRED','桥接令牌须至少32个无空白字符')
   if (!Number.isInteger(port) || port<0 || port>65535) reject('INVALID_PORT','本机端口无效')
   stateDir=await safePath(stateDir); credentialsFile=await safePath(credentialsFile)
@@ -134,11 +136,15 @@ export async function createOfficialBridge({ token, credentialsFile, stateDir, p
   try {lock=await fs.open(lockFile,'wx',0o600)}catch(error){if(error.code==='EEXIST')reject('BRIDGE_ALREADY_RUNNING','独立桥接目录已有实例锁，请先核对原实例');throw error}
   try{await lock.writeFile(JSON.stringify({protocol:PROTOCOL,pid:process.pid,token:lockToken}));await lock.sync()}finally{await lock.close()}
   let online=false, phase=creds?'bound':'unbound', qrDataUrl, sdk=null, generation=0, bindingStop=null, bindingActive=false, stopped=false
+  let qrUrl, issuedAt, refreshAt, bindingMessage='', qrRevision=0, qrTimer=null
+  const clearQrTimer=()=>{if(qrTimer!==null)qrTimers.clearTimeout(qrTimer);qrTimer=null}
+  const clearQr=()=>{qrRevision++;qrDataUrl=undefined;qrUrl=undefined;issuedAt=undefined;refreshAt=undefined;clearQrTimer()}
+  const armQrTimer=(delay,callback)=>{clearQrTimer();qrTimer=qrTimers.setTimeout(callback,delay);qrTimer?.unref?.()}
   let serial=Promise.resolve(), storageHealthy=true
   const triggers=new Map(), inflight=new Map(), clients=new Set()
   const persist=()=>{const work=serial.then(()=>atomicJson(ledgerFile,ledger));serial=work.catch(()=>{});return work}
   const status=()=>({ protocol:PROTOCOL,appId:creds?.appId||'',online,capabilities:{...CAPABILITIES},
-    binding:{phase,...(qrDataUrl?{qrDataUrl}:{})},sdkVersion:SDK_VERSION })
+    binding:{phase,...(qrDataUrl?{qrDataUrl,qrUrl,issuedAt,refreshAt}:{}),...(bindingMessage?{message:bindingMessage}:{})},sdkVersion:SDK_VERSION })
   function broadcast(value) {const data=JSON.stringify(value);for(const client of clients)if(client.readyState===WebSocket.OPEN)client.send(data)}
   const changed=()=>broadcast({type:'qq-status',data:status()})
   async function loadSDK(options) {
@@ -149,7 +155,7 @@ export async function createOfficialBridge({ token, credentialsFile, stateDir, p
   async function connect() {
     if (!enableQQ || !creds || stopped) return
     const current=++generation, selected=creds
-    sdk?.stop(); sdk=null; online=false;phase='connecting';qrDataUrl=undefined;changed()
+    sdk?.stop(); sdk=null; online=false;phase='connecting';clearQr();bindingMessage='';changed()
     const instance=await loadSDK({appId:selected.appId,appSecret:selected.appSecret,transport:'websocket',
       markdownSupport:false,baseUrl:'https://api.bot.qq.com',tokenBaseUrl:'https://api.bot.qq.com',
       logger:{info(){},warn(){},debug(){},error(){}}})
@@ -171,30 +177,45 @@ export async function createOfficialBridge({ token, credentialsFile, stateDir, p
     })
     Promise.resolve(instance.start()).catch(()=>{if(current!==generation||stopped)return;online=false;phase='error';changed()})
   }
-  async function bind() {
+  async function bind(force=false) {
     if (!enableQQ) reject('QQ_DISABLED','当前未启用QQ连接，未发起扫码')
     if (stopped) reject('BRIDGE_CLOSED','桥接服务已关闭')
-    if (bindingActive || online || phase==='connecting') return status()
+    if (online || phase==='connecting') return status()
     if (creds) {await connect();return status()}
+    if(bindingActive && phase==='preparing' && !force)return status()
+    // A manual start while showing a QR means a new task, never the old code.
+    generation++;bindingActive=false;clearQr();bindingStop?.();bindingStop=null
     const current=++generation;bindingActive=true
-    phase='unbound';qrDataUrl=undefined
+    phase='preparing';bindingMessage='';changed()
+    const failed=message=>{if(current!==generation||stopped)return;generation++;bindingActive=false;clearQr();bindingStop?.();bindingStop=null;phase='error';bindingMessage=message;changed()}
+    const preparingTimeout=()=>failed('获取新二维码超时，请重新生成；未保留旧二维码。')
+    armQrTimer(QR_PREPARE_MS,preparingTimeout)
+    try {
     const start=connectorStart||((await import('@tencent-connect/qqbot-connector')).startQrConnect)
-    const renderer=renderQR|| (async url=>{const qr=await import('qrcode');return qr.default.toDataURL(url,{type:'image/png',width:320,margin:1})})
+    const renderer=renderQR|| (async url=>{const qr=await import('qrcode');return qr.default.toDataURL(url,{type:'image/png',width:360,margin:4,errorCorrectionLevel:'M'})})
     if(current!==generation||stopped)return status()
     const cancel=start({
       onQrDisplayed:async url=>{
         if(current!==generation||stopped)return
-        try {const rendered=await renderer(url);if(current!==generation||stopped)return
+        const revision=++qrRevision
+        clearQrTimer();qrDataUrl=undefined;qrUrl=undefined;issuedAt=undefined;refreshAt=undefined
+        phase='preparing';changed();armQrTimer(QR_PREPARE_MS,preparingTimeout)
+        try {
+          const selected=new URL(url)
+          if(selected.origin!=='https://q.qq.com'||selected.username||selected.password||selected.hash||selected.pathname!=='/qqbot/openclaw/connect.html'
+            ||!selected.searchParams.get('task_id')||url.length>8192)throw Error()
+          const rendered=await renderer(url);if(current!==generation||revision!==qrRevision||stopped)return
           if(typeof rendered!=='string'||!rendered.startsWith('data:image/png;base64,')||rendered.length>300000)throw Error()
-          phase='qr';qrDataUrl=rendered;changed()
-        }catch{if(current===generation&&!stopped){generation++;bindingActive=false;bindingStop?.();bindingStop=null;phase='error';qrDataUrl=undefined;changed()}}
+          phase='qr';qrDataUrl=rendered;qrUrl=url;issuedAt=now();refreshAt=issuedAt+QR_LIFETIME_MS;changed()
+          armQrTimer(QR_LIFETIME_MS,()=>{if(current===generation&&!stopped)void bind(true).catch(()=>failed('二维码刷新失败，请重新生成。'))})
+        }catch{if(revision===qrRevision)failed('二维码生成失败，请重新生成。')}
       },
-      onQrExpired:()=>{if(current!==generation||stopped)return;qrDataUrl=undefined;phase='unbound';changed()},
-      onFailure:()=>{if(current!==generation||stopped)return;bindingActive=false;bindingStop=null;phase='error';qrDataUrl=undefined;changed()},
+      onQrExpired:()=>{if(current!==generation||stopped)return;clearQr();phase='preparing';changed();armQrTimer(QR_PREPARE_MS,preparingTimeout)},
+      onFailure:()=>failed('官方扫码连接失败，请检查网络后重新生成二维码。'),
       onSuccess:async values=>{
         if(current!==generation||stopped)return
         const saving=++generation
-        bindingStop?.();bindingStop=null
+        clearQr();bindingStop?.();bindingStop=null
         try {
           const value=values?.[0],selected=credentials({protocol:PROTOCOL,version:1,appId:value?.appId,appSecret:value?.appSecret})
           await atomicJson(credentialsFile,{protocol:PROTOCOL,version:1,...selected},async()=>{
@@ -202,12 +223,13 @@ export async function createOfficialBridge({ token, credentialsFile, stateDir, p
             try{await fs.lstat(credentialsFile);return false}catch(error){if(error.code!=='ENOENT')throw error;return true}
           })
           if(saving!==generation||stopped)return
-          creds=selected;bindingActive=false;phase='bound';qrDataUrl=undefined;changed();await connect()
-        } catch {if(saving===generation&&!stopped){bindingActive=false;phase='error';qrDataUrl=undefined;changed()}}
+          creds=selected;bindingActive=false;phase='bound';changed();await connect()
+        } catch {if(saving===generation&&!stopped){bindingActive=false;phase='error';bindingMessage='绑定凭据未能安全保存，请重新生成二维码。';changed()}}
       },
-    },{displayQrCodeToConsole:false,source:'Koukou Studio'})
+    },{displayQrCodeToConsole:false})
     if(current===generation&&bindingActive&&!stopped)bindingStop=cancel
     else cancel?.()
+    } catch {failed('无法启动官方扫码连接，请检查连接器和网络后重新生成。')}
     return status()
   }
   function target(params) {
@@ -255,7 +277,7 @@ export async function createOfficialBridge({ token, credentialsFile, stateDir, p
       if(request.action==='qq.status')return {echo,status:'ok',retcode:0,data:status()}
       if(request.action==='qq.binding.start')return {echo,status:'ok',retcode:0,data:await bind()}
       if(request.action==='qq.binding.cancel') {
-        if(bindingActive){generation++;bindingActive=false;bindingStop?.();bindingStop=null;phase='canceled';qrDataUrl=undefined;changed()}
+        if(bindingActive){generation++;bindingActive=false;clearQr();bindingStop?.();bindingStop=null;phase='canceled';bindingMessage='';changed()}
         return {echo,status:'ok',retcode:0,data:status()}
       }
       if (!['qq.send','qq.recall'].includes(request.action))reject('UNSUPPORTED_ACTION','官方接入暂不支持此操作')
@@ -324,7 +346,7 @@ export async function createOfficialBridge({ token, credentialsFile, stateDir, p
   })
   return {status,dispatch,server,
     async start(){try{await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',resolve)});if(enableQQ&&creds)await connect();return server.address()}catch(error){await this.close();throw error}},
-    async close(){if(stopped)return;stopped=true;generation++;bindingActive=false;bindingStop?.();bindingStop=null;sdk?.stop();sdk=null;online=false
+    async close(){if(stopped)return;stopped=true;generation++;bindingActive=false;clearQr();bindingStop?.();bindingStop=null;sdk?.stop();sdk=null;online=false
       for(const client of clients)client.terminate();await new Promise(resolve=>websocket.close(resolve))
       if(server.listening)await new Promise(resolve=>server.close(resolve));await serial
       const current=await readJson(lockFile).catch(()=>null)

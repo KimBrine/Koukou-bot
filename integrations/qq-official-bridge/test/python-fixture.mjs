@@ -18,7 +18,7 @@ class FakeSDK {
 const bridge=await createOfficialBridge({token:'loopback-test-token-with-at-least-32-characters',
   credentialsFile:path.join(directory,'credentials.json'),stateDir:path.join(directory,'bridge'),
   port:0,enableQQ:true,sdkFactory:()=>new FakeSDK(),renderQR:async()=>png,
-  connectorStart:callbacks=>{connector=callbacks;void callbacks.onQrDisplayed('https://example.invalid/fixture');return ()=>{}}})
+  connectorStart:callbacks=>{connector=callbacks;void callbacks.onQrDisplayed('https://q.qq.com/qqbot/openclaw/connect.html?task_id=fixture');return ()=>{}}})
 await bridge.start();output({event:'ready',port:bridge.server.address().port})
 const input=createInterface({input:process.stdin})
 input.on('line',async line=>{

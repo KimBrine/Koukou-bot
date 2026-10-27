@@ -99,7 +99,7 @@ class OfficialQQ(OneBot):
             self.self_id = self.registry.allocate('bot', app_id)
         binding = value.get('binding', {})
         phase = binding.get('phase') if isinstance(binding, dict) else None
-        self.binding_state = {'phase': phase if phase in {'unbound', 'qr', 'bound', 'connecting', 'online', 'error', 'canceled'} else 'unbound'}
+        self.binding_state = {'phase': phase if phase in {'unbound', 'preparing', 'qr', 'bound', 'connecting', 'online', 'error', 'canceled'} else 'unbound'}
         qr = binding.get('qrDataUrl') if isinstance(binding, dict) else None
         if isinstance(qr, str) and len(qr) <= 1024*1024 and re.fullmatch(r'data:image/png;base64,[A-Za-z0-9+/=]+', qr):
             try:
@@ -107,6 +107,25 @@ class OfficialQQ(OneBot):
                     self.binding_state['qrDataUrl'] = qr
             except ValueError:
                 pass
+        if isinstance(binding, dict):
+            if phase == 'qr' and 'qrDataUrl' in self.binding_state:
+                url = binding.get('qrUrl')
+                if isinstance(url, str) and len(url) <= 8192:
+                    try:
+                        parsed = urlsplit(url)
+                        if (parsed.scheme == 'https' and parsed.netloc == 'q.qq.com'
+                                and parsed.path == '/qqbot/openclaw/connect.html' and not parsed.fragment):
+                            self.binding_state['qrUrl'] = url
+                    except ValueError:
+                        pass
+                for field in ('issuedAt', 'refreshAt'):
+                    stamp = binding.get(field)
+                    if type(stamp) in (int, float) and 0 < stamp < 1e16:
+                        self.binding_state[field] = stamp
+            message = binding.get('message')
+            if isinstance(message, str) and phase == 'error':
+                # The bridge publishes fixed user-facing errors, never SDK exception text.
+                self.binding_state['message'] = message[:300]
         reported = value.get('capabilities', {})
         self.capabilities = {key: allowed and isinstance(reported, dict) and reported.get(key) is True for key, allowed in CAPABILITIES.items()}
         self.sdk_version = str(value.get('sdkVersion') or '')[:80]

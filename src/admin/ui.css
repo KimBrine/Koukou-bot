@@ -262,8 +262,8 @@ details.card[open] > summary { padding-bottom: 16px; border-bottom: 1px solid va
 .official-connect{border-color:var(--accent,#56d8c3);margin:16px 0}
 .official-connect .section-head{align-items:flex-start;gap:12px;flex-wrap:wrap}
 .official-connect .flexbar .primary{min-height:46px}
-.official-qr{margin:18px 0;max-width:300px}
-.official-qr img{display:block;width:240px;max-width:100%;height:auto;padding:10px;background:#fff;border-radius:12px}
+.official-qr{margin:18px 0;max-width:360px}
+.official-qr img{display:block;width:320px;max-width:100%;height:auto;padding:10px;background:#fff;border-radius:12px;image-rendering:pixelated}
 .official-qr figcaption{font-size:13px;color:var(--muted,#9aabc0);line-height:1.6;margin-top:8px}
 .official-identity{display:inline-block;overflow-wrap:anywhere;font-size:12px;vertical-align:middle}
 .official-identity small,.official-identities small{display:block;font-size:12px;line-height:1.6}

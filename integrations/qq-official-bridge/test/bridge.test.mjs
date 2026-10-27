@@ -160,10 +160,10 @@ test('unknown send/recall is never replayed and does not leak SDK error details'
 test('QR binding is explicitly enabled, cancel discards stale callbacks, and successful credentials remain private',async t=>{
   let callbacks,canceled=0
   const {bridge,credentialsFile,factoryOptions}=await fixture(t,{enableQQ:true,
-    connectorStart:(value,options)=>{callbacks=value;assert.equal(options.displayQrCodeToConsole,false);return()=>canceled++},
+    connectorStart:(value,options)=>{callbacks=value;assert.equal(options.displayQrCodeToConsole,false);assert.equal(options.source,undefined);return()=>canceled++},
     renderQR:async()=>`data:image/png;base64,${PNG}`})
   await bridge.dispatch(request('qq.binding.start'))
-  await callbacks.onQrDisplayed('https://q.qq.com/fixture-binding')
+  await callbacks.onQrDisplayed('https://q.qq.com/qqbot/openclaw/connect.html?task_id=fixture-binding')
   assert.equal(bridge.status().binding.phase,'qr');assert.ok(bridge.status().binding.qrDataUrl.startsWith('data:image/png;base64,'))
   await bridge.dispatch(request('qq.binding.cancel',{},'cancel'))
   await callbacks.onSuccess([{appId:'stale-app',appSecret:'stale-private-secret'}])
@@ -174,6 +174,69 @@ test('QR binding is explicitly enabled, cancel discards stale callbacks, and suc
   assert.equal(factoryOptions.length,1);assert.equal(canceled,2)
   const publicStatus=JSON.stringify(bridge.status());assert.equal(publicStatus.includes('new-private-secret'),false);assert.equal(publicStatus.includes('owner-private-openid'),false)
   assert.equal(JSON.parse(await fs.readFile(credentialsFile,'utf8')).appSecret,'new-private-secret')
+})
+
+test('manual QR regeneration cancels the old task, removes the old image and ignores its callbacks',async t=>{
+  const tasks=[]
+  const {bridge,credentialsFile}=await fixture(t,{enableQQ:true,now:()=>1000000,
+    connectorStart:callbacks=>{const task={callbacks,canceled:false};tasks.push(task);return()=>{task.canceled=true}},
+    renderQR:async()=>`data:image/png;base64,${PNG}`})
+  await bridge.dispatch(request('qq.binding.start'))
+  await tasks[0].callbacks.onQrDisplayed('https://q.qq.com/qqbot/openclaw/connect.html?task_id=first')
+  assert.equal(bridge.status().binding.issuedAt,1000000)
+  assert.equal(bridge.status().binding.refreshAt,1120000)
+  await bridge.dispatch(request('qq.binding.start'))
+  assert.equal(tasks[0].canceled,true);assert.equal(tasks.length,2)
+  assert.equal(bridge.status().binding.phase,'preparing')
+  assert.equal(bridge.status().binding.qrDataUrl,undefined)
+  await tasks[0].callbacks.onQrDisplayed('https://q.qq.com/qqbot/openclaw/connect.html?task_id=stale')
+  await tasks[0].callbacks.onSuccess([{appId:'stale',appSecret:'stale-private-secret'}])
+  assert.equal(bridge.status().binding.phase,'preparing')
+  await assert.rejects(fs.stat(credentialsFile),{code:'ENOENT'})
+  await tasks[1].callbacks.onQrDisplayed('https://q.qq.com/qqbot/openclaw/connect.html?task_id=second')
+  assert.match(bridge.status().binding.qrUrl,/task_id=second$/)
+})
+
+test('expiry and local renewal invalidate slow renderers; preparation timeout clears stale QR',async t=>{
+  const tasks=[],timers=new Set(),renders=[]
+  const {bridge}=await fixture(t,{enableQQ:true,
+    qrTimers:{setTimeout:(fn,delay)=>{const timer={fn,delay};timers.add(timer);return timer},clearTimeout:timer=>timers.delete(timer)},
+    connectorStart:callbacks=>{tasks.push(callbacks);return()=>{}},
+    renderQR:()=>new Promise(resolve=>renders.push(resolve))})
+  await bridge.dispatch(request('qq.binding.start'))
+  const first=tasks[0].onQrDisplayed('https://q.qq.com/qqbot/openclaw/connect.html?task_id=old')
+  tasks[0].onQrExpired()
+  const second=tasks[0].onQrDisplayed('https://q.qq.com/qqbot/openclaw/connect.html?task_id=fresh')
+  renders[1](`data:image/png;base64,${PNG}`);await second
+  renders[0](`data:image/png;base64,${PNG}`);await first
+  assert.match(bridge.status().binding.qrUrl,/task_id=fresh$/)
+  const renewal=[...timers].find(timer=>timer.delay===120000)
+  assert.ok(renewal);renewal.fn();await new Promise(resolve=>setImmediate(resolve))
+  assert.equal(tasks.length,2);assert.equal(bridge.status().binding.phase,'preparing')
+  assert.equal(bridge.status().binding.qrDataUrl,undefined)
+  const timeout=[...timers].find(timer=>timer.delay===30000)
+  timeout.fn()
+  assert.equal(bridge.status().binding.phase,'error');assert.match(bridge.status().binding.message,/超时/)
+  assert.equal(bridge.status().binding.qrUrl,undefined)
+  assert.equal(timers.size,0)
+})
+
+test('connector failures and unsupported QR URLs are recoverable without publishing SDK secrets',async t=>{
+  let callback,throws=true
+  const {bridge}=await fixture(t,{enableQQ:true,
+    connectorStart:value=>{if(throws)throw Error('secret credential');callback=value;return()=>{}},
+    renderQR:async()=>`data:image/png;base64,${PNG}`})
+  await bridge.dispatch(request('qq.binding.start'))
+  assert.equal(bridge.status().binding.phase,'error')
+  assert.doesNotMatch(JSON.stringify(bridge.status()),/secret credential/)
+  throws=false;await bridge.dispatch(request('qq.binding.start'))
+  await callback.onQrDisplayed('https://evil.invalid/qqbot/openclaw/connect.html?task_id=foreign')
+  assert.equal(bridge.status().binding.phase,'error');assert.equal(bridge.status().binding.qrUrl,undefined)
+  await bridge.dispatch(request('qq.binding.start'))
+  await callback.onQrDisplayed('https://q.qq.com/qqbot/openclaw/connect.html?task_id=valid')
+  callback.onFailure(Error('task secret'))
+  assert.equal(bridge.status().binding.phase,'error');assert.equal(bridge.status().binding.qrDataUrl,undefined)
+  assert.doesNotMatch(JSON.stringify(bridge.status()),/task secret/)
 })
 
 test('rejects production data, unknown files, corrupted own ledger and concurrent use without overwriting',async t=>{

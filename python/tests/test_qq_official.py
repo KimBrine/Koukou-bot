@@ -123,6 +123,25 @@ class OfficialQQTests(unittest.IsolatedAsyncioTestCase):
         self.client._apply_status(value)
         self.assertEqual(self.client.metadata()['binding'],value['binding'])
 
+    async def test_binding_refresh_metadata_and_links_remain_constrained(self):
+        value = status()
+        value['binding'] = {'phase':'preparing'}
+        self.client._apply_status(value)
+        self.assertEqual(self.client.metadata()['binding'], {'phase':'preparing'})
+        binding = {'phase':'qr', 'qrDataUrl':'data:image/png;base64,'+base64.b64encode(PNG).decode(),
+                   'qrUrl':'https://q.qq.com/qqbot/openclaw/connect.html?task_id=fixture',
+                   'issuedAt':1000000, 'refreshAt':1120000}
+        value['binding'] = binding
+        self.client._apply_status(value)
+        self.assertEqual(self.client.metadata()['binding'], binding)
+        value['binding'] = {**binding, 'qrUrl':'https://evil.invalid/qqbot/openclaw/connect.html', 'issuedAt':float('inf')}
+        self.client._apply_status(value)
+        self.assertNotIn('qrUrl', self.client.metadata()['binding'])
+        self.assertNotIn('issuedAt', self.client.metadata()['binding'])
+        value['binding'] = {'phase':'error', 'message':'retry', 'appSecret':'private', 'qrUrl':binding['qrUrl']}
+        self.client._apply_status(value)
+        self.assertEqual(self.client.metadata()['binding'], {'phase':'error','message':'retry'})
+
     async def test_duplicate_incoming_message_does_not_reset_quota_or_dispatch_again(self):
         delivered=[]
         async def handler(event):delivered.append(event)

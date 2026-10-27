@@ -51,24 +51,30 @@ function officialIdentityTable(){
 function officialConnectionCard(){
   if (!officialMode()) return ''
   const backend = state.backend || {}, binding = backend.binding || {}, phase = binding.phase || 'unbound'
-  const labels = {unbound:'尚未绑定',qr:'等待手机 QQ 扫码',bound:'已绑定，等待连接',connecting:'正在连接',online:'官方机器人在线',error:'连接异常，请查看错误中心',canceled:'绑定已取消',preview:'预览模式，未启动连接'}
+  const labels = {unbound:'尚未绑定',preparing:'正在获取新二维码',qr:'等待手机 QQ 扫码',bound:'已绑定，等待连接',connecting:'正在连接',online:'官方机器人在线',error:'扫码或连接异常',canceled:'绑定已取消',preview:'预览模式，未启动连接'}
   const qr = String(binding.qrDataUrl || '')
   const safeQr = qr.length <= 700000 && /^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(qr)
+  let qrLink = ''
+  try { const url = new URL(String(binding.qrUrl || '')); if (url.origin === 'https://q.qq.com' && !url.username && !url.password && !url.hash && url.pathname === '/qqbot/openclaw/connect.html' && url.searchParams.get('task_id')) qrLink = url.href } catch {}
+  const locallyExpired = Number.isFinite(binding.refreshAt) && binding.refreshAt <= Date.now()
+  const showingQr = safeQr && phase === 'qr' && !locallyExpired
   const preview = phase === 'preview' || backend.available === false
   const bound = ['bound','connecting','online'].includes(phase)
   return '<section class="card official-connect" id="officialConnection" aria-label="QQ 官方连接"><div class="section-head"><div><h2>QQ 官方连接</h2><p class="note">扫码绑定独立的 QQ 开放平台机器人，继续使用此控制台的人格、模型和本地记忆。</p></div><span class="pill" role="status">' + esc(labels[phase] || '状态待确认') + '</span></div>' +
     (backend.appId ? '<p class="note">AppID：<code>' + esc(backend.appId) + '</code></p>' : '') +
     (backend.modelConfigured === false ? '<p class="note">此独立实例尚未配置聊天模型，请到“模型与接口”填写密钥；私聊身份收到消息后还需在会话管理中授权。</p>' : '') +
-    (safeQr && phase === 'qr' ? '<figure class="official-qr"><img src="' + qr + '" alt="QQ 官方机器人绑定二维码" width="240" height="240"><figcaption>使用手机 QQ 扫码完成绑定。二维码仅在本机展示。</figcaption></figure>' : phase === 'qr' ? '<p class="note">二维码尚未就绪，等待状态刷新；不显示来源不明的二维码。</p>' : '') +
+    (showingQr ? '<figure class="official-qr"><img src="' + qr + '" alt="QQ 官方机器人绑定二维码" width="320" height="320"><figcaption>请用手机 QQ 内的“扫一扫”扫描当前二维码。每两分钟主动换新，服务端通知过期时也会刷新；手机已打开旧页面时，需要返回后重扫新码。</figcaption></figure>' + (qrLink ? '<p><a href="' + esc(qrLink) + '" target="_blank" rel="noreferrer noopener">打开腾讯官方绑定页</a><small class="note">（二维码识别困难时使用，手机端仍须在 QQ 中完成）</small></p>' : '') : phase === 'qr' ? '<p class="note">二维码已到刷新时间或尚未就绪，正在等待新状态；可点击“重新生成二维码”。</p>' : '') +
+    (phase === 'preparing' ? '<p class="note">正在创建新的扫码任务，旧二维码已停用。</p>' : '') +
+    (phase === 'error' && binding.message ? '<p class="inline-error" role="alert">' + esc(binding.message) + '</p>' : '') +
     (preview ? '<p class="note">此页面处于离线预览。通过独立原生运行入口启动官方试验实例后，才能在这里手动发起绑定。</p>' : '') +
-    '<div class="flexbar"><button class="btn primary" data-official-bind="start"' + (preview || bound || officialBindingBusy ? ' disabled' : '') + '>开始扫码绑定</button><button class="btn" data-official-bind="cancel"' + (preview || phase !== 'qr' || officialBindingBusy ? ' disabled' : '') + '>取消绑定</button><button class="btn" data-official-refresh>刷新连接状态</button></div>' +
+    '<div class="flexbar"><button class="btn primary" data-official-bind="start"' + (preview || bound || officialBindingBusy || phase === 'preparing' ? ' disabled' : '') + '>' + (phase === 'qr' || phase === 'error' ? '重新生成二维码' : '开始扫码绑定') + '</button><button class="btn" data-official-bind="cancel"' + (preview || !['qr','preparing'].includes(phase) || officialBindingBusy ? ' disabled' : '') + '>取消绑定</button><button class="btn" data-official-refresh>刷新连接状态</button></div>' +
     '<p class="note">不会读取或替换原 NapCat/LLBot 登录态，也不会自动导入旧群号、白名单或管理员。</p>' + officialIdentityTable() + '</section>'
 }
 function bindOfficialConnection(){
   document.querySelectorAll('[data-official-bind]').forEach(button => { button.onclick = async () => {
     if (!officialMode() || officialBindingBusy || state.backend?.binding?.phase === 'preview' || state.backend?.available === false) return
     const phase = state.backend?.binding?.phase || 'unbound'
-    if (button.dataset.officialBind === 'start' && ['bound','connecting','online'].includes(phase) || button.dataset.officialBind === 'cancel' && phase !== 'qr') return
+    if (button.dataset.officialBind === 'start' && ['bound','connecting','online','preparing'].includes(phase) || button.dataset.officialBind === 'cancel' && !['qr','preparing'].includes(phase)) return
     officialBindingBusy = true; refreshOfficialConnection()
     try {
       await api('/api/action/qq-official-binding', {action:button.dataset.officialBind})
@@ -252,7 +258,7 @@ function accountStatusText(b = {}) {
   if (typeof officialMode === 'function' && officialMode()) {
     if (b.online === true) return '官方机器人在线'
     if (b.statusError === '控制台未响应') return '控制台未响应'
-    return ({preview:'官方连接预览',qr:'等待扫码绑定',unbound:'官方机器人未绑定',connecting:'官方连接中',bound:'已绑定，等待连接',canceled:'绑定已取消',error:'官方连接异常'}[state.backend?.binding?.phase]) || '官方连接未就绪'
+    return ({preview:'官方连接预览',preparing:'正在获取新二维码',qr:'等待扫码绑定',unbound:'官方机器人未绑定',connecting:'官方连接中',bound:'已绑定，等待连接',canceled:'绑定已取消',error:'官方连接异常'}[state.backend?.binding?.phase]) || '官方连接未就绪'
   }
   if (b.online === true) return '机器人在线'
   if (b.qqOnline === false) return 'QQ 已离线'
