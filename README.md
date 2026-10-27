@@ -1,3 +1,7 @@
+# QQ 官方接入试验分支
+
+`py-dsh-qqbot` 基于 Python 分支，保留现有控制台和机器人逻辑，通过腾讯官方 SDK/扫码连接器增加独立 QQ 开放平台接入。首期支持文字、图片及自有消息撤回；旧 QQ 号、管理员和记忆不自动继承。尚未切换 main 或正式运行实例，详见[试验配置与功能边界](docs/QQ-OFFICIAL-TRIAL.md)。
+
 # `py` 分支：原生 Python 后端迁移中
 
 **本分支尚未完成整套后端的等价迁移，不能替换 main 的正式机器人。** 网页前端继续保留 HTML/CSS/JavaScript，Python 实现独立放在 `python/koukou`；旧 JavaScript 后端作为迁移对照保留，不是由 Python 再启动 Node 来包装运行。

@@ -1,0 +1,36 @@
+import assert from 'node:assert/strict'
+import vm from 'node:vm'
+import {readFileSync} from 'node:fs'
+import {readUiScript} from './ui-source.mjs'
+const app=readUiScript()
+const ctx=vm.createContext({location:{hash:'#overview'},window:{},document:{getElementById(){return null}}})
+vm.runInContext(app.slice(0,app.search(/\r?\nrenderNav\(\)\r?\nload\(\)/)),ctx)
+const run=code=>vm.runInContext(code,ctx)
+run(`state={backend:{provider:'qq-official',capabilities:{text:true,image:true,completeHistory:false,poke:false,proactive:false},
+  appId:'fixture-app',binding:{phase:'qr',qrDataUrl:'data:image/png;base64,aGVsbG8='},identities:[
+  {kind:'group',alias:'900000000000001',openId:'opaque<&group'},
+  {kind:'group-user',alias:'900000000000002',openId:'member',parent:'opaque<&group'},
+  {kind:'c2c',alias:'900000000000003',openId:'private'}]}}`)
+let html=run('officialConnectionCard()')
+assert.match(html,/QQ 官方连接/);assert.match(html,/data:image\/png;base64/)
+assert.match(html,/opaque&lt;&amp;group/);assert.doesNotMatch(html,/opaque<&group/)
+assert.equal(run("officialAliasAllowed('900000000000001',false)"),true)
+assert.equal(run("officialAliasAllowed('900000000000002',true)"),false)
+assert.equal(run("officialAliasAllowed('900000000000003',true)"),true)
+assert.match(run('summaryControlsHTML(900000000000001)'),/disabled/)
+assert.match(run('pageReport()'),/不能确认完整历史|不能确认完整群历史|尚不能确认完整群历史/)
+assert.match(run('pageLogin()'),/QQ 官方连接/)
+assert.doesNotMatch(run('pageLogin()'),/重启 NapCat|个人QQ账号切换/)
+run(`state.backend.binding={phase:'qr',qrDataUrl:'data:image/svg+xml;base64,PHN2Zz4='}`)
+assert.doesNotMatch(run('officialConnectionCard()'),/<img/)
+run(`state.backend.binding={phase:'preview'}`)
+assert.match(run('officialConnectionCard()'),/data-official-bind="start" disabled/)
+run(`state={backend:{provider:'onebot'},summaryProgress:[],config:{}}`)
+assert.equal(run('officialConnectionCard()'),'')
+assert.equal(run("protocolAllows('completeHistory')"),true)
+assert.match(run('summaryControlsHTML(200000002)'),/data-summary-start/)
+vm.runInContext(readFileSync(new URL('../src/admin/commandCenter.js',import.meta.url),'utf8'),ctx)
+const commands=run(`window.CommandCenterUI.render({custom:[],groups:[],builtins:[{id:'owner-mute',name:'禁言',trigger:'禁言我',available:false,unavailableReason:'official capability unavailable'}]})`)
+assert.match(commands,/此通道不可用/)
+assert.match(commands,/暂不可启用/)
+console.log('Official QQ UI passed: isolated identities, PNG-only QR, disabled unsupported actions and unchanged OneBot controls.')

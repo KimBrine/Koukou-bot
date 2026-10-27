@@ -34,6 +34,10 @@ def main(argv=None):
     parser.add_argument("--root", type=Path)
     parser.add_argument("--env-file", type=Path)
     commands = parser.add_subparsers(dest="command", required=True)
+    official_init = commands.add_parser('init-qq-official', help='创建独立官方QQ试验配置，不登录或导入旧数据')
+    official_init.add_argument('--destination', required=True, type=Path)
+    official_init.add_argument('--console-port', type=int, default=8791)
+    official_init.add_argument('--bridge-port', type=int, default=8792)
     migration = commands.add_parser("migration", help="查看迁移清单，不连接QQ")
     migration.add_argument("--require-complete", action="store_true")
     audit = commands.add_parser('audit-data',help='只读检查指定实例的旧数据，不迁移或连接QQ')
@@ -78,6 +82,11 @@ def main(argv=None):
     run.add_argument("args", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     try:
+        if args.command == 'init-qq-official':
+            from .official_profile import prepare_profile
+            print(json.dumps(prepare_profile(args.destination, console_port=args.console_port,
+                bridge_port=args.bridge_port), ensure_ascii=False, indent=2))
+            return 0
         if args.command=='audit-data':
             from .migration_audit import audit_data
             status=audit_data(args.data_dir,persona_dir=args.persona_dir,env_file=args.source_env or args.env_file)

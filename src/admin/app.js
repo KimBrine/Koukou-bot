@@ -17,9 +17,89 @@ const PAGES = [
 let page = location.hash.replace('#','') || 'overview'
 if (!PAGES.some(p => p[0] === page)) page = 'overview'
 let state = null
+const officialMode = () => state?.backend?.provider === 'qq-official'
+const protocolAllows = capability => !officialMode() || state?.backend?.capabilities?.[capability] === true
+const OFFICIAL_HISTORY_NOTE = '官方通道尚不能确认完整群历史，群总结暂不可用；收到的有限消息不会被当成全天记录。'
+const OFFICIAL_IDENTITY_NOTE = '内部编号（非QQ号）仅供本控制台关联会话；实际身份使用 OpenID，群成员和私聊身份分别授权，不继承旧 QQ 权限。'
+let officialBindingBusy = false
+function officialIdentity(id){
+  return officialMode() ? (state.backend.identities || []).find(row => String(row.alias) === String(id)) : null
+}
+function officialAliasAllowed(id, privateChat){
+  const row = officialIdentity(id)
+  if (!row) return false
+  return privateChat ? ['c2c-user','c2c','private'].includes(row.kind) || row.kind === 'user' && row.scope === 'c2c' : row.kind === 'group'
+}
+function protocolIdentityHTML(id){
+  if (!officialMode()) return esc(id)
+  const row = officialIdentity(id)
+  return '<span class="official-identity">内部编号（非QQ号） ' + esc(id) +
+    (row?.openId ? '<small>OpenID：<code>' + esc(row.openId) + '</code></small>' : '<small>尚未观察到对应 OpenID</small>') + '</span>'
+}
+function unavailableAttr(capability, reason){
+  return protocolAllows(capability) ? '' : ' disabled aria-disabled="true" title="' + esc(reason || '官方通道首期尚未接入此能力') + '"'
+}
+function officialCapabilityBanner(){
+  if (!officialMode()) return ''
+  return '<aside class="official-notice" role="note"><b>QQ 官方接入试验</b><p>' + OFFICIAL_IDENTITY_NOTE + '</p><p>当前适配文字、图片及机器人自有消息撤回。群管理、拍一拍、主动推送、文件和完整群总结暂不可用；名单仅包含本实例实际观察到的会话。</p></aside>'
+}
+function officialIdentityTable(){
+  const kinds = {group:'官方群',c2c:'官方私聊','c2c-user':'官方私聊',private:'官方私聊','group-user':'群成员',bot:'官方机器人'}
+  const rows = (state?.backend?.identities || []).filter(row => Object.hasOwn(kinds,row.kind))
+  return '<details class="official-identities" id="officialIdentities"><summary>查看已观察身份与内部编号（' + rows.length + '）</summary><p class="note">' + OFFICIAL_IDENTITY_NOTE + '</p><div class="official-identity-scroll"><table class="tbl"><thead><tr><th>类型</th><th>内部编号（非QQ号）</th><th>OpenID</th></tr></thead><tbody>' + rows.map(row => '<tr><td>' + esc(kinds[row.kind]) + '</td><td><code>' + esc(row.alias) + '</code></td><td><code>' + esc(row.openId) + '</code>' + (row.kind === 'group-user' && row.parent ? '<small>所属群 OpenID：' + esc(row.parent) + '</small>' : '') + '</td></tr>').join('') + '</tbody></table>' + (rows.length ? '' : '<p class="note">尚未观察到会话。此处不是全部群成员或好友名单。</p>') + '</div></details>'
+}
+function officialConnectionCard(){
+  if (!officialMode()) return ''
+  const backend = state.backend || {}, binding = backend.binding || {}, phase = binding.phase || 'unbound'
+  const labels = {unbound:'尚未绑定',qr:'等待手机 QQ 扫码',bound:'已绑定，等待连接',connecting:'正在连接',online:'官方机器人在线',error:'连接异常，请查看错误中心',canceled:'绑定已取消',preview:'预览模式，未启动连接'}
+  const qr = String(binding.qrDataUrl || '')
+  const safeQr = qr.length <= 700000 && /^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(qr)
+  const preview = phase === 'preview' || backend.available === false
+  const bound = ['bound','connecting','online'].includes(phase)
+  return '<section class="card official-connect" id="officialConnection" aria-label="QQ 官方连接"><div class="section-head"><div><h2>QQ 官方连接</h2><p class="note">扫码绑定独立的 QQ 开放平台机器人，继续使用此控制台的人格、模型和本地记忆。</p></div><span class="pill" role="status">' + esc(labels[phase] || '状态待确认') + '</span></div>' +
+    (backend.appId ? '<p class="note">AppID：<code>' + esc(backend.appId) + '</code></p>' : '') +
+    (backend.modelConfigured === false ? '<p class="note">此独立实例尚未配置聊天模型，请到“模型与接口”填写密钥；私聊身份收到消息后还需在会话管理中授权。</p>' : '') +
+    (safeQr && phase === 'qr' ? '<figure class="official-qr"><img src="' + qr + '" alt="QQ 官方机器人绑定二维码" width="240" height="240"><figcaption>使用手机 QQ 扫码完成绑定。二维码仅在本机展示。</figcaption></figure>' : phase === 'qr' ? '<p class="note">二维码尚未就绪，等待状态刷新；不显示来源不明的二维码。</p>' : '') +
+    (preview ? '<p class="note">此页面处于离线预览。通过独立原生运行入口启动官方试验实例后，才能在这里手动发起绑定。</p>' : '') +
+    '<div class="flexbar"><button class="btn primary" data-official-bind="start"' + (preview || bound || officialBindingBusy ? ' disabled' : '') + '>开始扫码绑定</button><button class="btn" data-official-bind="cancel"' + (preview || phase !== 'qr' || officialBindingBusy ? ' disabled' : '') + '>取消绑定</button><button class="btn" data-official-refresh>刷新连接状态</button></div>' +
+    '<p class="note">不会读取或替换原 NapCat/LLBot 登录态，也不会自动导入旧群号、白名单或管理员。</p>' + officialIdentityTable() + '</section>'
+}
+function bindOfficialConnection(){
+  document.querySelectorAll('[data-official-bind]').forEach(button => { button.onclick = async () => {
+    if (!officialMode() || officialBindingBusy || state.backend?.binding?.phase === 'preview' || state.backend?.available === false) return
+    const phase = state.backend?.binding?.phase || 'unbound'
+    if (button.dataset.officialBind === 'start' && ['bound','connecting','online'].includes(phase) || button.dataset.officialBind === 'cancel' && phase !== 'qr') return
+    officialBindingBusy = true; refreshOfficialConnection()
+    try {
+      await api('/api/action/qq-official-binding', {action:button.dataset.officialBind})
+      const backend = await api('/api/qq-official')
+      if (officialMode()) state.backend = backend
+      toast(button.dataset.officialBind === 'start' ? '已请求绑定，请用手机 QQ 扫码' : '已取消绑定')
+    } catch (error) { toast(error.message, true) }
+    finally { officialBindingBusy = false; refreshOfficialConnection() }
+  } })
+  document.querySelectorAll('[data-official-refresh]').forEach(button => { button.onclick = () => refreshStateUI() })
+}
+function refreshOfficialConnection(){
+  const card = document.getElementById('officialConnection')
+  if (card && officialMode()) {
+    const identitiesOpen = document.getElementById('officialIdentities')?.open
+    card.outerHTML = officialConnectionCard()
+    const identities = document.getElementById('officialIdentities');if(identities)identities.open = identitiesOpen === true
+    bindOfficialConnection()
+  }
+}
+function officialConfigCapability(key){
+  if (/^SUMMARY_/.test(key) || key === 'AUTO_PLUS_ONE_ENABLED') return 'completeHistory'
+  if (/^(PROACTIVE_|QUIET_GREETINGS_|DAILY_)/.test(key)) return 'proactive'
+  if (/^POKE_/.test(key)) return 'poke'
+  if (/^(FILE_|ARCHIVE_)/.test(key) || ['SEVEN_ZIP_PATH','RAR_PATH'].includes(key)) return 'file'
+  return null
+}
 const summaryRequests = new Set()
 function summaryControls(groupId){return `<div class="summary-controls" data-summary-group="${Number(groupId)}" aria-label="群总结操作与进度"></div>`}
 function summaryControlsHTML(groupId){
+  if (!protocolAllows('completeHistory')) return '<button class="btn sm" disabled aria-disabled="true">群总结暂不可用</button><small class="summary-detail">' + OFFICIAL_HISTORY_NOTE + '</small>'
   const job=(state?.summaryProgress||[]).find(j=>Number(j.groupId)===Number(groupId))||{status:'idle'}
   const busy=summaryRequests.has(Number(groupId))||job.status==='generating'
   const status=job.status||'idle',terminal=['success','failed'].includes(status)
@@ -32,7 +112,7 @@ function refreshSummaryControls(){
     const groupId=Number(box.dataset.summaryGroup),html=summaryControlsHTML(groupId)
     if(box.dataset.summaryView===html)return
     box.innerHTML=html;box.dataset.summaryView=html
-    box.querySelector('[data-summary-start]').onclick=()=>startGroupSummary(groupId)
+    const start=box.querySelector('[data-summary-start]');if(start)start.onclick=()=>startGroupSummary(groupId)
     const ack=box.querySelector('[data-summary-ack]')
     if(ack)ack.onclick=async()=>{
       ack.disabled=true
@@ -42,6 +122,7 @@ function refreshSummaryControls(){
   })
 }
 async function startGroupSummary(groupId){
+  if (!protocolAllows('completeHistory')) { toast(OFFICIAL_HISTORY_NOTE, true); return }
   if(summaryRequests.has(groupId))return
   summaryRequests.add(groupId);refreshSummaryControls()
   try{
@@ -168,6 +249,11 @@ function renderNav(){
 
 // ── 页面：总览 ──────────────────────────────────────────
 function accountStatusText(b = {}) {
+  if (typeof officialMode === 'function' && officialMode()) {
+    if (b.online === true) return '官方机器人在线'
+    if (b.statusError === '控制台未响应') return '控制台未响应'
+    return ({preview:'官方连接预览',qr:'等待扫码绑定',unbound:'官方机器人未绑定',connecting:'官方连接中',bound:'已绑定，等待连接',canceled:'绑定已取消',error:'官方连接异常'}[state.backend?.binding?.phase]) || '官方连接未就绪'
+  }
   if (b.online === true) return '机器人在线'
   if (b.qqOnline === false) return 'QQ 已离线'
   if (b.qqGood === false) return 'QQ 服务异常'
@@ -180,7 +266,7 @@ function updateSideStatus(b = {}) {
   const dot = document.getElementById('sideDot')
   const label = document.getElementById('sideStatus')
   if (dot) dot.className = 'dot ' + (b.online === true ? 'ok' : 'bad')
-  if (label) label.textContent = accountStatusText(b) + (b.selfId ? ' · ' + b.selfId : '')
+  if (label) label.textContent = accountStatusText(b) + (officialMode() ? '' : b.selfId ? ' · ' + b.selfId : '')
 }
 function updateStatusText(){
   const u=updateInfo;if(!u)return '尚未检查';
@@ -230,10 +316,15 @@ function overviewCards(){
   const c = state?.counters ?? {}
   const t = state?.today ?? {}
   const dot = (ok) => '<span class="dot ' + (ok ? 'ok' : 'bad') + '"></span>'
-  const cards = [
+  const connectionCards = officialMode() ? [
+    ['QQ 官方连接', dot(b.onebotConnected) + (b.onebotConnected ? ' 本机通道已连接' : ' 本机通道未连接'), '腾讯官方 SDK 通道；上线状态以实际机器人连接为准'],
+    ['官方机器人', dot(b.online === true) + ' ' + accountStatusText(b), state.backend?.appId ? 'AppID ' + esc(state.backend.appId) : '绑定后显示应用身份'],
+  ] : [
     ['OneBot 连接', (b.onebotConnected ? dot(true) + ' 已连接' : dot(false) + ' 未连接'), b.onebotUrl],
     ['QQ 账号', dot(b.online === true) + ' ' + accountStatusText(b), esc(b.nickname || '') + (b.selfId ? (' · QQ ' + b.selfId) : '') + (b.probeCheckedAt ? (' · ' + new Date(b.probeCheckedAt).toLocaleTimeString('zh-CN',{hour12:false}) + ' 实际连接核验') : '') + (b.statusError ? ' · ' + esc(b.statusError) : '')],
     ['NapCat 服务端口', b.napcatPort ? (dot(true) + ' 已监听') : (dot(false) + ' 未开放'), '端口 ' + (b.napcatPortNumber || '—')],
+  ]
+  const cards = [...connectionCards,
     ['对话模型', esc(b.model || '—'), b.webSearch ? '联网搜索已启用' : '联网搜索未启用'],
     ['视觉模型', b.visionModel ? esc(b.visionModel) : '未启用', b.visionModel ? '带图消息自动识图' : '未配置视觉 API Key'],
     ['已运行', fmtUptime(state?.uptimeSec || 0), 'PID ' + (state?.pid ?? '—')],
@@ -245,7 +336,7 @@ function overviewTodayRows(){
   const t = state?.today ?? {}
   return (t.perGroup || []).map(g => {
     const chat = chats.find(x => String(x.id) === String(g.groupId))
-    return '<tr><td>' + esc(chat?.name || ('群 ' + g.groupId)) + '</td><td class="mut">' + g.groupId + '</td><td>' + g.count + '</td></tr>'
+    return '<tr><td>' + esc(chat?.name || ('群 ' + g.groupId)) + '</td><td class="mut">' + protocolIdentityHTML(g.groupId) + '</td><td>' + g.count + '</td></tr>'
   }).join('') || '<tr><td colspan="3" class="mut">今天还没有记录到消息</td></tr>'
 }
 function pageOverview(){
@@ -272,25 +363,25 @@ function pageOverview(){
   const admins = (state?.config?.adminUsers || [])
   const adminCard = [
     '<section class="card" style="margin-bottom:18px"><h2>管理员（最高权限）</h2>',
-    '<div class="note">配置群总结与清除记忆等指令的管理员 QQ 号，逗号分隔，保存后立即生效。/help 人人可用；清除记忆要求显式管理员授权。id_check 还需符合对应群与操作员规则。</div>',
-    '<div class="flexbar"><input type="text" id="adminUsersInput" style="flex:1" placeholder="例如：200000011,200000012" value="' + esc(admins.join(',')) + '">',
+    '<div class="note">' + (officialMode() ? '仅填写本实例已观察身份的内部编号（非QQ号），逗号分隔。授权只作用于对应 OpenID；群成员与私聊身份不互认，不导入原 QQ 管理员。' : '配置群总结与清除记忆等指令的管理员 QQ 号，逗号分隔，保存后立即生效。/help 人人可用；清除记忆要求显式管理员授权。id_check 还需符合对应群与操作员规则。') + '</div>',
+    '<div class="flexbar"><input type="text" id="adminUsersInput" style="flex:1" placeholder="' + (officialMode() ? '已观察身份的内部编号，非QQ号' : '例如：200000011,200000012') + '" value="' + esc(admins.join(',')) + '">',
     '<button class="btn primary" id="adminUsersSave">保存管理员</button></div>',
-    '<div class="mut" style="margin-top:8px">当前管理员：' + (admins.length ? admins.map(esc).join('、') : '未配置（群总结等沿用公开范围；清除记忆须显式配置管理员）') + '</div>',
+    '<div class="mut" style="margin-top:8px">当前管理员：' + (admins.length ? admins.map(protocolIdentityHTML).join('、') : officialMode() ? '未配置，未继承旧账号权限' : '未配置（群总结等沿用公开范围；清除记忆须显式配置管理员）') + '</div>',
     '</section>'
   ].join('')
   return '<div class="hero"><span class="hero-status" id="heroStatus">' + dot(b.online === true) + ' ' + accountStatusText(b) + '</span>' +
     '<h1>机器人工作台</h1><div class="sub"><span id="updatedAt">' + new Date().toLocaleTimeString('zh-CN',{hour12:false}) + '</span> 更新 · 集中管理运行状态与操作</div></div>' +
-    overviewCards() +
+    overviewCards() + officialConnectionCard() + officialCapabilityBanner() +
     '<div class="section-head"><h2>常用操作</h2><span class="note">操作作用于当前机器人</span></div>' +
-    '<div class="card"><div class="toolgroup"><button class="btn primary" data-act="poke-target">检查盯人目标</button>' +
-      '<button class="btn" data-act="summary">生成群聊报告</button>' +
+    '<div class="card"><div class="toolgroup"><button class="btn primary" data-act="poke-target"' + unavailableAttr('members') + '>检查盯人目标</button>' +
+      '<button class="btn" data-act="summary"' + unavailableAttr('completeHistory', OFFICIAL_HISTORY_NOTE) + '>生成群聊报告</button>' +
       '<button class="btn" data-act="clear-alert">清除掉线提醒</button></div>' +
     '<details class="advanced-box"><summary>维护与定时指令</summary><div class="toolgroup advanced"><button class="btn" data-act="restart-bot">重启机器人</button>' +
-      '<button class="btn" data-act="restart-napcat">重启 NapCat</button>' +
-      '<button class="btn" data-act="daily-ping">立即发定时指令 (@示例机器人)</button></div></details></div>' +
+      (officialMode() ? '' : '<button class="btn" data-act="restart-napcat">重启 NapCat</button>') +
+      '<button class="btn" data-act="daily-ping"' + unavailableAttr('proactive') + '>立即发定时指令 (@示例机器人)</button></div></details></div>' +
     quickCard +
     adminCard +
-    '<details class="card"><summary><b class="api-card-title">今日各群已记录消息</b> <span class="api-card-meta">本地记录</span></summary><div class="api-card-body"><table class="tbl"><thead><tr><th>群</th><th>群号</th><th>条数</th></tr></thead><tbody id="todayGroups">' + overviewTodayRows() + '</tbody></table></div></details>' +
+    '<details class="card"><summary><b class="api-card-title">今日各群已记录消息</b> <span class="api-card-meta">本地记录</span></summary><div class="api-card-body"><table class="tbl"><thead><tr><th>群</th><th>' + (officialMode() ? '官方身份' : '群号') + '</th><th>条数</th></tr></thead><tbody id="todayGroups">' + overviewTodayRows() + '</tbody></table></div></details>' +
     versionCard()
 }
 function proactiveSettingsPatch(box){
@@ -316,7 +407,7 @@ function chatRow(c){
     <div class="head">
       <span class="badge">${c.type === 'group' ? '群' : '私聊'}</span>
       <span class="name">${esc(c.name)}</span>
-      <span class="mut">${c.id}</span>
+      <span class="mut">${protocolIdentityHTML(c.id)}</span>
       ${c.inWhitelist ? '<span class="badge whitelist">白名单</span>' : ''}
       ${r.enabled === false ? '<span class="badge restart">已停用</span>' : ''}
       ${c.type === 'group' && r.proactiveEnabled === false ? '<span class="badge restart">不主动</span>' : ''}
@@ -330,12 +421,12 @@ function chatRow(c){
     <div class="body">
       <div class="frow"><label>聊天开关</label><div><label class="switch"><input type="checkbox" data-f="enabled" ${r.enabled === false ? '' : 'checked'}><i></i></label> <span class="mut">${c.type==='group'?'关掉后停止普通聊天；拍一拍、自动 +1 在“回复行为”单独控制':'关掉后停止普通私聊回复；拍一拍在“回复行为”单独控制'}</span></div></div>
       <div class="frow"><label>${c.type==='group'?'被 @ / 引用时回复':'回复私聊消息'}</label><div><label class="switch"><input type="checkbox" data-f="atReplyEnabled" ${r.atReplyEnabled === false ? '' : 'checked'}><i></i></label> <span class="mut">${c.type==='group'?'引用机器人自己的发言也视为直接对话，无需另加 @':'收到私聊消息时回复，不按群聊主动搭话概率抽取'}</span></div></div>
-      ${c.type==='group'?`<div class="frow"><label>允许主动搭话</label><div><label class="switch"><input type="checkbox" data-f="proactiveEnabled" ${r.proactiveEnabled === false ? '' : 'checked'}><i></i></label> <span class="mut">仅在白名单群里有效${override('proactiveEnabled')}</span></div></div>
+      ${c.type==='group'?(protocolAllows('proactive')?`<div class="frow"><label>允许主动搭话</label><div><label class="switch"><input type="checkbox" data-f="proactiveEnabled" ${r.proactiveEnabled === false ? '' : 'checked'}><i></i></label> <span class="mut">仅在白名单群里有效${override('proactiveEnabled')}</span></div></div>
       <div class="frow"><label>主动搭话概率</label><div>
         <div class="row"><input type="range" min="0" max="1" step="0.01" data-f="proactiveRate" value="${rateVal}">
         <span class="pill" data-show="proactiveRate">${(rateVal*100).toFixed(0)}%</span>
         <label class="mut" style="font-size:12px"><input type="checkbox" data-global="proactiveRate" ${r.proactiveRate===null||r.proactiveRate===undefined?'checked':''}> ${rateOrigin}(${(defaultRate*100).toFixed(0)}%)</label><a href="#humanize" class="mut" style="font-size:12px">修改默认值</a></div>
-      </div></div>`:''}
+      </div></div>`:'<div class="frow"><label>主动搭话</label><div class="mut">官方通道首期不主动推送，仅处理收到的有效会话。</div></div>'):''}
       <div class="frow"><label>装饰符号频率</label><div>
         <div class="row"><input type="range" min="0" max="1" step="0.01" data-f="emojiKeepRate" value="${emojiVal}">
         <span class="pill" data-show="emojiKeepRate">${(emojiVal*100).toFixed(0)}%</span>
@@ -361,7 +452,7 @@ function chatRow(c){
         <button class="btn" data-reset="${c.key}">恢复默认</button>
         <button class="btn" data-mem="${c.key}">查看记忆</button>
         <button class="btn" data-say="${c.key}">发一条消息…</button>
-        ${c.type === 'group' ? ('<button class="btn" data-watch="' + c.key + '">' + (isWatching(c.id) ? '取消盯人' : '设为盯人') + '</button>') : ''}
+        ${c.type === 'group' ? ('<button class="btn" data-watch="' + c.key + '"' + unavailableAttr('members') + '>' + (isWatching(c.id) ? '取消盯人' : '设为盯人') + '</button>') : ''}
       </div>
     </div>
   </div>`
@@ -382,34 +473,35 @@ function privateWhitelistEntries(){
   for(const id of state?.config?.privateWhitelist || [])ensure(id).sources.push('白名单')
   for(const id of state?.config?.adminUsers || [])ensure(id).sources.push('管理员自动允许')
   for(const c of chats.filter(c=>c.type==='private' && c.privateAccess?.configured))ensure(c.id).sources.push('已配置私聊')
-  return [...entries.values()].map(item=>({...item,name:friendList.find(f=>String(f.id)===item.id)?.name || chats.find(c=>c.key==='p'+item.id)?.name || 'QQ用户'}))
+  return [...entries.values()].map(item=>({...item,name:friendList.find(f=>String(f.id)===item.id)?.name || chats.find(c=>c.key==='p'+item.id)?.name || (officialMode()?'官方私聊身份':'QQ用户')}))
 }
 function privateWhitelistCard(){
   const allowed=privateWhitelistEntries()
   return `<section class="card group-manager private-manager" aria-label="私聊白名单管理"><div class="section-head"><div><h2>私聊白名单 <span class="badge whitelist">${allowed.length} 人获准私聊</span></h2><p class="note">新私聊默认不回复。把对方加入这里后，从下一条新消息起按会话设置回复。</p></div><button class="btn primary" id="addPrivateWhitelist">＋ 添加私聊白名单</button></div>
-  <div class="group-list">${allowed.map(c=>`<div class="group-item"><div class="group-identity"><strong>${esc(c.name)}（${esc(c.id)}）</strong><small>${c.sources.map(esc).join(' · ')}</small></div><button class="btn sm" data-open-chat="p${esc(c.id)}">私聊设置</button></div>`).join('') || '<div class="empty">还没有获准回复的私聊，点击右上方添加QQ号。</div>'}</div><p class="note" style="margin-top:12px">管理员与已在控制台配置过的私聊也会放行；回复仍受聊天开关、安静时段和限流限制。添加不会主动发消息或补发旧回复。</p></section>`
+  <div class="group-list">${allowed.map(c=>`<div class="group-item"><div class="group-identity"><strong>${esc(c.name)}</strong><small>${protocolIdentityHTML(c.id)}</small><small>${c.sources.map(esc).join(' · ')}</small></div><button class="btn sm" data-open-chat="p${esc(c.id)}">私聊设置</button></div>`).join('') || '<div class="empty">还没有获准回复的私聊，点击右上方添加'+(officialMode()?'已观察的官方私聊身份':'QQ号')+'。</div>'}</div><p class="note" style="margin-top:12px">管理员与已在控制台配置过的私聊也会放行；回复仍受聊天开关、安静时段和限流限制。添加不会主动发消息或补发旧回复。</p></section>`
 }
 function pageChats(){
   const groups = chats.filter(c=>c.type==='group'), priv = chats.filter(c=>c.type==='private')
   const whitelist = (state?.config?.whitelist || []).map(id => ({id, name: groupName(id)}))
   return `
   <div class="section-head"><div><h1>会话管理</h1><div class="sub">为每个群聊或私聊设置回复方式。保存后即时生效。</div></div><button class="btn primary" id="addPrivateWhitelistTop">＋ 添加私聊白名单</button></div>
-  <section class="card" style="border:2px solid var(--accent,#56d8c3)"><div class="section-head"><div><h2>自动群总结 · 群名单</h2><p class="note">设置每天的总结时间及自动发送到哪些群。</p></div><a class="btn primary" href="#report">管理自动总结群名单 →</a></div></section>
+  ${officialCapabilityBanner()}
+  ${protocolAllows('completeHistory')?'<section class="card" style="border:2px solid var(--accent,#56d8c3)"><div class="section-head"><div><h2>自动群总结 · 群名单</h2><p class="note">设置每天的总结时间及自动发送到哪些群。</p></div><a class="btn primary" href="#report">管理自动总结群名单 →</a></div></section>':'<section class="card"><h2>群总结暂不可用</h2><p class="note">'+OFFICIAL_HISTORY_NOTE+'</p></section>'}
   <section class="card group-manager" aria-label="白名单群聊管理">
-    <div class="section-head"><div><h2>白名单群聊 <span class="badge whitelist">${whitelist.length} 个群</span></h2><div class="note">机器人可以在这些群主动搭话，概率在「回复行为」中设置。</div></div><button class="btn primary" id="importWhitelist">＋ 添加 / 导入白名单群</button></div>
-    <div class="group-list">${whitelist.map(g => `<div class="group-item"><div class="group-identity"><strong>${esc(g.name)}</strong><small>群号 ${g.id}</small></div>${summaryControls(g.id)}<button class="btn sm" data-open-chat="g${g.id}">会话设置</button><button class="btn danger sm" data-whitelist="remove" data-group="${g.id}">移出白名单</button></div>`).join('') || '<div class="empty">还没有白名单群，点击右上方按钮添加。</div>'}</div>
-    <div class="note" style="margin-top:12px">移出后停止主动搭话；聊天记录和会话设置保留，被 @ 回复与定时任务按各自设置执行。</div>
+    <div class="section-head"><div><h2>白名单群聊 <span class="badge whitelist">${whitelist.length} 个群</span></h2><div class="note">${officialMode()?'只从实际观察到的官方群身份中添加；首期不启用主动推送。':'机器人可以在这些群主动搭话，概率在「回复行为」中设置。'}</div></div><button class="btn primary" id="importWhitelist">＋ 添加 / 导入白名单群</button></div>
+    <div class="group-list">${whitelist.map(g => `<div class="group-item"><div class="group-identity"><strong>${esc(g.name)}</strong><small>${officialMode()?protocolIdentityHTML(g.id):'群号 '+esc(g.id)}</small></div>${summaryControls(g.id)}<button class="btn sm" data-open-chat="g${g.id}">会话设置</button><button class="btn danger sm" data-whitelist="remove" data-group="${g.id}">移出白名单</button></div>`).join('') || '<div class="empty">还没有白名单群，点击右上方按钮添加。</div>'}</div>
+    <div class="note" style="margin-top:12px">${officialMode()?'名单与本机 QQ 号无关；聊天记录和会话设置只保存在此官方实例。':'移出后停止主动搭话；聊天记录和会话设置保留，被 @ 回复与定时任务按各自设置执行。'}</div>
   </section>
   ${privateWhitelistCard()}
   <div class="card">
     <div class="toolgroup">
-      <input id="chatSearch" type="text" placeholder="搜索群名、群号或 QQ 号" aria-label="搜索会话" style="max-width:300px">
+      <input id="chatSearch" type="text" placeholder="${officialMode()?'搜索会话名称、OpenID或内部编号':'搜索群名、群号或 QQ 号'}" aria-label="搜索会话" style="max-width:300px">
       <span class="badge">${chats.length} 个会话</span>
     </div>
     <div class="toolgroup">
       <select id="newchatType" aria-label="会话类型" style="max-width:120px"><option value="g">普通群聊</option><option value="w">白名单群</option><option value="p">私聊（加入白名单）</option></select>
       <select id="newchatPick" aria-label="选择联系人或群" style="max-width:260px"></select>
-      <input id="newchat" type="text" inputmode="numeric" placeholder="或直接输入号码" style="max-width:160px">
+      <input id="newchat" type="text" inputmode="numeric" placeholder="${officialMode()?'选择已观察的内部编号':'或直接输入号码'}" ${officialMode()?'readonly':''} style="max-width:200px">
       <button class="btn" id="addchat">添加普通会话</button><button class="btn" id="cleanGroups" title="把不在白名单里的群从会话列表里删掉（记忆和设置一起清）">清理非白名单群</button><span class="note">需要主动搭话的群，请使用上方「添加 / 导入白名单群」。</span>
     </div>
   </div>
@@ -549,7 +641,7 @@ async function refreshContacts(){
   return {groups:joinedGroups,friends:friendList}
 }
 async function importWhitelist(options={}){
-  const privateChat=options.privateChat===true, label=privateChat?'QQ号':'群号', subject=privateChat?'私聊白名单':'白名单群聊'
+  const privateChat=options.privateChat===true, label=officialMode()?'内部编号（非QQ号）':privateChat?'QQ号':'群号', subject=privateChat?'私聊白名单':'白名单群聊'
   const root=document.getElementById('modalRoot')
   const existing=()=>new Set((privateChat?state?.config?.privateWhitelist || []:state?.config?.whitelist || []).map(String))
   const contactName=id=>privateChat?(friendList.find(f=>String(f.id)===String(id))?.name || 'QQ用户'):groupName(id)
@@ -561,7 +653,7 @@ async function importWhitelist(options={}){
     const sel=root.querySelector('#whitelistPick');if(!sel)return
     sel.innerHTML='<option value="">选择'+(privateChat?'好友':'群聊')+'…</option>'+optionHtml()
   }
-  root.innerHTML=`<div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="importTitle"><h2 id="importTitle">添加${subject}</h2><p>${privateChat?'选择好友或输入QQ号，支持批量添加。添加后新消息即时生效，不会自动发消息或补发旧回复。':'选择群聊，或粘贴多个群号。导入后即时生效。'}</p><label class="field-label" for="whitelistPick">从${privateChat?'好友':'已知群聊'}中选择</label><div class="flexbar" style="align-items:center;gap:8px"><select id="whitelistPick" style="flex:1"><option value="">选择${privateChat?'好友':'群聊'}…</option>${optionHtml()}</select><button class="btn sm" id="whitelistRefresh" type="button">刷新列表</button></div><div class="note">刚在 QQ 上加的好友/群没出现，点一下「刷新列表」。也可以直接输入${label}。</div><label class="field-label" for="whitelistInput">${label}（支持批量导入）</label><textarea id="whitelistInput" placeholder="每行一个${label}，也支持逗号或空格分隔"></textarea><div id="whitelistPreview" class="import-preview" aria-live="polite"></div><div class="row"><button class="btn" id="importCancel">取消</button><button class="btn primary" id="importCommit" disabled>请先选择或输入${label}</button></div></div>`
+  root.innerHTML=`<div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="importTitle"><h2 id="importTitle">添加${subject}</h2><p>${officialMode()?'仅选择本实例已观察到的官方身份；内部编号不是QQ号。导入后从下一条新消息生效，不主动发送。':privateChat?'选择好友或输入QQ号，支持批量添加。添加后新消息即时生效，不会自动发消息或补发旧回复。':'选择群聊，或粘贴多个群号。导入后即时生效。'}</p><label class="field-label" for="whitelistPick">从${officialMode()?'已观察身份':privateChat?'好友':'已知群聊'}中选择</label><div class="flexbar" style="align-items:center;gap:8px"><select id="whitelistPick" style="flex:1"><option value="">选择${privateChat?'好友':'群聊'}…</option>${optionHtml()}</select><button class="btn sm" id="whitelistRefresh" type="button">刷新列表</button></div><div class="note">${officialMode()?'列表不会读取全部QQ好友或群；需先让此机器人实际收到对应会话消息。':'刚在 QQ 上加的好友/群没出现，点一下「刷新列表」。也可以直接输入'+label+'。'}</div><label class="field-label" for="whitelistInput">${label}（支持批量导入）</label><textarea id="whitelistInput" placeholder="每行一个${label}，也支持逗号或空格分隔"></textarea><div id="whitelistPreview" class="import-preview" aria-live="polite"></div><div class="row"><button class="btn" id="importCancel">取消</button><button class="btn primary" id="importCommit" disabled>请先选择或输入${label}</button></div></div>`
   root.classList.add('show');root.setAttribute('aria-hidden','false')
   const input=root.querySelector('#whitelistInput'),commit=root.querySelector('#importCommit')
   let newIds=[],pending=false
@@ -569,10 +661,10 @@ async function importWhitelist(options={}){
   const onKey=event=>{if(event.key==='Escape')close()}
   document.addEventListener('keydown',onKey);root.onclick=event=>{if(event.target===root)close()};root.querySelector('#importCancel').onclick=close
   const preview=()=>{
-    const tokens=input.value.trim().split(/[\s,，;；]+/).filter(Boolean),valid=id=>/^[1-9]\d{4,11}$/.test(id)
+    const tokens=input.value.trim().split(/[\s,，;；]+/).filter(Boolean),valid=id=>officialMode()?officialAliasAllowed(id,privateChat):/^[1-9]\d{4,11}$/.test(id)
     const invalid=tokens.filter(id=>!valid(id)),ids=[...new Set(tokens.filter(valid))],known=existing()
     newIds=ids.filter(id=>!known.has(id))
-    root.querySelector('#whitelistPreview').innerHTML=invalid.length?`<div class="inline-error">这些${label}无效：${invalid.map(esc).join('、')}。请填5～12位数字，不能以0开头。</div>`:ids.map(id=>`<div class="preview-line"><span>${esc(contactName(id))}（${esc(id)}）</span><span class="badge">${known.has(id)?'已在白名单 · 跳过':'待添加'}</span></div>`).join('')
+    root.querySelector('#whitelistPreview').innerHTML=invalid.length?`<div class="inline-error">这些${label}无效：${invalid.map(esc).join('、')}。${officialMode()?'只接受此官方实例已观察到的对应身份；不能输入原QQ号或任意数字。':'请填5～12位数字，不能以0开头。'}</div>`:ids.map(id=>`<div class="preview-line"><span>${esc(contactName(id))}（${protocolIdentityHTML(id)}）</span><span class="badge">${known.has(id)?'已在白名单 · 跳过':'待添加'}</span></div>`).join('')
     commit.disabled=Boolean(invalid.length)||!newIds.length
     commit.textContent=commit.disabled?(ids.length&&!invalid.length?'已在白名单中':`请先选择或输入${label}`):`添加${newIds.length}${privateChat?'人到私聊白名单':'个白名单群'}`
   }
@@ -606,8 +698,9 @@ function configForm(keys, hint, opts = {}){
   const items = configItems.filter(i=>keys.includes(i.key))
   const fields = items.map(i => {
     const v = i.effective !== '' ? i.effective : i.value
-    const inactive = state?.config?.summaryUnrestricted && ['SUMMARY_MAX_MESSAGES','SUMMARY_MAX_TOKENS','SUMMARY_TASK_TIMEOUT_MINUTES'].includes(i.key)
-    const badge = inactive ? '<span class="badge">宽裕模式下不生效</span>' : i.live ? '<span class="badge live">即时生效</span>' : '<span class="badge restart">需重启</span>'
+    const unavailable = typeof officialMode === 'function' && officialMode() && officialConfigCapability(i.key) && !protocolAllows(officialConfigCapability(i.key))
+    const inactive = unavailable || state?.config?.summaryUnrestricted && ['SUMMARY_MAX_MESSAGES','SUMMARY_MAX_TOKENS','SUMMARY_TASK_TIMEOUT_MINUTES'].includes(i.key)
+    const badge = unavailable ? '<span class="badge">官方通道暂不可用</span>' : inactive ? '<span class="badge">宽裕模式下不生效</span>' : i.live ? '<span class="badge live">即时生效</span>' : '<span class="badge restart">需重启</span>'
     let input
     if (i.key === 'PROACTIVE_RATE_PER_GROUP') input = groupRateEditor(v)
     else if (i.key === 'SUMMARY_GROUPS') input = summaryGroupEditor(v)
@@ -628,9 +721,9 @@ function configForm(keys, hint, opts = {}){
 }
 function pageHumanize(){
   const greetings=state?.config?.quietGreetings
-  return `<h1>回复行为</h1><div class="sub">这里修改“沿用全局”的默认值；会话单独设置优先，其次是按群独立概率，最后才是全局概率。</div>
+  return `<h1>回复行为</h1>${officialCapabilityBanner()}<div class="sub">这里修改“沿用全局”的默认值；会话单独设置优先，其次是按群独立概率，最后才是全局概率。</div>
   <div class="flexbar"><a class="btn" href="#chats">管理白名单群聊 →</a><span class="note">概率填写百分比，例如 20%，不需要输入配置格式。</span></div>
-  <div class="card">${configForm(['PROACTIVE_RATE','PROACTIVE_RATE_PER_GROUP','PROACTIVE_COOLDOWN_MS','EMOJI_KEEP_RATE','HUMAN_DELAY_MIN_MS','HUMAN_DELAY_MAX_MS','REPLY_LENGTH_MATCH','REPLY_MIN_BUDGET','REPLY_MAX_LINES','REPLY_LINE_MAX_CHARS','LINE_GAP_MIN_MS','LINE_GAP_MAX_MS','RATE_LIMIT_PER_HOUR','RATE_LIMIT_AT_PER_HOUR','RATE_LIMIT_MIN_GAP_MS','RATE_LIMIT_WAIT_MAX_MS','QUIET_HOURS','QUIET_GREETINGS_ENABLED','HISTORY_LIMIT','CONTEXT_REMEMBER_ALL','POKE_REPLY_ENABLED','AUTO_PLUS_ONE_ENABLED','PRIVATE_WHITELIST'],'修改全局概率不会覆盖已经单独设置的群；限流相关参数需重启生效。',{scope:'humanize'})}</div><div class="note">固定语库早晚安：${greetings?.enabled?'已启用':'未启用'}；语库就绪 ${greetings?.groups?.filter(g=>g.ready).length||0}/${greetings?.groups?.length||0} 群。检查时段、选句和发送均不调用 AI。<a href="#persona">前往人格页面编辑或导出语库 →</a> <button class="btn sm" id="catchUpMorning">补发本轮未发的早安</button></div>`
+  <div class="card">${configForm(['PROACTIVE_RATE','PROACTIVE_RATE_PER_GROUP','PROACTIVE_COOLDOWN_MS','EMOJI_KEEP_RATE','HUMAN_DELAY_MIN_MS','HUMAN_DELAY_MAX_MS','REPLY_LENGTH_MATCH','REPLY_MIN_BUDGET','REPLY_MAX_LINES','REPLY_LINE_MAX_CHARS','LINE_GAP_MIN_MS','LINE_GAP_MAX_MS','RATE_LIMIT_PER_HOUR','RATE_LIMIT_AT_PER_HOUR','RATE_LIMIT_MIN_GAP_MS','RATE_LIMIT_WAIT_MAX_MS','QUIET_HOURS','QUIET_GREETINGS_ENABLED','HISTORY_LIMIT','CONTEXT_REMEMBER_ALL','POKE_REPLY_ENABLED','AUTO_PLUS_ONE_ENABLED','PRIVATE_WHITELIST'],'修改全局概率不会覆盖已经单独设置的群；限流相关参数需重启生效。',{scope:'humanize'})}</div><div class="note">固定语库早晚安：${greetings?.enabled?'已启用':'未启用'}；语库就绪 ${greetings?.groups?.filter(g=>g.ready).length||0}/${greetings?.groups?.length||0} 群。检查时段、选句和发送均不调用 AI。<a href="#persona">前往人格页面编辑或导出语库 →</a> <button class="btn sm" id="catchUpMorning"${unavailableAttr('proactive')}>补发本轮未发的早安</button></div>`
 }
 function webSearchCard(){
   const info = webSearchInfo || {}
@@ -656,6 +749,7 @@ function pageApi(){
   <div class="card">${configForm(['FILE_UPLOAD_MAX_MB','FILE_SPLIT_MB','ARCHIVE_FORMAT','ARCHIVE_PASSES','SEVEN_ZIP_PATH','RAR_PATH'],'/发文件（含目录）与 Python 脚本结果共用这些设置；超过「大文件分卷大小」会自动切成多卷发送。改完下一次发送/打包就生效。',{scope:'api-files'})}</div>`
 }
 function pageReport(){
+  if (typeof officialMode === 'function' && officialMode() && !protocolAllows('completeHistory')) return '<h1>群聊报告</h1>' + officialCapabilityBanner() + '<section class="card"><h2>完整群总结暂不可用</h2><p class="note">' + OFFICIAL_HISTORY_NOTE + '</p><button class="btn primary" disabled aria-disabled="true">生成并发送暂不可用</button></section><h2>本地已记录数据</h2><p class="note">仅表示本实例实际收到的记录，不证明群消息完整。</p><div class="card" id="dailyList"></div>'
   return `<h1>群聊报告</h1><div class="sub">每日自动生成「群聊日常分析报告」，也可以在这里随时手动生成</div>
   <section class="card" style="border:2px solid var(--accent,#56d8c3)" aria-label="自动群总结名单"><h2>自动群总结 · 群名单</h2><p class="note">勾选需要每天自动总结的群，然后点击下方保存。</p>${configForm(['SUMMARY_ENABLED','SUMMARY_FALLBACK_ENABLED','SUMMARY_TIMES','SUMMARY_GROUPS'],'',{scope:'summary-roster'})}</section>
   <h2>模型、篇幅与发送设置</h2>
@@ -745,7 +839,7 @@ function syncPyOpen(){
   pyOpen.editors = eds
   document.querySelectorAll('[data-pysrc]').forEach(el=>{const box=el.closest('[id^="pyEditor-"]');if(box?.style.display !== 'none' && (pyDrafts[el.dataset.pysrc] !== undefined || el.value))pyDrafts[el.dataset.pysrc]=el.value})
 }
-function pageCommands(){ return CommandCenterUI.render({custom:customCommands,builtins:commandBuiltins,poke:pokeDiagnostics,groups:joinedGroups}) + commandTestCard() + pokeCorpusCard() + pythonCard() }
+function pageCommands(){ return officialCapabilityBanner() + CommandCenterUI.render({custom:customCommands,builtins:commandBuiltins,poke:pokeDiagnostics,groups:joinedGroups}) + commandTestCard() + pokeCorpusCard() + pythonCard() }
 // ── 渲染 ───────────────────────────────────────────────
 function pageMemory(){
   const nameOf = function(key){
@@ -1090,7 +1184,7 @@ function tasksCard(){
   const fmt = function(ts){ return ts ? new Date(ts).toLocaleString() : '还没有' }
   return '<details class="card"><summary><b class="api-card-title">定时任务</b> <span class="api-card-meta">不占地方</span></summary><div class="api-card-body">' +
     '<div class="frow"><label>自动备份</label><div class="mut">每 6 小时检查，最近：' + esc(fmt(t.backup && t.backup.last)) + '</div></div>' +
-    '<div class="frow"><label>群总结</label><div class="mut">' + (t.summary && t.summary.enabled ? '已启用 · 每天 ' + esc(t.summary.times) : '未启用') + '</div></div>' +
+    '<div class="frow"><label>群总结</label><div class="mut">' + (!protocolAllows('completeHistory') ? '官方通道暂不可用，不能确认完整历史' : t.summary && t.summary.enabled ? '已启用 · 每天 ' + esc(t.summary.times) : '未启用') + '</div></div>' +
     '<div class="frow"><label>长期记忆整理</label><div class="mut">' + (t.longMemory && t.longMemory.enabled ? '每 ' + t.longMemory.everyMinutes + ' 分钟' : '未启用') + '</div></div>' +
     '<div class="frow"><label>表情包学习</label><div class="mut">' + (t.stickersLearn && t.stickersLearn.enabled ? '每小时最多 ' + t.stickersLearn.perHour + ' 张' : '未启用') + '</div></div>' +
     '</div></details>'
@@ -1238,6 +1332,7 @@ let qqPollTimer = null
 function stopQqPoll(){ if (qqPollTimer) { clearInterval(qqPollTimer); qqPollTimer = null } }
 function qqMask(uin){ const s = String(uin || ''); return s ? s.slice(0, 4) + '***' + s.slice(-2) : '—' }
 function pageLogin(){
+  if (officialMode()) return '<h1>QQ 官方连接</h1>' + officialConnectionCard() + officialCapabilityBanner()
   return `<section class="card"><h2>当前 QQ 账号</h2>
     <p class="mut">真正登录的是 LLBot（LuckyLillia）。换号会让机器人短暂离线，重新登录成功后自动恢复收消息。</p>
     <div id="qqLoginBody" class="mut">正在读取…</div>
@@ -1248,6 +1343,7 @@ function pageLogin(){
   <div class="flexbar"><button class="btn primary" id="qqQr">显示登录二维码</button></div><div id="qqQrArea"></div></section>`
 }
 async function loadQqLogin(){
+  if (officialMode()) { refreshOfficialConnection(); return }
   const body = document.getElementById('qqLoginBody'), acc = document.getElementById('qqAccounts')
   if (!body) return
   try {
@@ -1272,6 +1368,7 @@ async function loadQqLogin(){
 }
 function startQqPoll(opts = {}) {
   stopQqPoll()
+  if (officialMode()) return
   const startedAt = Date.now()
   const warnAfterMs = Number(opts.warnAfterMs) || 0
   let ticks = 0
@@ -1292,6 +1389,7 @@ function startQqPoll(opts = {}) {
 
 // 账号按钮是异步渲染的，必须在 document 上做事件委托，否则点击没有反应
 async function switchQqAccount(uin) {
+  if (officialMode()) { toast('官方通道不使用个人QQ账号切换', true); return }
   if (!uin) return
   if (!await ask('切换到 QQ ' + uin + '？', '会先退出当前账号，再快速登录这个账号，期间机器人短暂离线。')) return
   try {
@@ -1349,8 +1447,9 @@ function render(){
 
 async function bind(){
   refreshSummaryControls()
+  bindOfficialConnection()
   const checkUpdate=document.getElementById('checkUpdate');if(checkUpdate)checkUpdate.onclick=()=>refreshUpdates(true)
-  if (page === 'login') {
+  if (page === 'login' && !officialMode()) {
     loadQqLogin()
     const refresh = document.getElementById('qqRefresh')
     if (refresh) refresh.onclick = () => loadQqLogin()
@@ -1850,6 +1949,8 @@ async function bind(){
   })
   document.querySelectorAll('[data-act]').forEach(b => b.onclick = async () => {
     const act = b.dataset.act
+    const capability = {'summary':'completeHistory','poke-target':'members','daily-ping':'proactive','restart-napcat':'members'}[act]
+    if (capability && !protocolAllows(capability)) { toast('官方通道暂不支持此操作', true); return }
     if (act === 'summary') { await doSummary(); return }
     const prompts = {
       'restart-bot': ['重启机器人？', '机器人会短暂离线，然后由计划任务重新启动。', '重启'],
@@ -1935,6 +2036,7 @@ async function bind(){
   if (adminSaveBtn) adminSaveBtn.onclick = async () => {
     const input = document.getElementById('adminUsersInput')
     const value = input.value.split(',').map(s => s.trim()).filter(Boolean).join(',')
+    if (officialMode() && value.split(',').filter(Boolean).some(id => !['c2c','c2c-user','private','group-user'].includes(officialIdentity(id)?.kind))) { toast('管理员只能选择本实例已观察到的用户身份内部编号，不能使用旧QQ号', true); return }
     adminSaveBtn.disabled = true
     try {
       await api('/api/action/set-config', { key: 'ADMIN_USERS', value })
@@ -2381,14 +2483,14 @@ async function bind(){
   const add = document.getElementById('addchat')
   if (add) add.onclick = async () => {
     const v = document.getElementById('newchat').value.trim()
-    if (!/^\d{5,12}$/.test(v)) { toast('请输入 5～12 位数字 ID', true); return }
     const type = document.getElementById('newchatType').value
+    if (officialMode() ? !officialAliasAllowed(v,type==='p') : !/^\d{5,12}$/.test(v)) { toast(officialMode()?'请选择本实例已观察到的官方会话身份':'请输入 5～12 位数字 ID', true); return }
     const key = type + v
     try {
       if (type === 'w') {
         await api('/api/action/update-whitelist', { operation: 'add', groupIds: [Number(v)] })
         await api('/api/action/set-chat', { key: 'g' + v, patch: {} })
-        toast('已加入白名单群，可主动搭话')
+        toast(officialMode()?'已加入此官方实例的白名单':'已加入白名单群，可主动搭话')
       } else if (type === 'p') {
         await api('/api/action/add-private-whitelist', { userIds: [v] })
         toast('已添加私聊并加入白名单')
@@ -2637,6 +2739,7 @@ function showMemory(title, items){
   else { const d = document.createElement('div'); d.className='card mono'; d.innerHTML = '<b>'+esc(title)+'</b><br>'+html; document.getElementById('main').appendChild(d) }
 }
 async function doSummary(){
+  if (!protocolAllows('completeHistory')) { toast(OFFICIAL_HISTORY_NOTE, true); return }
   const groupId = document.getElementById('sumGroup') ? document.getElementById('sumGroup').value : null
   const days = Number(document.getElementById('sumDays')?.value || 1)
   if (!await ask('生成并发送群聊报告？', '目标：' + (groupId ? '群 ' + groupId : '配置中的所有目标群') + '，范围：近 ' + days + ' 天。生成完成后会直接发送。', '开始生成')) return
@@ -2728,6 +2831,7 @@ async function refreshStateUI() {
   try {
     state = await api('/api/state')
     updateSideStatus(state.bot)
+    if (officialMode() && ['overview','login'].includes(page)) refreshOfficialConnection()
     if(page==='chats')refreshSummaryControls()
     if (page === 'commands') { const r=await api('/api/custom-commands'); CommandCenterUI.updateDiagnostics(r.poke) }
     if (page === 'overview') {

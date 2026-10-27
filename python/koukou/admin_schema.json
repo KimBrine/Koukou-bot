@@ -1,5 +1,33 @@
 [
   {
+    "key": "QQ_TRANSPORT",
+    "label": "QQ连接方式",
+    "hint": "onebot或qq-official。通道使用独立身份和数据，不能直接在当前实例切换；官方试验请新建独立配置。",
+    "live": false,
+    "type": "text"
+  },
+  {
+    "key": "QQ_OFFICIAL_BRIDGE_URL",
+    "label": "官方QQ本机桥",
+    "hint": "仅限本机ws，例如ws://127.0.0.1:8792/bridge；需要独立官方SDK桥。",
+    "live": false,
+    "type": "text"
+  },
+  {
+    "key": "KOUKOU_QQ_BRIDGE_TOKEN",
+    "label": "官方QQ桥鉴权令牌",
+    "hint": "至少32字符，必须与本机桥一致；不会显示已保存值，不是AppSecret。",
+    "live": false,
+    "type": "secret"
+  },
+  {
+    "key": "QQ_OFFICIAL_APP_ID",
+    "label": "预期官方AppID（可选）",
+    "hint": "留空时首次扫码绑定后固定应用身份；改变应用必须新建数据目录，不能继承旧QQ权限。",
+    "live": false,
+    "type": "text"
+  },
+  {
     "key": "WHITELIST_GROUPS",
     "label": "白名单群",
     "hint": "逗号分隔；只有这些群会被主动搭话",

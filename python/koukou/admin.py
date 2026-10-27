@@ -37,11 +37,14 @@ from .protocol_management import LoginManagement
 from .lifecycle import Lifecycle
 from .resources import frontend_assets
 from .config import parse_env
+from .transport_policy import (official, provider, backend_metadata, validate_settings,
+                               UNAVAILABLE_ACTIONS, unavailable)
 
 
 # Read-only form defaults follow the native consumers. This does not seed .env
 # from a JavaScript template (whose defaults can differ during migration).
 FORM_DEFAULTS = {
+    'QQ_TRANSPORT':'onebot','QQ_OFFICIAL_BRIDGE_URL':'ws://127.0.0.1:8792/bridge',
     'PROACTIVE_RATE':.04,'PROACTIVE_COOLDOWN_MS':30000,'EMOJI_KEEP_RATE':.35,
     'HUMAN_DELAY_MIN_MS':600,'HUMAN_DELAY_MAX_MS':2500,'LINE_GAP_MIN_MS':500,'LINE_GAP_MAX_MS':1600,
     'REPLY_MIN_BUDGET':0,'REPLY_MAX_LINES':3,'REPLY_LINE_MAX_CHARS':40,
@@ -109,7 +112,8 @@ class Admin:
         self.media = media_delivery or (MediaDelivery(config, onebot, plugins) if onebot else None)
         self.retag_job, self.background = None, set()
         self.watch = None
-        self.login = LoginManagement(config,onebot) if onebot else None
+        self.login = LoginManagement(config,onebot) if onebot and not official(config) else None
+        self.official_transport = onebot if official(config) else None
         self.lifecycle = Lifecycle(config)
         self.native_identity = None
         self.schema = json.loads(Path(__file__).with_name("admin_schema.json").read_text(encoding="utf-8-sig"))
@@ -127,6 +131,7 @@ class Admin:
             "/api/stickers": self.get_stickers, "/api/stickers/retag-status": self.retag_status,
             "/api/ping": lambda _: {'ok':True},
             "/api/native-instance": self.get_native_instance,
+            "/api/qq-official": self.get_official,
             "/api/vision-providers": lambda _: {'items':self.vision_providers.list()},
             "/api/models": self.get_models,
             "/api/tasks": self.get_tasks, "/api/websearch": self.get_websearch,
@@ -189,7 +194,33 @@ class Admin:
             "restart-napcat": lambda _: self.lifecycle.restart_protocol(),
             "open-python-folder": lambda _: self.lifecycle.open_folder(self.plugins.directory),
             "say": self.say,
+            "qq-official-binding": self.official_binding,
         }
+        if official(config):
+            def blocked(_):
+                raise ValueError(unavailable('console'))
+            for name in UNAVAILABLE_ACTIONS:
+                self.actions[name] = blocked
+
+    def official_metadata(self):
+        value = backend_metadata(self.config, self.official_transport)
+        if official(self.config):
+            value['modelConfigured'] = bool(self.config.get('DEEPSEEK_API_KEY'))
+        if official(self.config) and self.onebot is None:
+            value.update(available=False, binding={'phase': 'preview'})
+        return value
+
+    def get_official(self, _):
+        return self.official_metadata()
+
+    async def official_binding(self, payload):
+        if not official(self.config) or self.onebot is None or not hasattr(self.onebot, 'binding'):
+            raise ValueError('请通过独立官方实例的原生入口启动后再扫码；预览不会连接QQ')
+        action = payload.get('action')
+        if action not in {'start', 'cancel'}:
+            raise ValueError('绑定操作只能是start或cancel')
+        await self.onebot.binding(action)
+        return {'ok': True, **self.official_metadata()}
 
     def get_native_instance(self, _):
         if self.native_identity is None or self.lifecycle.shutdown is None:
@@ -506,6 +537,7 @@ class Admin:
                 'summaryActiveLimits':{'maxMessages':None if unrestricted else float(self.effective_config_value('SUMMARY_MAX_MESSAGES')),'maxOutputTokens':None if unrestricted else float(self.effective_config_value('SUMMARY_MAX_TOKENS')),'taskTimeoutMinutes':None if unrestricted else float(self.effective_config_value('SUMMARY_TASK_TIMEOUT_MINUTES'))},
                 'targetWatch':{'group':watch.group_id,'user':watch.user_id,'pending':len(watch.pending)} if watch and watch.enabled else None}
         return {"now": time.time()*1000, "version": version + "-python-migration", "pid": os.getpid(),
+                "backend": self.official_metadata(),
                 "uptimeSec": int(time.time()-self.started),
                 "bot": {**health,'connected':health.get('online') is True,'onebotConnected':health.get('connected') is True,
                         "model":c.get('DEEPSEEK_MODEL','deepseek-flash'),'deepseekReasoningEffort':'max' if 'deepseek' in c.get('DEEPSEEK_MODEL','deepseek-flash').lower() else c.get('DEEPSEEK_REASONING_EFFORT') or None,'visionModel':vision_model if vision_ready else None,
@@ -543,6 +575,8 @@ class Admin:
         return await self.quiet_greetings.catch_up_morning()
 
     async def summary(self, p):
+        if official(self.config):
+            raise ValueError('QQ官方连接没有完整群历史证明，当前禁止生成整群总结')
         if self.summaries is None:
             raise RuntimeError('当前仅为控制台预览，QQ连接已禁用')
         if p.get('missingOnly'):
@@ -761,6 +795,8 @@ class Admin:
         return item
 
     def save_custom(self, p):
+        if official(self.config) and (p.get('scheduleEnabled') or p.get('event') == 'poke'):
+            raise ValueError('官方连接试验暂不支持定时主动推送或拍一拍事件')
         item = self.validate_custom(clean(p))
         return {"ok": True, "item": self.custom.upsert(item)}
 
@@ -924,11 +960,14 @@ class Admin:
         return self.whitelist("PRIVATE_WHITELIST", p.get("userIds"), "add")
 
     def whitelist(self, name, values, operation):
-        if not isinstance(values, list) or not 1 <= len(values) <= 200 or any(not re.fullmatch(r"[1-9]\d{4,11}", str(v).strip()) for v in values):
-            raise ValueError("请输入1~200个有效的5~12位号码")
+        pattern = r'[1-9]\d{14}' if official(self.config) else r'[1-9]\d{4,11}'
+        if not isinstance(values, list) or not 1 <= len(values) <= 200 or any(not re.fullmatch(pattern, str(v).strip()) for v in values):
+            raise ValueError('请选择1~200个已观察到的官方内部编号' if official(self.config) else '请输入1~200个有效的5~12位号码')
         old = self.config.ids(name); ids = set(map(int, values))
         next = old | ids if operation == "add" else old - ids
-        self.config.save({name: ",".join(map(str, sorted(next)))})
+        patch = {name: ",".join(map(str, sorted(next)))}
+        validate_settings(self.config, patch, self.official_transport)
+        self.config.save(patch)
         return {"ok": True, "changed": len(old ^ next), "whitelist": sorted(next)}
 
     def get_personas(self, _):
@@ -1034,6 +1073,7 @@ class Admin:
             raise ValueError("配置项无效")
         # Preserve secret values on blank submissions, as the existing UI expects.
         clean = {key: str(value) for key, value in patch.items() if value != "" or allowed[key]["type"] != "secret"}
+        validate_settings(self.config, clean, self.official_transport)
         learn_on = str(clean.get('STICKER_LEARN_ENABLED', '')).lower() in {'1','true','yes','on'}
         if learn_on and self.stickers.for_chat().learning_status()['full']:
             raise ValueError('当前人格图库已满60张，请先人工清理后重新开启学习')
@@ -1097,6 +1137,13 @@ class Admin:
         return {"ok": True, "settings": self.plugin_settings()}
 
     def set_chat(self, p):
+        if official(self.config):
+            key = str(p.get('key', ''))
+            if not re.fullmatch(r'[gp][0-9]{15}', key) or self.official_transport is None:
+                raise ValueError('官方会话必须选择本实例已观察到的内部编号')
+            self.official_transport.registry.get(key[1:], {'group' if key.startswith('g') else 'c2c'})
+            if p.get('patch', {}).get('proactiveEnabled') or p.get('patch', {}).get('proactiveRate'):
+                raise ValueError('官方通道当前不支持主动搭话')
         return self.sessions.set(p["key"], p.get("patch", {}))
 
     def reset_chat(self, p):

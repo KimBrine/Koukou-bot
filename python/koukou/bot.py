@@ -28,6 +28,7 @@ from .id_check import IdCheck, ID_CHECK_CMD_RE, ID_CHECK_KICK_CMD_RE
 from .forward_records import expand_forward_records
 from .vision import read_local_profile, VISION_DESCRIBE_PROMPT, QUESTION_VISION_PROMPT, VISION_DESCRIBE_ASK, sanitize_image_description, build_image_context_note
 from .question_mode import has_question_marker, is_question_mode, HINT as QUESTION_HINT
+from .transport_policy import official, unsupported_request, unavailable
 import json
 
 
@@ -39,7 +40,7 @@ class Bot:
         self.music_search = music_search
         self.summaries = summary_service
         self.commands = CommandRegistry(config, plugins) if plugins else None
-        self.actions = Actions(config, onebot, self.commands, model) if self.commands else None
+        self.actions = Actions(config, onebot, self.commands, model) if self.commands and not official(config) else None
         self.settings, self.rand = settings if settings is not None else {}, rand
         if self.actions:
             self.actions.persona = lambda event:config.persona(self.settings.get(chat_key(event),{}).get('persona',''))
@@ -105,7 +106,7 @@ class Bot:
         if len(self.reply_requests)>8000:self.reply_requests={token.rsplit(':',1)[0] for token in self.reply_receipts}
         write_json(self.reply_file,self.reply_receipts)
         try:
-            receipt = await self.onebot.send(key,reply_segments(text) if isinstance(text,str) and not event.get('_question_mode') else text)
+            receipt = await self.onebot.send(key,reply_segments(text) if isinstance(text,str) and not event.get('_question_mode') and not official(self.config) else text)
         except BaseException:
             record['status']='uncertain'
             try:write_json(self.reply_file,self.reply_receipts)
@@ -292,7 +293,8 @@ class Bot:
         if not self.current(event, revision):
             self.repeats.pop(key, None)
             return
-        self.watch.note(event,parsed,history=arrival_history)
+        if not official(self.config):
+            self.watch.note(event,parsed,history=arrival_history)
         if self.daily_ping:
             await self.daily_ping.note_message(event,parsed)
         if private and not self.private_allowed(event["user_id"]):
@@ -328,6 +330,14 @@ class Bot:
             except Exception:
                 quote = None
         direct = private or parsed.at_bot or reply_to_bot
+        if official(self.config):
+            # Platform pushes are not proof that this app observes the full group.
+            # Group replies require the genuine directed-event marker from the adapter.
+            if not private and not event.get('_official_directed'):
+                return
+            if direct and not has_question_marker(parsed.text) and unsupported_request(parsed.text):
+                await self.send(event, unavailable('request'), revision)
+                return
         feature = self.commands.detect(parsed.text) if self.commands else None
         if direct and has_question_marker(parsed.text) and not private and not parsed.at_bot:
             await self.send(event,'/Q解题模式需要在本条消息外层@我，只有引用不算。',revision);return
@@ -512,6 +522,8 @@ class Bot:
                                    today_note=self.daily_ping.today_note(key) if self.daily_ping else '',
                                    long_mode=question, web_enabled=bool(self.web_search), custom_rules=profile.get('conversationRules') or self.config.get('CONVERSATION_RULES'))
         prompt += current_message_hint(event)+focus['hint']+shape_hint(plan)+decoration_hint(decoration,decoration_kind,preset)
+        if official(self.config):
+            prompt += '\n【实际通道能力】当前为QQ开放平台机器人。仅可在有效被动窗口回复文字、图片；不具备本程序已验证的禁言、拍一拍、成员角色列表、完整群历史、文件或音乐卡片能力。不要声称执行过这些操作。内部数字编号不是QQ号，群成员OpenID与私聊OpenID不能互认身份。普通QQ表情标记只会按文字发出。'
         if question:prompt += QUESTION_HINT
         if not question and self.sticker_policy.allowed(event, store):
             inventory = [{k: v.get(k) for k in ('id', 'name', 'keywords', 'description', 'scenes')} for v in store.items]
@@ -621,10 +633,15 @@ class Bot:
                 if not gate['allowed']:
                     return False
             confirmed = 0
+            if official(self.config):
+                needed = sum(len(split_message(line, maximum=4000)) for line in lines)
+                needed += len(choice['items']) + bool(web_image)
+                if needed > self.onebot.remaining(key):
+                    return await self.send(event, '本次完整回答超过官方通道剩余消息额度，未发送截断内容。请缩小问题后再试。', revision)
             for index,line in enumerate(lines):
                 if index:
                     await self.pause(typing_delay_seconds(self.config.number('LINE_GAP_MIN_MS',500),self.config.number('LINE_GAP_MAX_MS',1600),rand=self.rand))
-                for piece in split_message(line):
+                for piece in split_message(line, maximum=4000 if official(self.config) else 1800):
                     if not active() or not await self.send(event, piece, revision):
                         return bool(confirmed)
                     self.memory.push(key, 'assistant', piece, replyToUserId=str(event['user_id']), replyToName=sender.get('card') or sender.get('nickname', ''), replyToMessageId=str(event.get('message_id', '')))

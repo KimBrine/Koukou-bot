@@ -64,6 +64,9 @@ class MediaDelivery:
         return files, spec or {}
 
     async def deliver(self, event, result, *, current=lambda: True):
+        from .transport_policy import official, unavailable
+        if official(self.config) and any(result.get(key) for key in ('files', 'legacyFile', 'legacyCard', 'music')):
+            raise ValueError(unavailable('media'))
         key = chat_key(event)
         request = f"{self.onebot.self_id}:{key}:{event.get('message_id')}"
         files, spec = self.files(result)  # Validate the entire result before sending anything.

@@ -255,3 +255,20 @@ details.card[open] > summary { padding-bottom: 16px; border-bottom: 1px solid va
 
 .private-manager{border-color:var(--accent);box-shadow:inset 4px 0 0 var(--accent)}
 .private-manager .section-head .primary{min-height:46px;font-size:15px}
+
+/* Official QQ identities are explicit application-scoped OpenIDs. */
+.official-notice{margin:16px 0;padding:16px 18px;border:1px solid var(--accent,#56d8c3);border-radius:12px;background:#16866b12;line-height:1.7}
+.official-notice p{margin:6px 0;color:var(--muted,#9aabc0);font-size:13px}
+.official-connect{border-color:var(--accent,#56d8c3);margin:16px 0}
+.official-connect .section-head{align-items:flex-start;gap:12px;flex-wrap:wrap}
+.official-connect .flexbar .primary{min-height:46px}
+.official-qr{margin:18px 0;max-width:300px}
+.official-qr img{display:block;width:240px;max-width:100%;height:auto;padding:10px;background:#fff;border-radius:12px}
+.official-qr figcaption{font-size:13px;color:var(--muted,#9aabc0);line-height:1.6;margin-top:8px}
+.official-identity{display:inline-block;overflow-wrap:anywhere;font-size:12px;vertical-align:middle}
+.official-identity small,.official-identities small{display:block;font-size:12px;line-height:1.6}
+.official-identity code,.official-identities code{overflow-wrap:anywhere;white-space:normal}
+.official-identities{margin-top:16px;border-top:1px solid var(--line,#263850);padding-top:12px}
+.official-identities>summary{cursor:pointer;font-size:14px}
+.official-identity-scroll{max-height:280px;overflow:auto}
+.official-identity-scroll td{min-width:90px;max-width:420px;vertical-align:top}

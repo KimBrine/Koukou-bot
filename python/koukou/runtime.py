@@ -36,6 +36,7 @@ from .scheduled import ScheduledCommands
 from .daily_ping import DailyPing
 from .id_check import IdCheck
 from .lifecycle import finish_cleanup
+from .transport_policy import official, provider
 
 
 def bounded(config, key, default, low, high):
@@ -200,9 +201,19 @@ class Runtime:
     async def create(cls, config, *, session=None, onebot=None, preview=False, client_factory=ModelClient):
         self = cls()
         self.config, self.preview = config, preview
+        provider(config)
+        if official(config):
+            from .qq_official import validate_official_profile
+            validate_official_profile(config)
+        elif (config.data_dir/'qq-official-profile.json').exists():
+            raise ValueError('官方机器人数据不能交给OneBot实例，请使用独立数据目录')
         self.lock = InstanceLock(config.data_dir,recover_stale=True).acquire()
         self.session = session
         try:
+            if official(config) and onebot is None:
+                from .qq_official import OfficialQQ
+                # Pin the provider before any mutable memory service creates files.
+                onebot = OfficialQQ(config, session=session)
             recover_conversation_deletion(config)
             if recover_session(config):
                 config = Config(config.root, config.env_file, config.environ)
@@ -215,6 +226,8 @@ class Runtime:
                 import aiohttp
                 self.session = aiohttp.ClientSession(trust_env=True)
                 self.owns_session = True
+            if onebot is not None and official(config) and getattr(onebot, 'http', None) is None:
+                onebot.http = self.session
             self.models = ModelPool(config, self.session, factory=client_factory)
             self.memory = Memory(config.data_dir, limit=int(bounded(config, 'HISTORY_LIMIT', 99, 4, 200)))
             self.long_memory = LongMemory(config.data_dir, None if preview else self.models.role('memory'), max_chars=int(bounded(config, 'LONG_MEMORY_MAX_CHARS', 6000, 300, 6000)))
@@ -223,6 +236,7 @@ class Runtime:
             self.admin = Admin(config, self.plugins, self.memory, self.long_memory, onebot=self.onebot,
                                model=None if preview else self.models.role('summary'),
                                sticker_tag_model=None if preview else self.models.role('sticker-tag'))
+            self.admin.official_transport = onebot if official(config) else None
             self.settings, self.stickers = self.admin.settings, self.admin.stickers
             self.log = getattr(self.admin, 'logger', self.log)
             self.admin.lifecycle.restart = self.restart_requested.set
@@ -389,12 +403,14 @@ class Runtime:
         if connect:
             self.track(asyncio.create_task(self.onebot.run()), 'onebot')
         if maintenance:
-            await self.configure_schedules()
-            self.scheduled.start()
-            self.daily_ping.start()
-            self.periodic('configuration', self.configure_schedules, lambda: 1)
+            if not official(self.config):
+                await self.configure_schedules()
+                self.scheduled.start()
+                self.daily_ping.start()
+                self.periodic('configuration', self.configure_schedules, lambda: 1)
             self.periodic('health', self.onebot.refresh_status, lambda: 30, immediate=True)
-            self.periodic('quiet-greetings', self.greetings.tick, lambda: 1, immediate=True)
+            if not official(self.config):
+                self.periodic('quiet-greetings', self.greetings.tick, lambda: 1, immediate=True)
             self.periodic('media-cleanup', self.media.cleanup, lambda: 10)
             self.periodic('file-temp-cleanup', self.file_commands.cleanup, lambda: 600)
             self.periodic('long-memory', self.maintain_memory,

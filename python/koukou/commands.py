@@ -2,6 +2,7 @@
 import re
 import unicodedata
 from .state import read_json, write_json
+from .transport_policy import official, UNAVAILABLE_FEATURES, unavailable
 
 RESERVED = {"q", "help", "帮助", "指令", "命令", "py", "群总结", "群聊总结", "今日总结", "每日总结",
             "清除记忆", "清空记忆", "重置记忆", "id_check", "id_check_kick", "发文件", "发链接", "点歌"}
@@ -123,6 +124,8 @@ class CommandRegistry:
                 item.update(scope='groups', groups=[], adminOnly=False)
             item['semantic'] = id in {'summary','help','id-check'}
             item['naturalLanguage'] = item['semantic'] and settings.get(id,{}).get('naturalLanguage') is True
+            if official(self.config) and id in UNAVAILABLE_FEATURES:
+                item.update(enabled=False, available=False, unavailableReason=unavailable(id), naturalLanguage=False)
             items.append(item)
         return [*items, *self.plugin_entries()]
 
@@ -135,6 +138,8 @@ class CommandRegistry:
         item = self.get(payload.get("id"))
         if not item:
             raise ValueError("未知内置指令")
+        if official(self.config) and item['id'] in UNAVAILABLE_FEATURES and payload.get('enabled') is True:
+            raise ValueError(unavailable(item['id']))
         scope = payload.get("scope", item["scope"])
         if scope not in {"all", "group", "groups", "private"}:
             raise ValueError("适用范围无效")
