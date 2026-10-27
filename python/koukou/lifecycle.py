@@ -47,11 +47,19 @@ async def run_program(argv,timeout=30):
 class Lifecycle:
     def __init__(self,config,*,restart=None,runner=run_program,platform=sys.platform,opener=None):
         self.config,self.restart,self.runner,self.platform,self.opener=config,restart,runner,platform,opener
+        self.shutdown = None
 
     def restart_bot(self):
         if self.restart is None:raise RuntimeError('当前入口未配置安全重启，请使用原启动入口重新加载')
         asyncio.get_running_loop().call_later(.3,self.restart)
         return {'ok':True}
+
+    def stop_native(self):
+        if self.shutdown is None:
+            raise RuntimeError('当前入口未绑定原生停止能力')
+        # Let the authenticated HTTP response finish before its listener closes.
+        asyncio.get_running_loop().call_later(.3, self.shutdown)
+        return {'ok': True, 'accepted': True}
 
     async def restart_protocol(self):
         if self.platform!='win32':raise ValueError('协议端计划任务重启仅支持Windows，请使用协议端自身的重启入口')

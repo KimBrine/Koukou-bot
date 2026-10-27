@@ -46,6 +46,28 @@ async def serve_native(config, port=None, *, stop=None, ready=None,
                          handle_signals=handle_signals, runtime_factory=runtime_factory)
 
 
+def bind_native_control(config, runtime, stop):
+    """Bind callbacks to this generation, including the delayed-stop window."""
+    from .native_control import host_identity
+    expected = host_identity(config, runtime.lock)
+
+    def identity():
+        current = host_identity(config, runtime.lock)
+        if runtime.closed or current != expected:
+            raise RuntimeError('原生实例代际已变化，停止能力已拒绝')
+        return current
+
+    def shutdown_generation():
+        try:
+            identity()
+        except (ValueError, RuntimeError, OSError):
+            return  # Never let an old timer close a restarted/replaced instance.
+        stop.set()
+
+    runtime.admin.native_identity = identity
+    runtime.admin.lifecycle.shutdown = shutdown_generation
+
+
 async def _serve_console(config, port, *, preview, stop, ready,
                          handle_signals, runtime_factory):
     """Serve either mode, releasing HTTP resources before its instance lock.
@@ -69,6 +91,8 @@ async def _serve_console(config, port, *, preview, stop, ready,
             runner = None
             waiters = []
             try:
+                if not preview:
+                    bind_native_control(config, runtime, stop)
                 if enabled:
                     runner = web.AppRunner(runtime.admin.app(), shutdown_timeout=5)
                     await runner.setup()

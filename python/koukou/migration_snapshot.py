@@ -4,6 +4,7 @@ All data files are copied unless the caller names exclusions. A complete snapsho
 proves two stable file/hash scans, not that a live application was quiescent.
 Only new destinations are supported; this module has no in-place restore/delete.
 """
+import errno
 import hashlib
 import json
 import os
@@ -25,6 +26,15 @@ class SnapshotError(ValueError):
     def __init__(self, code):
         self.code = code
         super().__init__(code)
+
+
+def _io_error_code(error):
+    # Inspect OS codes, never localized messages or private filenames. Preserve
+    # the path/link checks rather than silently changing to Windows device paths.
+    if isinstance(error, OSError) and (error.errno == errno.ENAMETOOLONG
+                                      or getattr(error, 'winerror', None) == 206):
+        return 'snapshot_path_too_long'
+    return 'snapshot_io_or_structure_error'
 
 
 def _safe(path):
@@ -247,8 +257,8 @@ def create_snapshot(source_dir, destination, *, exclude=(), env_file=None):
         return _report('complete', manifest=manifest)
     except SnapshotError as exc:
         return _fail(target, manifest, exc.code)
-    except (OSError, ValueError, UnicodeError, TypeError):
-        return _fail(target, manifest, 'snapshot_io_or_structure_error')
+    except (OSError, ValueError, UnicodeError, TypeError) as exc:
+        return _fail(target, manifest, _io_error_code(exc))
 
 
 def _load_manifest(root):
@@ -345,8 +355,8 @@ def verify_snapshot(snapshot_dir):
         return _report('verified', manifest=manifest)
     except SnapshotError as exc:
         return _report('refused', code=exc.code)
-    except (OSError, ValueError, UnicodeError, TypeError):
-        return _report('refused', code='snapshot_io_or_structure_error')
+    except (OSError, ValueError, UnicodeError, TypeError) as exc:
+        return _report('refused', code=_io_error_code(exc))
 
 
 def derive_rehearsal(snapshot_dir, destination):
@@ -378,5 +388,5 @@ def derive_rehearsal(snapshot_dir, destination):
         return _report('complete', manifest=manifest)
     except SnapshotError as exc:
         return _fail(target, manifest, exc.code)
-    except (OSError, ValueError, UnicodeError, TypeError):
-        return _fail(target, manifest, 'snapshot_io_or_structure_error')
+    except (OSError, ValueError, UnicodeError, TypeError) as exc:
+        return _fail(target, manifest, _io_error_code(exc))

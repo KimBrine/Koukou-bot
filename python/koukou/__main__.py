@@ -59,6 +59,13 @@ def main(argv=None):
     connect.add_argument('--log-dir', type=Path)
     connect.add_argument('--profile')
     connect.add_argument('--port', type=int)
+    stopping = commands.add_parser('stop-native', help='只读核对原生实例，显式--execute才优雅停止')
+    stopping.add_argument('--data-dir', type=Path)
+    stopping.add_argument('--log-dir', type=Path)
+    stopping.add_argument('--profile')
+    stopping.add_argument('--port', type=int)
+    stopping.add_argument('--execute', action='store_true')
+    stopping.add_argument('--timeout', type=float, default=15)
     plugins = commands.add_parser("plugin", help="创建、列出、运行Python插件")
     sub = plugins.add_subparsers(dest="operation", required=True)
     new = sub.add_parser("new")
@@ -85,6 +92,14 @@ def main(argv=None):
             print(json.dumps(status,ensure_ascii=False,indent=2))
             return 0 if status['ok'] else 1
         args.root=args.root or default_root()
+        if args.command == 'stop-native':
+            from .native_cli import resolve_native_config
+            from .native_control import stop_native
+            config = resolve_native_config(args.root, args.env_file, data_dir=args.data_dir,
+                log_dir=args.log_dir, profile=args.profile, port=args.port)
+            value = asyncio.run(stop_native(config, port=args.port, execute=args.execute, timeout=args.timeout))
+            print(json.dumps(value, ensure_ascii=False, indent=2))
+            return 0
         if args.command == 'run':
             if not args.enable_native and not args.check:
                 print("完整后端迁移及行为等价验证尚未完成，拒绝连接QQ；可用 preview 检查迁移控制台。原生验收需显式指定--enable-native。", file=sys.stderr)

@@ -1,4 +1,5 @@
 """Snapshot/rehearsal acceptance only touches generic TemporaryDirectory fixtures."""
+import errno
 import json
 import os
 from pathlib import Path
@@ -196,9 +197,80 @@ class MigrationSnapshotTests(unittest.TestCase):
             result = snapshots.create_snapshot(self.source, self.destination)
         self.assertFalse(result['ok'])
         self.assertEqual(result['status'], 'incomplete')
+        self.assertEqual(result['errors'], ['snapshot_io_or_structure_error'])
         self.assertNotIn('fixture-private-os-error', json.dumps(result))
         self.assertEqual(contents(self.source), before)
         self.assertEqual(json.loads((self.destination/'snapshot.json').read_text(encoding='utf-8'))['status'], 'incomplete')
+
+    def test_path_too_long_during_copy_has_actionable_code_and_preserves_source(self):
+        before = contents(self.source)
+        original = snapshots._read_file
+        errors = [OSError(errno.ENAMETOOLONG, 'fixture-private-path')]
+        windows_error = OSError(errno.EINVAL, 'fixture-private-windows-path')
+        windows_error.winerror = 206  # Portable simulation, including Linux CI.
+        errors.append(windows_error)
+        for index, error in enumerate(errors):
+            destination = self.root/f'too-long-{index}'
+            def failure(path, **kwargs):
+                if kwargs.get('target') is not None:
+                    raise error
+                return original(path, **kwargs)
+            with self.subTest(error=index), patch.object(snapshots, '_read_file', failure):
+                result = snapshots.create_snapshot(self.source, destination)
+            self.assertEqual(result['errors'], ['snapshot_path_too_long'])
+            self.assertFalse(result['ok'])
+            self.assertFalse(result['ready'])
+            self.assertEqual(result['status'], 'incomplete')
+            self.assertNotIn('fixture-private', json.dumps(result))
+            manifest = json.loads((destination/'snapshot.json').read_text(encoding='utf-8'))
+            self.assertEqual((manifest['status'], manifest['error']), ('incomplete', 'snapshot_path_too_long'))
+            self.assertFalse(snapshots.verify_snapshot(destination)['ok'])
+            self.assertEqual(contents(self.source), before)
+
+    def test_path_too_long_before_destination_creation_is_refused_without_writes(self):
+        before = contents(self.source)
+        with patch.object(snapshots, '_new_destination', side_effect=OSError(errno.ENAMETOOLONG, 'fixture-private-path')):
+            result = snapshots.create_snapshot(self.source, self.destination)
+        self.assertEqual(result['errors'], ['snapshot_path_too_long'])
+        self.assertEqual(result['status'], 'refused')
+        self.assertFalse(result['ok'])
+        self.assertFalse(result['ready'])
+        self.assertFalse(self.destination.exists())
+        self.assertEqual(contents(self.source), before)
+
+    def test_verify_path_too_long_is_read_only(self):
+        self.assertTrue(snapshots.create_snapshot(self.source, self.destination)['ok'])
+        before, source_before = contents(self.destination), contents(self.source)
+        error = OSError(errno.EINVAL, 'fixture-private-windows-path')
+        error.winerror = 206
+        with patch.object(snapshots, '_read_file', side_effect=error):
+            result = snapshots.verify_snapshot(self.destination)
+        self.assertEqual(result['errors'], ['snapshot_path_too_long'])
+        self.assertEqual(result['status'], 'refused')
+        self.assertFalse(result['ok'])
+        self.assertFalse(result['ready'])
+        self.assertEqual(contents(self.destination), before)
+        self.assertEqual(contents(self.source), source_before)
+
+    def test_rehearsal_path_too_long_keeps_incomplete_and_originals_unchanged(self):
+        self.assertTrue(snapshots.create_snapshot(self.source, self.destination)['ok'])
+        before, source_before = contents(self.destination), contents(self.source)
+        original = snapshots._read_file
+        target = self.root/'long-rehearsal'
+        def failure(path, **kwargs):
+            if kwargs.get('target') is not None:
+                raise OSError(errno.ENAMETOOLONG, 'fixture-private-path')
+            return original(path, **kwargs)
+        with patch.object(snapshots, '_read_file', failure):
+            result = snapshots.derive_rehearsal(self.destination, target)
+        self.assertEqual(result['errors'], ['snapshot_path_too_long'])
+        self.assertEqual(result['status'], 'incomplete')
+        self.assertFalse(result['ok'])
+        self.assertFalse(result['ready'])
+        manifest = json.loads((target/'snapshot.json').read_text(encoding='utf-8'))
+        self.assertEqual((manifest['status'], manifest['error']), ('incomplete', 'snapshot_path_too_long'))
+        self.assertEqual(contents(self.destination), before)
+        self.assertEqual(contents(self.source), source_before)
 
     def test_symlink_in_source_or_destination_ancestors_is_refused(self):
         outside = self.root/'outside'

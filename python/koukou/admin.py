@@ -111,6 +111,7 @@ class Admin:
         self.watch = None
         self.login = LoginManagement(config,onebot) if onebot else None
         self.lifecycle = Lifecycle(config)
+        self.native_identity = None
         self.schema = json.loads(Path(__file__).with_name("admin_schema.json").read_text(encoding="utf-8-sig"))
         self.gets = {
             "/api/state": self.state, "/api/config": self.get_config, "/api/python-scripts": self.get_plugins,
@@ -125,6 +126,7 @@ class Admin:
             "/api/daily": self.get_daily,
             "/api/stickers": self.get_stickers, "/api/stickers/retag-status": self.retag_status,
             "/api/ping": lambda _: {'ok':True},
+            "/api/native-instance": self.get_native_instance,
             "/api/vision-providers": lambda _: {'items':self.vision_providers.list()},
             "/api/models": self.get_models,
             "/api/tasks": self.get_tasks, "/api/websearch": self.get_websearch,
@@ -183,10 +185,22 @@ class Admin:
             "qq-login-state": self.login_state, "qq-login-qrcode": self.login_qrcode,
             "qq-switch-account": self.login_switch, "qq-logout": self.login_logout,
             "restart-bot": lambda _: self.lifecycle.restart_bot(),
+            "shutdown-native": self.shutdown_native,
             "restart-napcat": lambda _: self.lifecycle.restart_protocol(),
             "open-python-folder": lambda _: self.lifecycle.open_folder(self.plugins.directory),
             "say": self.say,
         }
+
+    def get_native_instance(self, _):
+        if self.native_identity is None or self.lifecycle.shutdown is None:
+            raise RuntimeError('此入口不是可管理的原生实例')
+        return self.native_identity()
+
+    def shutdown_native(self, payload):
+        current = self.get_native_instance({})
+        if not isinstance(payload.get('identity'), str) or not hmac.compare_digest(payload['identity'], current['identity']):
+            raise ValueError('实例身份已变化，未请求关闭')
+        return self.lifecycle.stop_native()
 
     async def say(self,p):
         if self.onebot is None or self.media is None:raise RuntimeError('当前预览禁止QQ发送')
