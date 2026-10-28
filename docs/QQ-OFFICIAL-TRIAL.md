@@ -59,6 +59,8 @@ node integrations/qq-official-bridge/cli.mjs --env-file "D:\Koukou-trial\profile
 
 两个入口均以前台方式运行，各自在原终端按 Ctrl+C 停止。也可用 `stop-native --execute` 优雅停止 Python；这不停止独立桥进程。旧 Node 启停器、计划任务和正式环境不作修改。
 
+Windows 独立安装可使用 `integrations/qq-official-bridge/windows/` 的启动模板：安装根目录下放置完整源码 `app/`、Python虚拟环境 `.venv/`、独立配置 `profile/`、含当前提交号 `commit` 的 `installation.json`，并把 `launcher.py` 和 `official-host.mjs` 复制到安装根目录。运行 `python launcher.py start` / `stop`，或用 `pythonw launcher.py start --open` 创建桌面入口。启动器串行执行启停，重复启动复用原实例；仅在确认旧桥进程已退出时归档其残留锁，仍活跃或状态不明的锁不自动处理，凭据与投递记录保持原样。此模板不设置自启动或看门狗。
+
 ## 数据与验证
 
 `profile.env`、`data/`、`bridge/` 中包含令牌、应用凭据、身份映射和投递记录，属于私有运行资料。请保存整个试验实例目录；不能只备份聊天记忆后另建一份身份映射。未知发送回执不重试，自有撤回不确定时也不重放。
