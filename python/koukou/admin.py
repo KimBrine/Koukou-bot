@@ -83,6 +83,7 @@ class Admin:
         self.config, self.plugins, self.memory, self.long_memory = config, plugins, memory, long_memory
         self.onebot, self.model = onebot, model
         self.group_names, self.friend_names, self.group_members = {}, {}, {}
+        self.group_names_at = self.friend_names_at = 0.0
         plugins.config = config
         self.commands = CommandRegistry(config, plugins)
         self.token = secrets.token_urlsafe(32)
@@ -465,6 +466,20 @@ class Admin:
             raise ValueError('这个服务商还没有配置Key')
         return {**await detect_models(url,key),'provider':provider}
 
+    @staticmethod
+    async def port_open(port, timeout=0.6):
+        """Probe a local TCP port like the JS console's testPort()."""
+        try:
+            reader, writer = await asyncio.wait_for(asyncio.open_connection('127.0.0.1', int(port)), timeout)
+        except (OSError, ValueError, asyncio.TimeoutError):
+            return False
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+        return True
+
     async def state(self, _):
         stats = self.runtime_stats.snapshot()
         version = self.updates.current_version if self.updates is not None else 'unknown'
@@ -488,6 +503,7 @@ class Admin:
             except ValueError:pass
         try:onebot_port=urlsplit(c.get('ONEBOT_WS_URL','ws://127.0.0.1:3001')).port or 3001
         except ValueError:onebot_port=None
+        port_ok = await self.port_open(onebot_port) if isinstance(onebot_port,int) else False
         watch=self.watch
         config={'whitelist':sorted(c.ids('WHITELIST_GROUPS')),'whitelistGroups':sorted(c.ids('WHITELIST_GROUPS')),
                 'privateWhitelist':sorted(c.ids('PRIVATE_WHITELIST')),'adminUsers':sorted(c.ids('ADMIN_USERS')),
@@ -510,7 +526,7 @@ class Admin:
                 "bot": {**health,'connected':health.get('online') is True,'onebotConnected':health.get('connected') is True,
                         "model":c.get('DEEPSEEK_MODEL','deepseek-flash'),'deepseekReasoningEffort':'max' if 'deepseek' in c.get('DEEPSEEK_MODEL','deepseek-flash').lower() else c.get('DEEPSEEK_REASONING_EFFORT') or None,'visionModel':vision_model if vision_ready else None,
                         'webSearch':c.enabled('WEB_SEARCH_ENABLED') and c.get('WEB_SEARCH_PROVIDER','auto')!='off',
-                        'onebotUrl':c.get('ONEBOT_WS_URL','ws://127.0.0.1:3001'),'napcatPort':None,'napcatPortNumber':onebot_port},
+                        'onebotUrl':c.get('ONEBOT_WS_URL','ws://127.0.0.1:3001'),'napcatPort':port_ok,'napcatPortNumber':onebot_port},
                 "config":config,
                 "today": today_stats(self.config.data_dir/'daily',self.memory), "summaryProgress": list(self.summaries.progress.items.values()) if self.summaries else [], "replies": stats['replies'],
                 "today_replies": stats['today_replies'], "counters": stats['counters'], "migration": self.get_migration({})}
@@ -530,11 +546,13 @@ class Admin:
         items = [{**v, 'id': str(v['group_id']), 'name': v.get('group_name', ''), 'members':v.get('member_count')} for v in await self.protocol_read('get_group_list') if isinstance(v, dict) and v.get('group_id')]
         self.group_names = {v['id']: v['name'] for v in items}
         self.group_members = {v['id']: v['members'] for v in items}
+        self.group_names_at = time.time()
         return {'items': items}
 
     async def get_friends(self, _):
         items = [{**v, 'id': str(v['user_id']), 'name': v.get('remark') or v.get('nickname', '')} for v in await self.protocol_read('get_friend_list') if isinstance(v, dict) and v.get('user_id')]
         self.friend_names = {v['id']: v['name'] for v in items}
+        self.friend_names_at = time.time()
         return {'items': items}
 
     async def send_morning(self, _):
@@ -819,6 +837,26 @@ class Admin:
 
     def save_builtin(self, payload):
         return {"ok": True, "item": self.commands.save_builtin(payload)}
+
+    async def prefetch_names(self):
+        """Fill group/friend names before building chats, like the JS buildChatList.
+
+        The console loads /api/chats and /api/groups in parallel; without this the
+        chat list can be built from empty name caches and show bare IDs.
+        """
+        if self.onebot is None:
+            return
+        now = time.time()
+        try:
+            if not self.group_names or now - self.group_names_at > 30:
+                await self.get_groups({})
+        except Exception:
+            pass
+        try:
+            if not self.friend_names or now - self.friend_names_at > 60:
+                await self.get_friends({})
+        except Exception:
+            pass
 
     def get_chats(self, _):
         keys = set(self.settings) | set(self.memory.chats) | {'g'+str(id) for id in self.config.ids('WHITELIST_GROUPS')} | {'p'+str(id) for id in self.config.ids('PRIVATE_WHITELIST') | self.config.ids('ADMIN_USERS')}
@@ -1164,6 +1202,8 @@ class Admin:
                 return web.FileResponse(assets / static[path])
             try:
                 if request.method == "GET" and path in self.gets:
+                    if path == "/api/chats":
+                        await self.prefetch_names()
                     result = self.gets[path](dict(request.query))
                     return web.json_response(await result if inspect.isawaitable(result) else result)
                 if request.method == 'GET' and path in {'/api/sticker-file','/api/sticker-blacklist-file'}:
