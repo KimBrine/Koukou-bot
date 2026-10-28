@@ -147,6 +147,13 @@ class LoginManagement:
         current,accounts=await asyncio.gather(self.adapter.info(selected),self.adapter.accounts(selected),return_exceptions=True)
         current=current if isinstance(current,dict) else None
         accounts=accounts if isinstance(accounts,list) else []
+        if current is None and self.onebot is not None:
+            # The OneBot connection is authoritative for the live account; some
+            # protocol WebUI versions reject the stored token, so fall back to it.
+            health=self.onebot.status()
+            if health.get('online') and health.get('selfId'):
+                current={'uin':str(health['selfId']),'nick':'','online':True,'source':'onebot'}
+                if not accounts:accounts=[current]
         return {'ok':True,**status,'current':current,'accounts':[{**v,'current':bool(current and v['uin']==current['uin'])} for v in accounts]}
 
     async def qrcode(self):return {'ok':True,**await self.adapter.qrcode()}

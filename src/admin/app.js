@@ -1239,11 +1239,11 @@ function stopQqPoll(){ if (qqPollTimer) { clearInterval(qqPollTimer); qqPollTime
 function qqMask(uin){ const s = String(uin || ''); return s ? s.slice(0, 4) + '***' + s.slice(-2) : '—' }
 function pageLogin(){
   return `<section class="card"><h2>当前 QQ 账号</h2>
-    <p class="mut">真正登录的是 LLBot（LuckyLillia）。换号会让机器人短暂离线，重新登录成功后自动恢复收消息。</p>
+    <p class="mut">真正登录的是协议端（LLBot 或 NapCat）。换号会让机器人短暂离线，重新登录成功后自动恢复收消息。</p>
     <div id="qqLoginBody" class="mut">正在读取…</div>
     <div class="flexbar"><button class="btn" id="qqRefresh">刷新状态</button><button class="btn" id="qqLogout">退出当前账号</button></div>
   </section>
-  <section class="card"><h2>切换已保存账号</h2><p class="mut">LLBot 本机保存过登录态的账号，切换不需要扫码。</p><div id="qqAccounts" class="mut">正在读取…</div></section>
+  <section class="card"><h2>切换已保存账号</h2><p class="mut">协议端本机保存过登录态的账号，切换不需要扫码。</p><div id="qqAccounts" class="mut">正在读取…</div></section>
   <section class="card"><h2>扫码登录新账号</h2><p class="mut">会先退出当前账号，再用手机 QQ 扫码登录；二维码约两分钟有效。</p>
   <div class="flexbar"><button class="btn primary" id="qqQr">显示登录二维码</button></div><div id="qqQrArea"></div></section>`
 }
@@ -1265,7 +1265,7 @@ async function loadQqLogin(){
       + `<div class="mut" style="margin-top:4px">登录后端：${esc(backend)}${s.baseUrl ? '（' + esc(s.baseUrl) + '）' : ''}</div>`
     acc.innerHTML = (s.accounts || []).length
       ? s.accounts.map(a => `<div class="flexbar" style="justify-content:space-between;align-items:center;gap:8px;margin:6px 0"><div>${a.face ? `<img src="${esc(a.face)}" alt="" style="width:24px;height:24px;border-radius:50%;vertical-align:middle;margin-right:6px">` : ''}${esc(a.nick || '')}（QQ ${qqMask(a.uin)}）${a.current ? ' · 当前' : ''}</div>${a.current ? '<span class="mut">使用中</span>' : `<button class="btn" data-qq-uin="${esc(a.uin)}">切换到它</button>`}</div>`).join('')
-      : '<span class="mut">LLBot 里还没有保存过其他账号</span>'
+      : '<span class="mut">协议端里还没有保存过其他账号</span>'
   } catch (err) {
     body.innerHTML = '<span class="bad">读取失败：' + esc(err.message) + '</span>'
   }
