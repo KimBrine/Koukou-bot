@@ -1025,7 +1025,10 @@ class Admin:
         return {"ok": True, "count": len(lines)}
 
     def set_config(self, p):
-        return self.set_config_batch({"patch": {p["key"]: p.get("value", "")}})
+        key = p.get("key")
+        if not isinstance(key, str) or not key:
+            raise ValueError("配置项无效")
+        return self.set_config_batch({"patch": {key: p.get("value", "")}})
 
     def set_config_batch(self, p):
         patch = p.get("patch", {})
@@ -1182,16 +1185,28 @@ class Admin:
                     action = path.removeprefix("/api/action/") if path.startswith("/api/action/") else path.removeprefix("/api/")
                     if action not in self.actions:
                         return web.json_response({"error": "该接口尚未迁移到Python", "action": action}, status=501)
-                    body = await request.json()
+                    try:
+                        body = await request.json()
+                    except Exception:
+                        raise ValueError("请求体不是合法 JSON")
                     if not isinstance(body, dict):
                         raise ValueError("请求体必须为对象")
                     result = self.actions[action](body)
                     return web.json_response(await result if inspect.isawaitable(result) else result)
                 return web.json_response({"error": "该接口尚未迁移到Python"}, status=501 if path.startswith("/api/") else 404)
-            except (ValueError, SyntaxError, KeyError, OSError) as exc:
+            except KeyError as exc:
+                name = exc.args[0] if exc.args else ""
+                return web.json_response({"error": f"缺少参数：{name}"}, status=400)
+            except (ValueError, SyntaxError, OSError, TypeError) as exc:
                 return web.json_response({"error": str(exc)}, status=400)
             except RuntimeError as exc:
                 return web.json_response({"error": str(exc)}, status=503)
+            except Exception as exc:
+                try:
+                    self.errors.add(f"控制台接口异常 {path}：{type(exc).__name__}: {exc}", scope="console")
+                except Exception:
+                    pass
+                return web.json_response({"error": "控制台内部错误"}, status=500)
 
         app = web.Application(client_max_size=16 * 1024 * 1024)
         app.router.add_route("*", "/{path:.*}", dispatch)

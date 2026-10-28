@@ -1,4 +1,5 @@
 import asyncio
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -82,6 +83,24 @@ class AdminTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.post("python-new-script", {}, Origin="https://evil.invalid")).status, 403)
         result = await self.client.post("/api/action/python-new-script", data="{}", headers={"X-Admin-Token": self.admin.token})
         self.assertEqual(result.status, 415)
+
+    async def test_invalid_payloads_return_friendly_client_errors(self):
+        invalid = await self.client.post("/api/action/set-config", data="{bad", headers={"X-Admin-Token": self.admin.token, "Content-Type": "application/json"})
+        self.assertEqual(invalid.status, 400)
+        self.assertIn("JSON", json.loads(await invalid.text())["error"])
+        bad_type = await self.post("set-config", {"key": [], "value": 1})
+        self.assertEqual(bad_type.status, 400)
+        self.assertIn("配置项无效", json.loads(await bad_type.text())["error"])
+        missing = await self.post("memory-update", {})
+        self.assertEqual(missing.status, 400)
+        self.assertIn("缺少参数", json.loads(await missing.text())["error"])
+        self.admin.actions["__probe_failure"] = lambda _: 1 / 0
+        try:
+            crashed = await self.post("__probe_failure", {})
+        finally:
+            self.admin.actions.pop("__probe_failure", None)
+        self.assertEqual(crashed.status, 500)
+        self.assertIn("控制台内部错误", json.loads(await crashed.text())["error"])
 
     async def test_native_plugin_crud_and_secret_redaction(self):
         self.config.values["DEEPSEEK_API_KEY"] = "TEST-SECRET-NOT-A-REAL-KEY"
