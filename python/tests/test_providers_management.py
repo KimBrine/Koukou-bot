@@ -48,18 +48,25 @@ class ProviderTransportTests(unittest.IsolatedAsyncioTestCase):
                 await detect_models(str(server.make_url('/redirect')),'unit-key')
         finally:await server.close()
 
-    async def test_napcat_actual_http_auth_accounts_and_qr(self):
-        seen=[]
+    async def test_napcat_http_hash_login_jwt_and_unauthorized_refresh(self):
+        seen=[];logins=[];rejected=[True]
         app=web.Application()
+        async def auth(request):
+            body=await request.json();logins.append(body['hash'])
+            self.assertEqual(body['hash'],hashlib.sha256(b'fixture-token.napcat').hexdigest())
+            return web.json_response({'code':0,'data':{'Credential':'jwt-fixture'}})
         async def api(request):
             seen.append((request.path,request.method))
-            self.assertEqual(request.query['token'],'fixture-token')
-            self.assertEqual(request.headers['Authorization'],'Bearer fixture-token')
+            self.assertEqual(request.headers['Authorization'],'Bearer jwt-fixture')
+            if request.match_info['name']=='CheckLoginStatus' and rejected[0]:
+                rejected[0]=False
+                return web.json_response({'code':-1,'message':'Unauthorized'})
             name=request.match_info['name']
             value={'CheckLoginStatus':{'uin':200000001,'nick':'测试账号','isLogin':True},
                    'GetQuickLoginList':[{'uin':200000001,'nickname':'测试账号','avatar':'face'}],
                    'GetQQLoginQrcode':{'pngBase64QrcodeData':base64.b64encode(b'png').decode(),'expireTime':123}}.get(name,{})
             return web.json_response({'code':0,'data':value})
+        app.router.add_post('/api/auth/login',auth)
         app.router.add_route('*','/api/QQLogin/{name}',api)
         server=TestServer(app);await server.start_server()
         try:
@@ -69,6 +76,7 @@ class ProviderTransportTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(adapter.status()['available'])
                 self.assertNotIn('fixture-token',json.dumps(adapter.status()))
                 self.assertEqual((await adapter.info())['uin'],'200000001')
+                self.assertEqual(len(logins),2)
                 self.assertEqual((await adapter.accounts())[0]['nick'],'测试账号')
                 self.assertEqual((await adapter.qrcode())['expireAt'],123)
                 self.assertEqual(seen[-1][0],'/api/QQLogin/GetQQLoginQrcode')
@@ -140,7 +148,9 @@ class ProviderTransportTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             config=Config(tmp,environ={'LOGIN_PROVIDER':'napcat','NAPCAT_WEBUI_URL':'http://127.0.0.1:6099','NAPCAT_WEBUI_TOKEN':'unit'})
             raw='https://example.invalid/qr.png?ticket=sample&size=200'
-            async def request(*args,**kwargs):return 200,{'code':0,'data':{'url':raw}}
+            async def request(url,**kwargs):
+                if '/api/auth/login' in url:return 200,{'code':0,'data':{'Credential':'jwt-fixture'}}
+                return 200,{'code':0,'data':{'url':raw}}
             adapter=LoginAdapter(config,request=request)
             self.assertEqual((await adapter.qrcode())['image'],raw)
             raw='https://name:password@example.invalid/qr.png'

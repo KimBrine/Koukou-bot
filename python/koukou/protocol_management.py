@@ -13,6 +13,39 @@ from .onebot import OneBotError
 class LoginAdapter:
     def __init__(self,config,*,session=None,request=None):
         self.config,self.session,self.request = config,session,request
+        self._napcat = {}
+
+    async def _send(self,url,*,method='GET',headers=None,body=None):
+        if self.request:
+            return await self.request(url,method=method,headers=headers or {},body=body)
+        import aiohttp
+        own=self.session is None
+        client=self.session or aiohttp.ClientSession(trust_env=False)
+        try:
+            async with client.request(method,url,json=body,headers=headers or {},allow_redirects=False,timeout=aiohttp.ClientTimeout(total=15)) as response:
+                chunks=bytearray()
+                async for chunk in response.content.iter_chunked(65536):
+                    chunks.extend(chunk)
+                    if len(chunks)>2*1024*1024:raise ValueError('协议端管理响应过大')
+                return response.status,json.loads(chunks)
+        except (aiohttp.ClientError,TimeoutError) as error:
+            raise OneBotError('协议端登录管理请求未确认',action=url,outcome_unknown=method!='GET') from error
+        finally:
+            if own:await client.close()
+
+    async def napcat_login(self,selected):
+        """Exchange the WebUI token for the JWT credential NapCat 4 APIs require."""
+        base,token=selected['baseUrl'],selected['token']
+        digest=hashlib.sha256((token+'.napcat').encode()).hexdigest()
+        key=(base,digest)
+        if key in self._napcat:return self._napcat[key]
+        status,data=await self._send(base+'/api/auth/login',method='POST',
+            headers={'Accept':'application/json','Content-Type':'application/json'},
+            body={'hash':digest,'totpCode':''})
+        credential=(data or {}).get('data',{}).get('Credential') if isinstance(data,dict) else None
+        if not isinstance(credential,str) or not credential:raise ValueError('NapCat WebUI 登录失败，请检查 WebUI Token')
+        self._napcat[key]=credential
+        return credential
 
     def llbot(self):
         c = self.config
@@ -69,27 +102,21 @@ class LoginAdapter:
         if re.search(r'[\r\n\x00]',token):raise ValueError('协议端凭据格式无效')
         headers={'Accept':'application/json'}
         url=selected['baseUrl']+path
-        if selected['provider']=='llbot':headers['X-Webui-Token']=hashlib.sha256(token.encode()).hexdigest()
+        napcat_key=None
+        if selected['provider']=='llbot':
+            headers['X-Webui-Token']=hashlib.sha256(token.encode()).hexdigest()
+        elif selected['provider']=='napcat':
+            digest=hashlib.sha256((token+'.napcat').encode()).hexdigest()
+            napcat_key=(selected['baseUrl'],digest)
+            headers['Authorization']='Bearer '+await self.napcat_login(selected)
         else:
             headers['Authorization']='Bearer '+token
             url+='?token='+quote(token,safe='')
-        if self.request:
-            status,data=await self.request(url,method=method,headers=headers,body=body)
-        else:
-            import aiohttp
-            own=self.session is None
-            client=self.session or aiohttp.ClientSession(trust_env=False)
-            try:
-                async with client.request(method,url,json=body,headers=headers,allow_redirects=False,timeout=aiohttp.ClientTimeout(total=15)) as response:
-                    chunks=bytearray()
-                    async for chunk in response.content.iter_chunked(65536):
-                        chunks.extend(chunk)
-                        if len(chunks)>2*1024*1024:raise ValueError('协议端管理响应过大')
-                    status,data=response.status,json.loads(chunks)
-            except (aiohttp.ClientError,TimeoutError) as error:
-                raise OneBotError('协议端登录管理请求未确认',action=path,outcome_unknown=method!='GET') from error
-            finally:
-                if own:await client.close()
+        status,data=await self._send(url,method=method,headers=headers,body=body)
+        if selected['provider']=='napcat' and isinstance(data,dict) and data.get('message')=='Unauthorized':
+            self._napcat.pop(napcat_key,None)
+            headers['Authorization']='Bearer '+await self.napcat_login(selected)
+            status,data=await self._send(url,method=method,headers=headers,body=body)
         if not isinstance(data,dict) or not 200<=status<300:
             raise ValueError('协议端管理接口不可用：HTTP '+str(status))
         if selected['provider']=='llbot' and data.get('success') is False or selected['provider']=='napcat' and data.get('code',0)!=0:
@@ -99,7 +126,8 @@ class LoginAdapter:
 
     async def info(self,selected=None):
         selected=selected or self.selected()
-        value=await self.call('/api/login-info' if selected['provider']=='llbot' else '/api/QQLogin/CheckLoginStatus',selected=selected)
+        value=await self.call('/api/login-info' if selected['provider']=='llbot' else '/api/QQLogin/CheckLoginStatus',
+            method='GET' if selected['provider']=='llbot' else 'POST',selected=selected)
         if not isinstance(value,dict) or value.get('isLogin') is False or not value.get('uin'):return None
         # LLBot login-info may omit both flags; a returned account is logged in.
         return {'uin':str(value['uin']),'nick':str(value.get('nick') or value.get('nickname') or ''),'online':value.get('online',value.get('isLogin',True)) is True}
@@ -108,11 +136,21 @@ class LoginAdapter:
         selected=selected or self.selected()
         data=await self.call('/api/quick-login-list' if selected['provider']=='llbot' else '/api/QQLogin/GetQuickLoginList',method='GET' if selected['provider']=='llbot' else 'POST',selected=selected)
         rows=data if isinstance(data,list) else data.get('LocalLoginInfoList',data.get('list',[])) if isinstance(data,dict) else []
-        return [{'uin':str(v.get('uin') or v.get('uid') or ''),'nick':str(v.get('nickName') or v.get('nick') or v.get('nickname') or v.get('name') or ''),'face':str(v.get('faceUrl') or v.get('face') or v.get('avatar') or '')} for v in rows if isinstance(v,dict)] if isinstance(rows,list) else []
+        out=[]
+        for v in rows if isinstance(rows,list) else []:
+            if isinstance(v,str):
+                # NapCat 4 returns a bare list of uins for quick-login accounts.
+                out.append({'uin':v,'nick':'','face':''})
+            elif isinstance(v,dict):
+                out.append({'uin':str(v.get('uin') or v.get('uid') or ''),
+                            'nick':str(v.get('nickName') or v.get('nick') or v.get('nickname') or v.get('name') or ''),
+                            'face':str(v.get('faceUrl') or v.get('face') or v.get('avatar') or '')})
+        return [v for v in out if v['uin']]
 
     async def qrcode(self,selected=None):
         selected=selected or self.selected()
-        data=await self.call('/api/login-qrcode' if selected['provider']=='llbot' else '/api/QQLogin/GetQQLoginQrcode',selected=selected)
+        data=await self.call('/api/login-qrcode' if selected['provider']=='llbot' else '/api/QQLogin/GetQQLoginQrcode',
+            method='GET' if selected['provider']=='llbot' else 'POST',selected=selected)
         raw=str((data or {}).get('pngBase64QrcodeData') or (data or {}).get('qrcode') or (data or {}).get('url') or '')
         if not raw or len(raw)>2*1024*1024:raise ValueError('协议端没有返回有效登录二维码')
         if raw.startswith(('http://','https://')):
@@ -153,7 +191,24 @@ class LoginManagement:
             health=self.onebot.status()
             if health.get('online') and health.get('selfId'):
                 current={'uin':str(health['selfId']),'nick':'','online':True,'source':'onebot'}
+                if not current['nick']:
+                    try:
+                        info=await self.onebot.api('get_login_info')
+                        if isinstance(info,dict):
+                            current['nick']=str(info.get('nickname') or info.get('nick') or '')
+                    except Exception:
+                        pass
                 if not accounts:accounts=[current]
+        if current:
+            for v in accounts:
+                if v['uin']==current['uin'] and not v.get('nick'):v['nick']=current.get('nick','')
+        for v in accounts:
+            if v.get('nick') or not str(v.get('uin','')).isdigit():continue
+            try:
+                info=await self.onebot.api('get_stranger_info',{'user_id':int(v['uin']),'no_cache':True})
+                if isinstance(info,dict):v['nick']=str(info.get('nickname') or info.get('nick') or '')
+            except Exception:
+                pass
         return {'ok':True,**status,'current':current,'accounts':[{**v,'current':bool(current and v['uin']==current['uin'])} for v in accounts]}
 
     async def qrcode(self):return {'ok':True,**await self.adapter.qrcode()}

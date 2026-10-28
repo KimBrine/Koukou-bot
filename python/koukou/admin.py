@@ -1199,7 +1199,9 @@ class Admin:
                 return web.Response(text=source, content_type="text/html")
             static = {"/ui.css": "ui.css", "/app.js": "app.js", "/command-center.js": "commandCenter.js", "/sticker-upload.js": "stickerUpload.js"}
             if request.method == "GET" and path in static:
-                return web.FileResponse(assets / static[path])
+                # Always revalidate the console bundle so an open tab never keeps
+                # serving an outdated app.js after an upgrade.
+                return web.FileResponse(assets / static[path], headers={"Cache-Control": "no-cache"})
             try:
                 if request.method == "GET" and path in self.gets:
                     if path == "/api/chats":
