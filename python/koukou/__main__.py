@@ -66,6 +66,7 @@ def main(argv=None):
     stopping.add_argument('--port', type=int)
     stopping.add_argument('--execute', action='store_true')
     stopping.add_argument('--timeout', type=float, default=15)
+    commands.add_parser("settings", help="输出启动器需要的本地端口，不连接QQ")
     plugins = commands.add_parser("plugin", help="创建、列出、运行Python插件")
     sub = plugins.add_subparsers(dest="operation", required=True)
     new = sub.add_parser("new")
@@ -92,6 +93,24 @@ def main(argv=None):
             print(json.dumps(status,ensure_ascii=False,indent=2))
             return 0 if status['ok'] else 1
         args.root=args.root or default_root()
+        if args.command == 'settings':
+            from urllib.parse import urlsplit
+            config = Config(args.root, args.env_file)
+            url = urlsplit(config.get('ONEBOT_WS_URL', 'ws://127.0.0.1:3001'))
+            if url.hostname not in {'127.0.0.1', 'localhost', '::1'} or url.scheme not in {'ws', 'wss'}:
+                print('本地启动入口只用于本地 OneBot', file=sys.stderr)
+                return 1
+            port = url.port or (443 if url.scheme == 'wss' else 80)
+            if not 0 < port <= 65535:
+                print('OneBot 端口无效', file=sys.stderr)
+                return 1
+            print(f'ONEBOT_PORT={port}')
+            print(f'CONSOLE_PORT={int(config.number("ADMIN_PORT", 8787))}')
+            if config.get('LLBOT_QQ'):
+                print('LLBOT_QQ=' + config.get('LLBOT_QQ'))
+            if config.enabled('LLBOT_DEBUG', False):
+                print('LLBOT_DEBUG=1')
+            return 0
         if args.command == 'stop-native':
             from .native_cli import resolve_native_config
             from .native_control import stop_native
