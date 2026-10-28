@@ -1,0 +1,13 @@
+include python/build_support.py
+include package.json
+include python/migration-contract.json
+include src/admin/ui.html
+include src/admin/ui.css
+include src/admin/app.js
+include src/admin/commandCenter.js
+include src/admin/stickerUpload.js
+include plugins/python/calc.py
+include plugins/python/textstats.py
+include plugins/python/jm.py
+include plugins/python/jmv.py
+prune python/tests

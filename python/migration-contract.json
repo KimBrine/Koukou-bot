@@ -1,0 +1,561 @@
+{
+  "baseline": "d336b09",
+  "get": [
+    "/api/ping",
+    "/api/state",
+    "/api/updates",
+    "/api/chats",
+    "/api/groups",
+    "/api/friends",
+    "/api/custom-commands",
+    "/api/personas",
+    "/api/memory-overview",
+    "/api/vision-providers",
+    "/api/models",
+    "/api/stickers/retag-status",
+    "/api/metrics",
+    "/api/backups",
+    "/api/memory-export",
+    "/api/errors",
+    "/api/poke-replies",
+    "/api/python-scripts",
+    "/api/tasks",
+    "/api/selfcheck",
+    "/api/websearch",
+    "/api/stickers",
+    "/api/config",
+    "/api/logs",
+    "/api/memory",
+    "/api/memory-detail",
+    "/api/longmemory",
+    "/api/daily"
+  ],
+  "actions": [
+    "set-config-batch",
+    "set-config",
+    "update-whitelist",
+    "add-private-whitelist",
+    "set-chat",
+    "reset-chat",
+    "get-persona",
+    "export-persona",
+    "export-persona-package",
+    "send-morning-greetings",
+    "get-greeting-library",
+    "save-greeting-library",
+    "import-persona",
+    "get-appendix",
+    "save-persona",
+    "create-persona",
+    "delete-persona",
+    "activate-persona",
+    "save-custom-command",
+    "delete-custom-command",
+    "save-builtin-command",
+    "generate-command",
+    "export-commands",
+    "preview-commands",
+    "import-commands",
+    "check-poke",
+    "clear-memory",
+    "watch-target",
+    "vision-provider-add",
+    "vision-provider-update",
+    "vision-provider-delete",
+    "detect-vision-models",
+    "detect-models",
+    "sticker-add",
+    "sticker-suggest",
+    "check-update",
+    "sticker-update",
+    "sticker-delete",
+    "sticker-blacklist",
+    "sticker-unblock",
+    "sticker-send",
+    "memory-update",
+    "memory-delete",
+    "longmemory-pause",
+    "longmemory-resume",
+    "longmemory-update",
+    "pending-delete",
+    "delete-chat",
+    "clear-errors",
+    "test-command",
+    "persona-check",
+    "memory-import",
+    "detect-similar",
+    "retag-stickers",
+    "draft-python-script",
+    "set-python-command",
+    "read-python-script",
+    "save-python-settings",
+    "import-python-script",
+    "toggle-python-script",
+    "delete-python-script",
+    "open-python-folder",
+    "save-poke-replies",
+    "delete-backup",
+    "restore-backup",
+    "backup",
+    "cleanup-groups",
+    "set-websearch",
+    "restart-bot",
+    "restart-napcat",
+    "qq-login-state",
+    "qq-login-qrcode",
+    "qq-switch-account",
+    "qq-logout",
+    "summary-ack",
+    "daily-ping",
+    "id-check",
+    "id-check-kick",
+    "poke-target"
+  ],
+  "modules": [
+    {
+      "source": "src/archive.js",
+      "sha256": "f8f27374581d1eee162bd9228b4dafd4a69947640df4c6d4c003c7f15ec0b4e9",
+      "status": "pending"
+    },
+    {
+      "source": "src/autoPlusOne.js",
+      "sha256": "9256469448bee8fee26b7ea3fe051b9c91cc3f5b0ef21c93d3fcbda02e65ac8b",
+      "status": "pending"
+    },
+    {
+      "source": "src/backup.js",
+      "sha256": "38145160fc4d876953ef3dc16e37d0c004956a802f4771c23fb74535270d185c",
+      "status": "pending"
+    },
+    {
+      "source": "src/bot.js",
+      "sha256": "f8d28a5ea1676ed2a4a5448757da8a6c75bc9017ebd4185a6095a5387fb73ee8",
+      "status": "pending"
+    },
+    {
+      "source": "src/chatAppendix.js",
+      "sha256": "994bedf6056f52ef9a3dc0bd2ae0a8871c431e9f1dcc5daa965a99600c92213c",
+      "status": "pending"
+    },
+    {
+      "source": "src/chatPrompt.js",
+      "sha256": "fc755878bf9266f305c79e6593bdb39321f7289a2b7aa6b98936e712d6cec6ac",
+      "status": "pending"
+    },
+    {
+      "source": "src/chatSettings.js",
+      "sha256": "197cfc735912c61bc68db5cf1d28a9428db475c5834e0c2636cf19063e4de087",
+      "status": "pending"
+    },
+    {
+      "source": "src/commandCenter.js",
+      "sha256": "595fd2c637778e9108f945a19e3d981e2cbbb7622b080c65d7da558fdcb840c1",
+      "status": "pending"
+    },
+    {
+      "source": "src/commandHelp.js",
+      "sha256": "23823e634eae312b498c9f288b2e913de102f67770c1ba71a5c2008ed6131e01",
+      "status": "pending"
+    },
+    {
+      "source": "src/config.js",
+      "sha256": "b4c37dc6d8936531cf02e8f3eb8b7d8d327b269fbea5937092d0eca7b9bbf67b",
+      "status": "pending"
+    },
+    {
+      "source": "src/conversationRules.js",
+      "sha256": "e89b4389c361cbe7f8f416af6c14b44f8e697c4fdcfa413831c9ec76f4f55c3c",
+      "status": "pending"
+    },
+    {
+      "source": "src/conversationSessions.js",
+      "sha256": "a580773de08112f18ef95c38ac3285a76a0b8cffc4b68a5212c5bee7c7cf3b14",
+      "status": "pending"
+    },
+    {
+      "source": "src/cq.js",
+      "sha256": "ebba595a516adcd16b371227c0ec2052fb2ec4c55dfc52d56bf68f7cd7b719f0",
+      "status": "pending"
+    },
+    {
+      "source": "src/customCommands.js",
+      "sha256": "c72394eaab1eb7226db76bdd346b408b5288219b720203dc90f752a56736eec9",
+      "status": "pending"
+    },
+    {
+      "source": "src/customCommandSchedule.js",
+      "sha256": "7c659a16f33524041ff3714b5a20bcfafa6a8845a85ff110f1ba553d3380ae14",
+      "status": "pending"
+    },
+    {
+      "source": "src/dailyPing.js",
+      "sha256": "3f978ec48887dde53a4082411d2de676af719fd790af049db3252c8e54180ce3",
+      "status": "pending"
+    },
+    {
+      "source": "src/dailySummary.js",
+      "sha256": "4bed12ac711dad5f1b81bde434c62175bf6a2d08384149f3d9a7efc18cdaf9e7",
+      "status": "pending"
+    },
+    {
+      "source": "src/deepseek.js",
+      "sha256": "ef7a71161c6130670e362414f9aaba951082c1b20baf138702f4b4948fafcd3a",
+      "status": "pending"
+    },
+    {
+      "source": "src/errorStore.js",
+      "sha256": "2888cdef7b7f96eacabc7a0366af26a59a87050394451fcd05e059a022ad665e",
+      "status": "pending"
+    },
+    {
+      "source": "src/forwardRecords.js",
+      "sha256": "50a47907546e5368aece292c8a436d99670ae9fd15a4c051bd90b1c3ff08a74c",
+      "status": "pending"
+    },
+    {
+      "source": "src/groupMute.js",
+      "sha256": "6b0a643d734ef5c7bdcde7c369fe041cde808de1a8c43f3384dc0460cc690b25",
+      "status": "pending"
+    },
+    {
+      "source": "src/humanize.js",
+      "sha256": "10c85e7337ac2a1762d3a3273b16e7737096b1700032536c98634283bd0a0eb2",
+      "status": "pending"
+    },
+    {
+      "source": "src/idCheck.js",
+      "sha256": "48d5cdd7b57a0a2636c2fc8c95b176bf6d17d8d69affb9d7886240a15f1359d7",
+      "status": "pending"
+    },
+    {
+      "source": "src/imageCache.js",
+      "sha256": "dfddcf0bf97de3a25c7d4c54515250640a81118e9dbd15b5161b48ad0e6c33fe",
+      "status": "pending"
+    },
+    {
+      "source": "src/imagehash.js",
+      "sha256": "bd698102203e572ec30c41919bb311b07b43e6a999868411375dff6be04a2383",
+      "status": "pending"
+    },
+    {
+      "source": "src/imageSearch.js",
+      "sha256": "16d3782498b515aa7813c8540fa53a3e83b8a20eccdb7865f3162fb515414a7d",
+      "status": "pending"
+    },
+    {
+      "source": "src/index.js",
+      "sha256": "1a37a5778ef19e0cdbd1902373f5c4ab51decec37e9e663b868d3da1a4b39610",
+      "status": "pending"
+    },
+    {
+      "source": "src/llbotWebui.js",
+      "sha256": "f0ab4e01b4906896c5f9bce75d079c4fda9d25e162a4bdf9d3ba2a161f80515e",
+      "status": "pending"
+    },
+    {
+      "source": "src/localProfile.js",
+      "sha256": "964ee082fc140a69193df631e520c640821d9a8d7d9cf4982db3b3e759f88e43",
+      "status": "pending"
+    },
+    {
+      "source": "src/logger.js",
+      "sha256": "d02dd8b40ca83002a8a3c5fefdea32e381fcedf0ca0ed5df1dcf6f0aeda755a2",
+      "status": "pending"
+    },
+    {
+      "source": "src/longMemory.js",
+      "sha256": "85bedabc197dab3294ea353237b79018928a437893c14e43d0dc902395b91d43",
+      "status": "pending"
+    },
+    {
+      "source": "src/memory.js",
+      "sha256": "1dbe5a06a95d010427a343187fa1e202b76dc462233759cfb868a522b8c94e78",
+      "status": "pending"
+    },
+    {
+      "source": "src/memoryArchive.js",
+      "sha256": "a1e5e290d3bc10c3d2df9cf1e7323cd0cc60a77e98d474ac45e683e7ffcf4ff4",
+      "status": "pending"
+    },
+    {
+      "source": "src/messageFreshness.js",
+      "sha256": "d305dcf0352a211903dcc7c3de3ed0fb17831b1439d2854c4525e9e85c844edc",
+      "status": "pending"
+    },
+    {
+      "source": "src/metrics.js",
+      "sha256": "19a496edcd67d7476663ea098d79f497e7959a72113c00f712374ad4b784e0d9",
+      "status": "pending"
+    },
+    {
+      "source": "src/modelCatalog.js",
+      "sha256": "5d7808ec63185cc4df15ca94416f07c905b20f3eb3640cf246c6dff2345e7429",
+      "status": "pending"
+    },
+    {
+      "source": "src/music.js",
+      "sha256": "f531db79aa5302f5a25cf1fd591d22307f9446f8bc84ad5f8591f3df7002220a",
+      "status": "pending"
+    },
+    {
+      "source": "src/muteMath.js",
+      "sha256": "83bff903f9ba63cafcf3fa9f90c5a8c2b1bed195070c105a86f0552e92962945",
+      "status": "pending"
+    },
+    {
+      "source": "src/napcatWebui.js",
+      "sha256": "de36f679e769d02602b6a9ba6d795ceb0de0f186d67ddec2c7c84037a86735b9",
+      "status": "pending"
+    },
+    {
+      "source": "src/notify.js",
+      "sha256": "1eb89bc3ce819b314e9173b675dbc748fc1f2fb16648f97684190b1ff516b8bf",
+      "status": "pending"
+    },
+    {
+      "source": "src/onebot.js",
+      "sha256": "51d0eeb16438dfc91177c732e7a3bfb0b9faf5c983f00834c7a608cfbd2a08b8",
+      "status": "pending"
+    },
+    {
+      "source": "src/onebotErrors.js",
+      "sha256": "7c33235e8a7a08837352b5cffad7d8f04fb47ddf9ed4f482d2bc41506b1dc6a8",
+      "status": "pending"
+    },
+    {
+      "source": "src/openPath.js",
+      "sha256": "ced5b89463f9123835dce9562aca6669936475c9e1cabf8dea900f55c02fee2d",
+      "status": "pending"
+    },
+    {
+      "source": "src/permissions.js",
+      "sha256": "0f8a612cfd85207168e83365c902018000a76d279c244ef6ee17ba7240b56212",
+      "status": "pending"
+    },
+    {
+      "source": "src/persona.js",
+      "sha256": "71533e80841e3a1a8f85c347855f3b6017e17c6c468b7e6f1d059da49e25060f",
+      "status": "pending"
+    },
+    {
+      "source": "src/personaGreetings.js",
+      "sha256": "3c851d27a382bbc3dbc70ad59c246d0eac89f4788397ed39f13c958886762de7",
+      "status": "pending"
+    },
+    {
+      "source": "src/personaStickers.js",
+      "sha256": "19207a589e14d13a7196065bd05bec4dfbe2f6f90f5f1c02d5a18c6e96ebc858",
+      "status": "pending"
+    },
+    {
+      "source": "src/personaSwitch.js",
+      "sha256": "0f8aae167863f0476bcabccc3af4961c7492fcffcc0c909d79cd19627bec80f1",
+      "status": "pending"
+    },
+    {
+      "source": "src/pokeReplies.js",
+      "sha256": "3aa0ed259d27a28669571a92415196d93ca5878c208b0be5f390ce038b6bbf50",
+      "status": "pending"
+    },
+    {
+      "source": "src/pokeTarget.js",
+      "sha256": "fe5ac0d6ee2e07c7fdbc88107f2d29bbd71730b8c4da637711aeb4fff3354e5e",
+      "status": "pending"
+    },
+    {
+      "source": "src/pythonPlugins.js",
+      "sha256": "ba584da617b1bdf2843af56e6828c35ee73e7f71e253fac59a08048fdcfea878",
+      "status": "pending"
+    },
+    {
+      "source": "src/qqFace.js",
+      "sha256": "2ca1ad8d057bae897c58aad5e3a48407533257f5df6c46317145039721894070",
+      "status": "pending"
+    },
+    {
+      "source": "src/questionMode.js",
+      "sha256": "d77310fb2941e56f5e3e0505b7e90b9c7b191984c0fe46618c5447cac98b52c9",
+      "status": "pending"
+    },
+    {
+      "source": "src/quietGreetings.js",
+      "sha256": "861d224dcdcf17fb1713bf7b8f109775fd69838b97de354043ffe3955d8654db",
+      "status": "pending"
+    },
+    {
+      "source": "src/quietPolicy.js",
+      "sha256": "17e9f70f7174dc31939572f79adf705e8fd5dcbe19cb890c763cb6900e7841ea",
+      "status": "pending"
+    },
+    {
+      "source": "src/quotedMessage.js",
+      "sha256": "6bfeca5dcee995a75a54469aba611dfc8eb152fb146d561860baf43bbd6dbac3",
+      "status": "pending"
+    },
+    {
+      "source": "src/replyFocus.js",
+      "sha256": "92bca90b1a77d9973476de661b1820264fff445ac47906be1a55cfa9d0ba9dc8",
+      "status": "pending"
+    },
+    {
+      "source": "src/replySanitizer.js",
+      "sha256": "46848c1f007d28e78435c7a0f7da32d9d3d722f38fd35129bd853419f0ea3994",
+      "status": "pending"
+    },
+    {
+      "source": "src/replyShape.js",
+      "sha256": "97b0156e55393eab4e70e3d48e80131660af13654a17eabe04bde14d3175a56b",
+      "status": "pending"
+    },
+    {
+      "source": "src/search.js",
+      "sha256": "0402a5a38ec3260f605e7ef3f900a7f9f67cb695e093f9ccb56fc7879a619374",
+      "status": "pending"
+    },
+    {
+      "source": "src/selfActions.js",
+      "sha256": "721966a5431d149d31230341e3db95bf516db347fc918750dbc25c2dbb7c8f4d",
+      "status": "pending"
+    },
+    {
+      "source": "src/selfcheck.js",
+      "sha256": "ea923797846531d6ebd63e186dd31dce489fb505c9cc7a505bc6ac1e5c99b923",
+      "status": "pending"
+    },
+    {
+      "source": "src/stateFile.js",
+      "sha256": "1576d4766954997f284e25e37381483f5773db4f7ff21c3cfac8ff6ac982244b",
+      "status": "pending"
+    },
+    {
+      "source": "src/stickerLearn.js",
+      "sha256": "cc7ac627cda5293886fbd891091f322a1f40f749326886990b48fd37b0c9a07f",
+      "status": "pending"
+    },
+    {
+      "source": "src/stickerMetadata.js",
+      "sha256": "bcf16acc4ba37b20fd30703f67c690262a69f6f8f89b07fe4d09dd4b37153e50",
+      "status": "pending"
+    },
+    {
+      "source": "src/stickers.js",
+      "sha256": "8324d7d80d50955728a0c1eec1a692d8c5490470d47fd8a3adfa6e3078635dc6",
+      "status": "pending"
+    },
+    {
+      "source": "src/stickerSend.js",
+      "sha256": "222c3c1f385868ee22995e3be7c4b15483280b96a4c3653537e13fc3450ec3dc",
+      "status": "pending"
+    },
+    {
+      "source": "src/summaryContent.js",
+      "sha256": "1943ea941c9ba11b7aeccbc673263198c4091b502d3026ac507232ed199125bf",
+      "status": "pending"
+    },
+    {
+      "source": "src/summaryFailure.js",
+      "sha256": "0ece54db7a7b646210437398afc2fd46360ea975e6f309f34d97edb5d6c2dd09",
+      "status": "pending"
+    },
+    {
+      "source": "src/summaryFormat.js",
+      "sha256": "825170e59d48eceda9d73ad2f7a07ff96fcca37593cfad311a18097e6b6afee2",
+      "status": "pending"
+    },
+    {
+      "source": "src/summaryJobs.js",
+      "sha256": "bd29e04185bb19206d103524e163353b307ab54a0228fcdf9247d2da9f7ab4fd",
+      "status": "pending"
+    },
+    {
+      "source": "src/summaryNames.js",
+      "sha256": "41b6f23c47076c3aabc5aa11683a7f8258564570e5f2ad7ff6977a3a175047bc",
+      "status": "pending"
+    },
+    {
+      "source": "src/summaryProgress.js",
+      "sha256": "48af288935d0126f35a35c190da9125eaf9c4451067571a0965b429430850af8",
+      "status": "pending"
+    },
+    {
+      "source": "src/summaryQuality.js",
+      "sha256": "f84cf3ef8fa2e366de2702cb5072106b92eac3617b7199c5a6cd11b4c3d36cb2",
+      "status": "pending"
+    },
+    {
+      "source": "src/summaryReferences.js",
+      "sha256": "e522a81c38d588ef6bcc258e49a3a3885298ba21b1510c68b0e1c48d962e7237",
+      "status": "pending"
+    },
+    {
+      "source": "src/summaryReferenceSelection.js",
+      "sha256": "fcd514de386e6d189107aeb7db53207179f83fef75495f2df8f2c7d68e7ad3f2",
+      "status": "pending"
+    },
+    {
+      "source": "src/summaryRequests.js",
+      "sha256": "2d3be0c0b4cda18242cc496e42e5fd5efb07a43e364fe9304ada97144f800582",
+      "status": "pending"
+    },
+    {
+      "source": "src/summarySchedule.js",
+      "sha256": "52ac77484a3e0cdf1095e4be17ed029a660e6433a0da2e58cd79bbcc2171cb2a",
+      "status": "pending"
+    },
+    {
+      "source": "src/summaryStats.js",
+      "sha256": "afa701020eb10a551b815efa39e98d4accb8dd8afccd22b3000a340938f79447",
+      "status": "pending"
+    },
+    {
+      "source": "src/targetWatch.js",
+      "sha256": "de653e68c93befcf5f40ae236d785f3a70bb904ea6b8b487d682a6af4652b3e8",
+      "status": "pending"
+    },
+    {
+      "source": "src/updateCheck.js",
+      "sha256": "970e7454bd36618b9327e88ba342c3be730cca481f624c110186aaa11f83acdd",
+      "status": "pending"
+    },
+    {
+      "source": "src/visionKnowledge.js",
+      "sha256": "220b7074654ed704e9336db674e97439b6f9c4e721e1a3ba38966fcf80c7cffc",
+      "status": "pending"
+    },
+    {
+      "source": "src/visionNote.js",
+      "sha256": "468ef2990f4259b4744bcead56d16e47a510c658862f0d5d95ff30dea4eec00d",
+      "status": "pending"
+    },
+    {
+      "source": "src/visionProviders.js",
+      "sha256": "9a93ea8d2814e4ae8e97567132c9cd6f175cd804b6ba896f069e147170d1a369",
+      "status": "pending"
+    },
+    {
+      "source": "src/webSticker.js",
+      "sha256": "04d7308eca41c01a00a21cbf8fe9b6fb408bd2086017c311238bfc9e76d2ed81",
+      "status": "pending"
+    },
+    {
+      "source": "src/admin/app.js",
+      "sha256": "a37e58c31e1ab5e2dd16493509262137cb526d45f6ecc6492eddc0009bc715d5",
+      "status": "frontend-or-admin-review"
+    },
+    {
+      "source": "src/admin/commandCenter.js",
+      "sha256": "d9ea9f98bd5bce918111586fbe48bd7ac8fc443e019bf255506441a44e2894e0",
+      "status": "frontend-or-admin-review"
+    },
+    {
+      "source": "src/admin/server.js",
+      "sha256": "1ff919a9b14f6c62e11f6b1fdfad8c40ceaf294f611d478b364711cac3c65a62",
+      "status": "frontend-or-admin-review"
+    },
+    {
+      "source": "src/admin/stickerUpload.js",
+      "sha256": "6aa12ed3cd1a02e7c7e2be3157dfabe43ae91a01dbae676fcd5e8fd814d8a33a",
+      "status": "frontend-or-admin-review"
+    }
+  ]
+}
