@@ -711,5 +711,19 @@
     "hint": "debug/info/warn/error",
     "live": false,
     "type": "text"
+  },
+  {
+    "key": "PROTOCOL_PROVIDER",
+    "label": "启动协议端",
+    "hint": "auto=优先NapCat；napcat/llbot 强制指定。下次启动生效。",
+    "live": false,
+    "type": "text"
+  },
+  {
+    "key": "LOGIN_PROVIDER",
+    "label": "登录管理后端",
+    "hint": "auto/napcat/llbot，控制台换号页使用的 WebUI。",
+    "live": false,
+    "type": "text"
   }
 ]

@@ -1196,7 +1196,7 @@ class Admin:
                 source = (assets / "ui.html").read_text(encoding="utf-8-sig")
                 banner = '<div style="padding:12px;background:#854d0e;color:white">'+('Python迁移预览：QQ和模型调用已禁用。' if self.onebot is None else 'Python后端验证实例；尚未切换main。')+'</div>'
                 source = source.replace("<body>", "<body>" + banner + "<script>window.__ADMIN_TOKEN__=" + json.dumps(self.token) + "</script>")
-                return web.Response(text=source, content_type="text/html")
+                return web.Response(text=source, content_type="text/html", headers={"Cache-Control": "no-cache"})
             static = {"/ui.css": "ui.css", "/app.js": "app.js", "/command-center.js": "commandCenter.js", "/sticker-upload.js": "stickerUpload.js"}
             if request.method == "GET" and path in static:
                 # Always revalidate the console bundle so an open tab never keeps

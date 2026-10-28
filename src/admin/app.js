@@ -1245,7 +1245,9 @@ function pageLogin(){
   </section>
   <section class="card"><h2>切换已保存账号</h2><p class="mut">协议端本机保存过登录态的账号，切换不需要扫码。</p><div id="qqAccounts" class="mut">正在读取…</div></section>
   <section class="card"><h2>扫码登录新账号</h2><p class="mut">会先退出当前账号，再用手机 QQ 扫码登录；二维码约两分钟有效。</p>
-  <div class="flexbar"><button class="btn primary" id="qqQr">显示登录二维码</button></div><div id="qqQrArea"></div></section>`
+  <div class="flexbar"><button class="btn primary" id="qqQr">显示登录二维码</button></div><div id="qqQrArea"></div></section>
+  <section class="card"><h2>启动协议端</h2><p class="mut">下次启动时拉起哪个协议端；保存后重启启动器生效。NapCat 未登录时要在 NapCat WebUI 扫码。</p>
+  <div class="flexbar"><select id="protoSel"><option value="auto">自动（优先 NapCat）</option><option value="napcat">NapCat</option><option value="llbot">LLBot</option></select><button class="btn primary" id="protoSave">保存</button><span class="mut" id="protoMsg"></span></div></section>`
 }
 async function loadQqLogin(){
   const body = document.getElementById('qqLoginBody'), acc = document.getElementById('qqAccounts')
@@ -1266,6 +1268,21 @@ async function loadQqLogin(){
     acc.innerHTML = (s.accounts || []).length
       ? s.accounts.map(a => `<div class="flexbar" style="justify-content:space-between;align-items:center;gap:8px;margin:6px 0"><div>${a.face ? `<img src="${esc(a.face)}" alt="" style="width:24px;height:24px;border-radius:50%;vertical-align:middle;margin-right:6px">` : ''}${esc(a.nick || '')}（QQ ${qqMask(a.uin)}）${a.current ? ' · 当前' : ''}</div>${a.current ? '<span class="mut">使用中</span>' : `<button class="btn" data-qq-uin="${esc(a.uin)}">切换到它</button>`}</div>`).join('')
       : '<span class="mut">协议端里还没有保存过其他账号</span>'
+    const protoSel = document.getElementById('protoSel'), protoSave = document.getElementById('protoSave')
+    if (protoSel && protoSave) {
+      const readProto = function(k){ const it = (configItems || []).find(function(x){ return x.key === k }); const v = it && String(it.value || '').trim(); return ['auto','napcat','llbot'].includes(v) ? v : 'auto' }
+      protoSel.value = readProto('PROTOCOL_PROVIDER')
+      protoSave.onclick = async function(){
+        protoSave.disabled = true
+        try {
+          await api('/api/action/set-config', { key: 'PROTOCOL_PROVIDER', value: protoSel.value })
+          await api('/api/action/set-config', { key: 'LOGIN_PROVIDER', value: protoSel.value })
+          document.getElementById('protoMsg').textContent = '已保存，重启启动器后生效'
+          toast('已保存，重启启动器后生效')
+        } catch (err) { toast('保存失败：' + err.message, true) }
+        finally { protoSave.disabled = false }
+      }
+    }
   } catch (err) {
     body.innerHTML = '<span class="bad">读取失败：' + esc(err.message) + '</span>'
   }
