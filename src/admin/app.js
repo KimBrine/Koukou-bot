@@ -96,6 +96,7 @@ function refreshOfficialConnection(){
   }
 }
 function officialConfigCapability(key){
+  if (key === 'TYPING_STATUS_ENABLED') return 'typingStatus'
   if (/^SUMMARY_/.test(key) || key === 'AUTO_PLUS_ONE_ENABLED') return 'completeHistory'
   if (/^(PROACTIVE_|QUIET_GREETINGS_|DAILY_)/.test(key)) return 'proactive'
   if (/^POKE_/.test(key)) return 'poke'
@@ -704,13 +705,15 @@ function configForm(keys, hint, opts = {}){
   const items = configItems.filter(i=>keys.includes(i.key))
   const fields = items.map(i => {
     const v = i.effective !== '' ? i.effective : i.value
-    const unavailable = typeof officialMode === 'function' && officialMode() && officialConfigCapability(i.key) && !protocolAllows(officialConfigCapability(i.key))
+    const unavailable = typeof officialMode === 'function' && (officialMode() && officialConfigCapability(i.key) && !protocolAllows(officialConfigCapability(i.key)) || i.key==='TYPING_STATUS_ENABLED' && (officialMode() || state?.backend?.implementation!=='snowluma'))
     const inactive = unavailable || state?.config?.summaryUnrestricted && ['SUMMARY_MAX_MESSAGES','SUMMARY_MAX_TOKENS','SUMMARY_TASK_TIMEOUT_MINUTES'].includes(i.key)
-    const badge = unavailable ? '<span class="badge">官方通道暂不可用</span>' : inactive ? '<span class="badge">宽裕模式下不生效</span>' : i.live ? '<span class="badge live">即时生效</span>' : '<span class="badge restart">需重启</span>'
+    const badge = unavailable ? '<span class="badge">'+(officialMode()?'官方通道暂不可用':'仅SnowLuma可用')+'</span>' : inactive ? '<span class="badge">宽裕模式下不生效</span>' : i.live ? '<span class="badge live">即时生效</span>' : '<span class="badge restart">需重启</span>'
     let input
     if (i.key === 'PROACTIVE_RATE_PER_GROUP') input = groupRateEditor(v)
     else if (i.key === 'SUMMARY_GROUPS') input = summaryGroupEditor(v)
     else if (i.type === 'bool') input = `<label class="switch"><input type="checkbox" data-cfg="${i.key}" ${(v==='1'||v==='true')?'checked':''}><i></i></label>`
+    else if (i.key === 'ONEBOT_IMPLEMENTATION') input = `<select data-cfg="${i.key}">${[['auto','通用OneBot'],['snowluma','SnowLuma'],['napcat','NapCat'],['llbot','LLBot']].map(([value,label])=>`<option value="${value}" ${v===value?'selected':''}>${label}</option>`).join('')}</select>`
+    else if (i.key === 'REPLY_PACING_MODE') input = `<select data-cfg="${i.key}"><option value="character" ${v==='character'?'selected':''}>按字</option><option value="word" ${v==='word'?'selected':''}>按文字单元（中文按字、英文按词）</option></select>`
     else if (i.type === 'rate') input = `<input type="range" min="0" max="1" step="0.01" data-cfg="${i.key}" value="${v||0}"> <span class="pill" data-cfgshow="${i.key}">${((Number(v)||0)*100).toFixed(0)}%</span>`
     else if (i.type === 'secret') input = `<div class="row"><input type="password" data-cfg="${i.key}" data-secret="1" value="" placeholder="${i.configured ? '已设置，留空不修改' : '尚未设置'}" autocomplete="new-password" style="flex:1;min-width:180px"><button class="btn sm" type="button" data-reveal="${i.key}">显示输入</button></div>`
     else if (i.key === 'VISION_PROVIDER' || i.key === 'SUMMARY_PROVIDER') input = `<select data-cfg="${i.key}"><option value="deepseek" ${v==='deepseek'?'selected':''}>DeepSeek</option><option value="dashscope" ${v==='dashscope'?'selected':''}>DashScope（通义千问）</option></select>`
@@ -727,7 +730,7 @@ function configForm(keys, hint, opts = {}){
 }
 function pageHumanize(){
   const greetings=state?.config?.quietGreetings
-  return `<h1>回复行为</h1>${officialCapabilityBanner()}<div class="sub">这里修改“沿用全局”的默认值；会话单独设置优先，其次是按群独立概率，最后才是全局概率。</div>
+  return `<h1>回复行为</h1>${officialCapabilityBanner()}<section class="card" id="replyBehaviorControls"><h2>输入状态与发送节奏</h2><p class="note">这些选项只调整互动表现，不能保证防检测或防封。输入状态不等于逐字操作QQ输入框；回答始终完整发送。</p>${configForm(['TYPING_STATUS_ENABLED','REPLY_PACING_ENABLED','REPLY_PACING_MODE','REPLY_PACING_SPEED','REPLY_PACING_MAX_SECONDS','FIXED_REPLY_VARIATION_ENABLED','FIXED_REPLY_VARIATION_WINDOW'],'全部默认关闭，保存后下次回复生效。固定语库轮换不调用AI。',{scope:'reply-behavior'})}</section><div class="sub">这里修改“沿用全局”的默认值；会话单独设置优先，其次是按群独立概率，最后才是全局概率。</div>
   <div class="flexbar"><a class="btn" href="#chats">管理白名单群聊 →</a><span class="note">概率填写百分比，例如 20%，不需要输入配置格式。</span></div>
   <div class="card">${configForm(['PROACTIVE_RATE','PROACTIVE_RATE_PER_GROUP','PROACTIVE_COOLDOWN_MS','EMOJI_KEEP_RATE','HUMAN_DELAY_MIN_MS','HUMAN_DELAY_MAX_MS','REPLY_LENGTH_MATCH','REPLY_MIN_BUDGET','REPLY_MAX_LINES','REPLY_LINE_MAX_CHARS','LINE_GAP_MIN_MS','LINE_GAP_MAX_MS','RATE_LIMIT_PER_HOUR','RATE_LIMIT_AT_PER_HOUR','RATE_LIMIT_MIN_GAP_MS','RATE_LIMIT_WAIT_MAX_MS','QUIET_HOURS','QUIET_GREETINGS_ENABLED','HISTORY_LIMIT','CONTEXT_REMEMBER_ALL','POKE_REPLY_ENABLED','AUTO_PLUS_ONE_ENABLED','PRIVATE_WHITELIST'],'修改全局概率不会覆盖已经单独设置的群；限流相关参数需重启生效。',{scope:'humanize'})}</div><div class="note">固定语库早晚安：${greetings?.enabled?'已启用':'未启用'}；语库就绪 ${greetings?.groups?.filter(g=>g.ready).length||0}/${greetings?.groups?.length||0} 群。检查时段、选句和发送均不调用 AI。<a href="#persona">前往人格页面编辑或导出语库 →</a> <button class="btn sm" id="catchUpMorning"${unavailableAttr('proactive')}>补发本轮未发的早安</button></div>`
 }
@@ -1338,7 +1341,9 @@ let qqPollTimer = null
 function stopQqPoll(){ if (qqPollTimer) { clearInterval(qqPollTimer); qqPollTimer = null } }
 function qqMask(uin){ const s = String(uin || ''); return s ? s.slice(0, 4) + '***' + s.slice(-2) : '—' }
 function pageLogin(){
-  if (officialMode()) return '<h1>QQ 官方连接</h1>' + officialConnectionCard() + officialCapabilityBanner()
+  const snowluma = '<section class="card" id="snowlumaConnection"><h2>SnowLuma / OneBot接入</h2><p class="note">SnowLuma兼容OneBot v11，复用人格、表情包、记忆和插件。它是第三方QQ客户端接入，不是腾讯官方接口，也不能保证避免检测。首次条款、隐私确认和QQ登录请自行在SnowLuma完成。</p><div class="flexbar"><a class="btn" href="http://127.0.0.1:5099/" target="_blank" rel="noreferrer noopener">打开本机SnowLuma</a><a class="btn" href="https://snowluma.github.io/en/docs/guide/configuration" target="_blank" rel="noreferrer noopener">连接配置说明</a></div>' + (officialMode() ? '<p class="note">当前仍是独立官方实例。SnowLuma请用另一个OneBot数据目录，不能把OpenID当成QQ号迁移。</p>' : configForm(['ONEBOT_IMPLEMENTATION','ONEBOT_WS_URL','ONEBOT_ACCESS_TOKEN'],'SnowLuma使用Universal WebSocket与相同的连接令牌；保存后重启。',{scope:'snowluma'})) + '</section>'
+  if (officialMode()) return '<h1>QQ 官方连接</h1>' + officialConnectionCard() + snowluma + officialCapabilityBanner()
+  if (state?.backend?.implementation === 'snowluma') return '<h1>SnowLuma连接</h1>' + snowluma + '<p class="note">QQ登录和进程接入由SnowLuma管理，本控制台不调用NapCat/LLBot的登录或重启接口。</p>'
   return `<section class="card"><h2>当前 QQ 账号</h2>
     <p class="mut">真正登录的是 LLBot（LuckyLillia）。换号会让机器人短暂离线，重新登录成功后自动恢复收消息。</p>
     <div id="qqLoginBody" class="mut">正在读取…</div>

@@ -1,4 +1,14 @@
 [
+  {"key":"ONEBOT_IMPLEMENTATION","label":"OneBot实现","hint":"auto、napcat、llbot或snowluma；仅用于OneBot实例，不会切换官方OpenID身份。","live":false,"type":"text"},
+  {"key":"ONEBOT_WS_URL","label":"OneBot WebSocket地址","hint":"SnowLuma使用本机Universal WebSocket，例如ws://127.0.0.1:3012/；保存后重启此独立实例。","live":false,"type":"text"},
+  {"key":"ONEBOT_ACCESS_TOKEN","label":"OneBot连接令牌","hint":"与SnowLuma网络配置保持一致；留空保存不改变现有令牌。","live":false,"type":"secret"},
+  {"key":"TYPING_STATUS_ENABLED","label":"私聊显示“正在输入”","hint":"仅SnowLuma的私聊输入状态接口；生成期间提示，结束时清除。不是逐字写入QQ输入框，失败不阻止文字回复。","live":true,"type":"bool"},
+  {"key":"REPLY_PACING_ENABLED","label":"按回复长度调整等待","hint":"完整回答生成后按字数等待，再完整发送；不截断、不逐字刷屏。不能保证降低检测或封号风险。","live":true,"type":"bool"},
+  {"key":"REPLY_PACING_MODE","label":"等待长度计算方式","hint":"按字或文字单元（中文按字，拉丁文按单词）；只影响等待时间。","live":true,"type":"text"},
+  {"key":"REPLY_PACING_SPEED","label":"每秒文字单元","hint":"1~60，默认8；数值越小等待越长。","live":true,"type":"number"},
+  {"key":"REPLY_PACING_MAX_SECONDS","label":"额外等待上限（秒）","hint":"0~60，默认8；与既有随机等待取较大值，不影响模型超时或输出长度。","live":true,"type":"number"},
+  {"key":"FIXED_REPLY_VARIATION_ENABLED","label":"固定语库减少近期重复","hint":"从已有语库轮换拍一拍、早晚安和随机自定义回复；按人格、账号和会话隔离，不接AI、不篡改原句。只有一段时仍使用原句。","live":true,"type":"bool"},
+  {"key":"FIXED_REPLY_VARIATION_WINDOW","label":"近期避重条数","hint":"1~20，默认3；候选全部用过后先复用最久未发的一段。仅确认发送后记录。","live":true,"type":"number"},
   {
     "key": "QQ_TRANSPORT",
     "label": "QQ连接方式",

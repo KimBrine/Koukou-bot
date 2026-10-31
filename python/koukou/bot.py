@@ -20,6 +20,7 @@ from .reply_shape import plan_reply, shape_reply, shape_hint, decoration_hint, l
 from .stickers import PersonaStickers, extract_markers
 from .sticker_policy import StickerPolicy, user_asks_for_sticker, claims_sticker_delivery
 from .onebot import confirmed_message_id
+from .reply_behavior import ReplyBehavior, pacing_seconds
 from .watch import TargetWatch
 from .messages import Message
 from .observability import ReplyLog
@@ -63,6 +64,7 @@ class Bot:
         self.poke_file = config.data_dir / "native-poke-delivery.json"
         self.pokes = read_json(self.poke_file, {})
         self.last_poke, self.last_poke_line = {}, None
+        self.behavior = ReplyBehavior(config, onebot)
         self.poke_diagnostics = {'count':0,'lastAt':0,'lastGroupId':None,'lastUserId':None,'targetBot':False}
         self.last_proactive, self.inflight, self.repeats, self.sent = {}, set(), {}, {}
         self.seen = deque(maxlen=4096)
@@ -158,9 +160,13 @@ class Bot:
             template = selected["reply"]
             if selected["responseMode"] == "random":
                 choices = [s.strip() for s in template.splitlines() if s.strip()]
-                template = choices[min(len(choices)-1, int(self.rand()*len(choices)))] if choices else ""
+                fixed_scope = ['custom',self.onebot.self_id,key,selected['id'],self.config.persona(self.settings.get(key,{}).get('persona',''))]
+                template = (self.behavior.fixed.choose(choices,fixed_scope,rand=self.rand)
+                            if self.config.enabled('FIXED_REPLY_VARIATION_ENABLED',False)
+                            else choices[min(len(choices)-1, int(self.rand()*len(choices)))] if choices else '')
             answer = render_reply(template, context)
         if answer and active() and await self.send(event, answer, revision):
+            if selected['responseMode']=='random': self.behavior.fixed.record(fixed_scope,template)
             self.custom.claim(selected, key)
             self.memory.push(key, "assistant", answer)
             return True
@@ -226,7 +232,10 @@ class Bot:
                 lines = [line.strip() for line in file.read_text(encoding='utf-8-sig').splitlines() if line.strip() and not line.strip().startswith('#')] if file.exists() else []
                 lines = lines or ['在的，怎么啦？', '{name}，找我有什么事？', '收到你的拍一拍了。']
                 candidates = [line for line in lines if line != self.last_poke_line] or lines
-                line = candidates[min(len(candidates)-1, int(self.rand()*len(candidates)))]
+                fixed_scope = ['poke',self.onebot.self_id,key,self.config.persona(self.settings.get(key,{}).get('persona',''))]
+                line = (self.behavior.fixed.choose(lines,fixed_scope,rand=self.rand)
+                        if self.config.enabled('FIXED_REPLY_VARIATION_ENABLED',False)
+                        else candidates[min(len(candidates)-1, int(self.rand()*len(candidates)))])
                 answer = line.replace('{name}', str(name))
                 self.last_poke_line = line
             if not answer or not allowed():
@@ -238,6 +247,7 @@ class Bot:
                 self.pokes[token]['status'] = 'confirmed' if sent else 'uncertain'
                 if sent:
                     self.last_poke[key] = time.time(); self.memory.push(key, 'assistant', answer)
+                    if policy.get('responseMode')!='ai': self.behavior.fixed.record(fixed_scope,line)
             except BaseException:
                 self.pokes[token]['status'] = 'uncertain'; write_json(self.poke_file, self.pokes)
                 raise
@@ -478,6 +488,13 @@ class Bot:
                 and (bool(event.get('group_id')) or self.private_allowed(event['user_id'])))
 
     async def respond_chat(self, event, parsed, quote, history, revision, *, question=False, proactive=False, can_continue=lambda: True):
+        current = lambda:self.chat_active(event,revision) and can_continue()
+        cap=max(0,int(self.config.number('RATE_LIMIT_AT_PER_HOUR',45)))
+        may_indicate = current() and (not self.rate_limiter or self.rate_limiter.check(chat_key(event),ignore_gap=True,per_hour_limit=cap)['allowed'])
+        async with self.behavior.typing(event,current=lambda:may_indicate and current()):
+            return await self._respond_chat(event,parsed,quote,history,revision,question=question,proactive=proactive,can_continue=can_continue)
+
+    async def _respond_chat(self, event, parsed, quote, history, revision, *, question=False, proactive=False, can_continue=lambda: True):
         """One immutable question, one paragraph quota, one image lottery."""
         key, started = chat_key(event), time.monotonic()
         event['_question_mode'] = question
@@ -619,7 +636,7 @@ class Bot:
         elif lines:
             lines[-1] = timing_suffix(lines[-1], (time.monotonic()-started)*1000, question_mode=True, enabled=self.config.enabled('REPLY_TIMING_ENABLED', False))
         lock = self.reply_locks.setdefault(key, asyncio.Lock())
-        await self.pause(typing_delay_seconds(self.config.number('HUMAN_DELAY_MIN_MS',600),self.config.number('HUMAN_DELAY_MAX_MS',2500),rand=self.rand))
+        await self.pause(max(pacing_seconds(self.config,reply),typing_delay_seconds(self.config.number('HUMAN_DELAY_MIN_MS',600),self.config.number('HUMAN_DELAY_MAX_MS',2500),rand=self.rand)))
         async with lock:
             gate = self.rate_limiter.check(key,per_hour_limit=hour_cap) if self.rate_limiter else {'allowed': True}
             if not gate['allowed']:

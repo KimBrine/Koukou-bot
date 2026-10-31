@@ -5,6 +5,7 @@ import path from 'node:path'
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const scripts = [
   'test-qq-official-ui.mjs',
+  'test-reply-behavior-ui.mjs',
   'test-summary-report.mjs', 'test-summary-format.mjs', 'test-summary-quality.mjs', 'test-summary-progress.mjs',
   'test-summary-content.mjs', 'test-summary-names.mjs', 'test-summary-schedule.mjs', 'test-summary-jobs.mjs', 'test-summary-failure.mjs',
   'test-online-status.mjs', 'test-auto-plus-one.mjs', 'test-image-cache.mjs', 'test-admin-groups.mjs', 'test-message-freshness.mjs', 'test-model-request.mjs',

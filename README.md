@@ -1,3 +1,7 @@
+# SnowLuma兼容与回复行为试验分支
+
+`py-snowluma` 保留独立官方QQ通道，并支持把原生Python后端连接到SnowLuma的OneBot v11服务。新增“私聊输入状态”“按长度等待”“固定语库近期避重”开关，位于控制台“回复行为”；全部默认关闭。输入状态仅用于SnowLuma私聊，不是实际逐字操作QQ输入框，也不保证防检测或防封。接入、首次许可/登录与数据隔离说明见 [SnowLuma接入](docs/SNOWLUMA.md)。
+
 # QQ 官方接入试验分支
 
 `py-dsh-qqbot` 基于 Python 分支，保留现有控制台和机器人逻辑，通过腾讯官方 SDK/扫码连接器增加独立 QQ 开放平台接入。首期支持文字、图片及自有消息撤回；旧 QQ 号、管理员和记忆不自动继承。尚未切换 main 或正式运行实例，详见[试验配置与功能边界](docs/QQ-OFFICIAL-TRIAL.md)。

@@ -92,7 +92,12 @@ class QuietGreetings:
             return
         prior = sorted([v for v in self.state['deliveries'].values() if v.get('groupId') == context['groupId'] and v.get('kind') == kind and v.get('personaHash') == context['hash']], key=lambda v: v.get('at', 0), reverse=True)
         candidates = [text for text in choices if not prior or text != prior[0].get('text')] or choices
-        text = candidates[min(len(candidates)-1, max(0, int(self.rand()*len(candidates))))]
+        from .reply_behavior import FixedReplyVariety
+        variety = FixedReplyVariety(self.config)
+        scope = ['greeting',str(self.onebot.self_id),context['key'],kind,context['hash']]
+        text = (variety.choose(choices,scope,rand=self.rand)
+                if self.config.enabled('FIXED_REPLY_VARIATION_ENABLED',False)
+                else candidates[min(len(candidates)-1, max(0, int(self.rand()*len(candidates))))])
         entry = {'groupId': context['groupId'], 'kind': kind, 'at': at, 'status': 'pending', 'personaHash': context['hash'], 'text': text}
         self.state['deliveries'][key] = entry
         self.save()
@@ -105,6 +110,7 @@ class QuietGreetings:
                 entry['status'] = 'uncertain'
             else:
                 entry.update(status='sent', messageId=str(result['message_id']))
+                variety.record(scope,text)
                 self.save()
                 current = self.context(context['groupId'])
                 if current and current['hash'] == context['hash'] and revision == self.memory.version(context['key']):

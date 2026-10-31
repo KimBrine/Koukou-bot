@@ -35,7 +35,10 @@ def unavailable(feature):
 
 def backend_metadata(config, transport=None):
     if not official(config):
-        return {'provider': 'onebot', 'label': 'OneBot / NapCat / LLBot'}
+        implementation = config.get('ONEBOT_IMPLEMENTATION','auto')
+        return {'provider':'onebot','implementation':implementation,
+                'label':'SnowLuma / OneBot' if implementation=='snowluma' else 'OneBot / NapCat / LLBot / SnowLuma',
+                'typingStatusAvailable':implementation=='snowluma'}
     if transport is not None and hasattr(transport, 'metadata'):
         value = transport.metadata()
         return {**value, 'provider': OFFICIAL, 'label': 'QQ官方连接',

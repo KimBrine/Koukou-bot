@@ -44,6 +44,8 @@ from .transport_policy import (official, provider, backend_metadata, validate_se
 # Read-only form defaults follow the native consumers. This does not seed .env
 # from a JavaScript template (whose defaults can differ during migration).
 FORM_DEFAULTS = {
+    'ONEBOT_IMPLEMENTATION':'auto','REPLY_PACING_MODE':'character','REPLY_PACING_SPEED':8,
+    'REPLY_PACING_MAX_SECONDS':8,'FIXED_REPLY_VARIATION_WINDOW':3,
     'QQ_TRANSPORT':'onebot','QQ_OFFICIAL_BRIDGE_URL':'ws://127.0.0.1:8792/bridge',
     'PROACTIVE_RATE':.04,'PROACTIVE_COOLDOWN_MS':30000,'EMOJI_KEEP_RATE':.35,
     'HUMAN_DELAY_MIN_MS':600,'HUMAN_DELAY_MAX_MS':2500,'LINE_GAP_MIN_MS':500,'LINE_GAP_MAX_MS':1600,
@@ -61,6 +63,7 @@ FORM_DEFAULTS = {
     'TEMPERATURE':1.2,'MAX_TOKENS':4096,'FILE_UPLOAD_MAX_MB':1024,'FILE_SPLIT_MB':90,'ARCHIVE_FORMAT':'zip','ARCHIVE_PASSES':1,
 }
 FORM_BOOLEANS = {
+    'TYPING_STATUS_ENABLED':False,'REPLY_PACING_ENABLED':False,'FIXED_REPLY_VARIATION_ENABLED':False,
     'QUIET_GREETINGS_ENABLED':False,'QUIET_HOURS_BLOCK_ALL':True,'REPLY_LENGTH_MATCH':True,'CONTEXT_REMEMBER_ALL':True,
     'POKE_REPLY_ENABLED':True,'AUTO_PLUS_ONE_ENABLED':False,'TARGET_WATCH_ENABLED':False,
     'SUMMARY_ENABLED':True,'SUMMARY_FALLBACK_ENABLED':False,'SUMMARY_UNRESTRICTED':True,'DASHSCOPE_ENABLE_THINKING':False,
@@ -70,6 +73,7 @@ FORM_BOOLEANS = {
 }
 # Values that the consumer clamps before use. Raw saved text remains in `value`.
 FORM_BOUNDS = {
+    'REPLY_PACING_SPEED':(1,60,False),'REPLY_PACING_MAX_SECONDS':(0,60,False),'FIXED_REPLY_VARIATION_WINDOW':(1,20,True),
     'PROACTIVE_RATE':(0,1,False),'EMOJI_KEEP_RATE':(0,1,False),'REPLY_MIN_BUDGET':(0,300,True),
     'REPLY_MAX_LINES':(1,5,True),'REPLY_LINE_MAX_CHARS':(10,200,True),'HISTORY_LIMIT':(4,200,True),
     'RATE_LIMIT_PER_HOUR':(0,None,True),'RATE_LIMIT_AT_PER_HOUR':(0,None,True),'RATE_LIMIT_MIN_GAP_MS':(0,None,False),'RATE_LIMIT_WAIT_MAX_MS':(0,None,False),
@@ -112,7 +116,7 @@ class Admin:
         self.media = media_delivery or (MediaDelivery(config, onebot, plugins) if onebot else None)
         self.retag_job, self.background = None, set()
         self.watch = None
-        self.login = LoginManagement(config,onebot) if onebot and not official(config) else None
+        self.login = LoginManagement(config,onebot) if onebot and not official(config) and config.get('ONEBOT_IMPLEMENTATION','auto')!='snowluma' else None
         self.official_transport = onebot if official(config) else None
         self.lifecycle = Lifecycle(config)
         self.native_identity = None
@@ -1074,6 +1078,18 @@ class Admin:
         # Preserve secret values on blank submissions, as the existing UI expects.
         clean = {key: str(value) for key, value in patch.items() if value != "" or allowed[key]["type"] != "secret"}
         validate_settings(self.config, clean, self.official_transport)
+        if official(self.config) and any(clean.get(key,'').strip() for key in ['ONEBOT_WS_URL','ONEBOT_ACCESS_TOKEN']):
+            raise ValueError('SnowLuma使用原QQ身份，请配置独立OneBot实例；不能覆盖当前官方OpenID实例')
+        if clean.get('ONEBOT_IMPLEMENTATION',self.config.get('ONEBOT_IMPLEMENTATION','auto')) not in {'auto','napcat','llbot','snowluma'}:
+            raise ValueError('请选择支持的OneBot实现')
+        if clean.get('REPLY_PACING_MODE',self.config.get('REPLY_PACING_MODE','character')) not in {'character','word'}:
+            raise ValueError('回复节奏只能按字或文字单元计算')
+        if (str(clean.get('TYPING_STATUS_ENABLED','0')).lower() in {'1','true','yes','on'}
+                and (official(self.config) or clean.get('ONEBOT_IMPLEMENTATION',self.config.get('ONEBOT_IMPLEMENTATION','auto'))!='snowluma')):
+            raise ValueError('输入状态仅在明确选择SnowLuma的OneBot实例中可启用；官方接口不支持')
+        for key,low,high in [('REPLY_PACING_SPEED',1,60),('REPLY_PACING_MAX_SECONDS',0,60),('FIXED_REPLY_VARIATION_WINDOW',1,20)]:
+            if key in clean and not low<=float(clean[key])<=high:
+                raise ValueError('回复行为参数超出允许范围')
         learn_on = str(clean.get('STICKER_LEARN_ENABLED', '')).lower() in {'1','true','yes','on'}
         if learn_on and self.stickers.for_chat().learning_status()['full']:
             raise ValueError('当前人格图库已满60张，请先人工清理后重新开启学习')
